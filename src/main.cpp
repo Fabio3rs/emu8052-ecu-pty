@@ -135,12 +135,21 @@ static constexpr unsigned char SCON_TI = 0x02;
 static constexpr unsigned char SCON_RI = 0x01;
 
 struct UartBridge {
-    int mfd = -1; // master pty
-    int sfd = -1; // slave pty
+    int mfd = -1;  // master pty
+    int sfd = -1;  // slave pty
     std::string slave_path;
 
-    // K-line BREAK detection state
-    bool rxd_line_state = true; // true=MARK(idle/high), false=SPACE(break/low)
+    // K-line signal injection control (SIGUSR1 mode)
+    // When override_rxd=true, FiveBaudInjector controls the K-line state
+    // When override_rxd=false, PTY/PARMRK mode is active (normal operation)
+    bool override_rxd = false;     // true = SIGUSR1 injection, false = PTY mode
+    bool override_state = true;    // Physical K-line state: true=12V(IDLE), false=0V(BREAK)
+
+    // K-line BREAK detection state (PTY/PARMRK mode)
+    // rxd_line_state represents the PHYSICAL K-line voltage:
+    //   true  = 12V (IDLE/MARK)
+    //   false = 0V (BREAK/SPACE)
+    bool rxd_line_state = true;
     long long low_until_ms = 0;
     unsigned char break_detect_buffer[3] = {0, 0, 0};
     int break_detect_idx = 0;
@@ -231,6 +240,12 @@ struct UartBridge {
     // Read from PTY, detect BREAK, echo bytes, and queue for UART RX
     // PARMRK mode: BREAK appears as 0xFF 0x00 0x00
     // K-line protocol: ALL bytes must be echoed back (half-duplex validation)
+    //
+    // K-line BREAK/UNBREAK behavior:
+    // - BREAK detection: 0xFF 0x00 0x00 sequence → rxd_line_state = false (0V)
+    // - UNBREAK timer: Holds LOW state for 250ms after LAST BREAK received
+    // - After timer expires: cb_sfr_read() returns line to HIGH (12V idle)
+    // - This models physical line capacitance + transceiver hold time
     void read_and_process() {
         unsigned char b = 0;
         ssize_t n = read(mfd, &b, 1);
@@ -245,10 +260,10 @@ struct UartBridge {
                 break_detect_idx = 1;
                 return;
             }
-            // Normal data byte: ECHO + QUEUE + mark line as HIGH
+            // Normal data byte: ECHO + QUEUE + mark line as HIGH (12V idle)
             (void)!write(mfd, &b, 1); // K-line echo (half-duplex)
             rx_queue.push(b);
-            rxd_line_state = true;
+            rxd_line_state = true; // Physical K-line returns to 12V
             return;
         }
 
@@ -281,12 +296,27 @@ struct UartBridge {
             break_detect_buffer[2] = b;
             if (b == 0x00) {
                 // BREAK confirmed! (0xFF 0x00 0x00 pattern complete)
-                rxd_line_state = false; // Line goes LOW (SPACE/BREAK)
-                low_until_ms =
-                    now_ms() + 190; // mantém LOW por ~200 ms (5 baud)
-                fprintf(stderr, "[K-LINE] BREAK detected (RXD=LOW)\n");
+                rxd_line_state = false; // Physical K-line goes LOW (0V BREAK/SPACE)
+
+                // UNBREAK timer strategy: Each BREAK extends the LOW period, but not indefinitely
+                // In 5-baud init, BREAKs arrive ~200ms apart (one per bit)
+                // We keep line LOW until 250ms after LAST BREAK received
+                // This accumulates multiple BREAKs into one continuous LOW period
+                // CRITICAL: Timer MUST be > 200ms to avoid premature UNBREAK between consecutive bits!
+                long long now = now_ms();
+                long long extend_to = now + 210; // 210ms > 200ms bit period
+
+                // Only extend if new time is later (don't reset on each BREAK)
+                if (extend_to > low_until_ms) {
+                    low_until_ms = extend_to;
+                }
+
+                fprintf(
+                    stderr,
+                    "[K-LINE] BREAK detected (RXD=LOW, hold until +%lld ms)\n",
+                    low_until_ms - now);
                 fflush(stderr);
-                // Do NOT echo BREAK, do NOT queue
+                // Do NOT echo BREAK, do NOT queue (BREAKs are control signals, not data)
             } else {
                 // Framing error or other pattern - treat as data
                 // Echo and queue the actual byte value
@@ -302,8 +332,84 @@ struct UartBridge {
 
 static UartBridge g_uart;
 static std::atomic<bool> g_running{true};
+static std::atomic<bool> g_inject_5baud{
+    false}; // Trigger 5-baud init via SIGUSR1
+
+// Non-blocking 5-baud state machine (instruction-based timing)
+// ISO 9141-2 slow-init: 5 baud = 200ms per bit (0x10 address byte, LSB-first)
+// Timing calculation:
+//   Crystal: 11.880 MHz
+//   8051 instruction cycle: 12 clock cycles
+//   Instruction rate: 11,880,000 / 12 = 990,000 instructions/second
+//   5-baud bit period: 1/5 = 0.2 seconds = 200ms
+//   Instructions per bit: 990,000 × 0.2 = 198,000 instructions
+struct FiveBaudInjector {
+    bool active = false;
+    int current_bit = 0;
+    long long bit_end_instruction = 0;
+    const int bits[10] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 1}; // 0x10 LSB-first + start(0) + stop(1)
+
+    static constexpr long long INSTRUCTIONS_PER_BIT = 198000; // See timing calculation above
+
+    void start(long long current_instruction) {
+        if (active)
+            return;
+        active = true;
+        current_bit = 0;
+        bit_end_instruction = current_instruction + INSTRUCTIONS_PER_BIT;
+
+        // ENTRA no modo override
+        g_uart.override_rxd = true;
+
+        if (bits[0] == 0) {
+            g_uart.override_state = false; // LOW
+        } else {
+            g_uart.override_state = true; // HIGH
+        }
+
+        fprintf(stderr, "\n[5-BAUD START] Bit 0: %s until instr=%lld\n",
+                g_uart.override_state ? "MARK(HIGH)" : "BREAK(LOW)",
+                bit_end_instruction);
+        fflush(stderr);
+    }
+
+    void tick(long long current_instruction) {
+        if (!active)
+            return;
+        if (current_instruction < bit_end_instruction)
+            return;
+
+        current_bit++;
+        if (current_bit >= 10) {
+            active = false;
+            g_uart.override_state = true; // linha volta para HIGH
+            g_uart.override_rxd = false;  // VOLTA pro modo normal (PTY/PARMRK)
+            fprintf(stderr,
+                    "[5-BAUD COMPLETE] All bits sent at instr=%lld, line "
+                    "returned to HIGH\n\n",
+                    current_instruction);
+            fflush(stderr);
+            return;
+        }
+
+        bit_end_instruction = current_instruction + INSTRUCTIONS_PER_BIT;
+        g_uart.override_state = bits[current_bit] != 0;
+        fprintf(stderr, "[5-BAUD] Bit %d: %s until instr=%lld\n", current_bit,
+                g_uart.override_state ? "MARK(HIGH)" : "BREAK(LOW)",
+                bit_end_instruction);
+        fflush(stderr);
+    }
+};
+
+static FiveBaudInjector g_5baud_injector;
 
 static void sigint_handler(int) { g_running = false; }
+
+static void sigusr1_handler(int) {
+    g_inject_5baud = true;
+    // Note: Don't start injector here - signal handlers should be minimal
+    // Will be started in main loop when g_inject_5baud is detected
+}
 
 // P4 port handling for K-line RX bit sampling
 static constexpr int SFR_P4 = 0xE8;
@@ -521,39 +627,74 @@ static void cb_sfr_write_ircon(em8051 *cpu, uint8_t addr) {
 }
 
 static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
-    // Port 4 (P4) read - used by ROM to sample RX line state for 5-baud init
     if (addr == SFR_P4) {
-        // Atualiza linha: após o tempo, volta a HIGH (MARK)
-        if (g_uart.low_until_ms &&
-            UartBridge::now_ms() >= g_uart.low_until_ms) {
-            g_uart.rxd_line_state = true;
-            g_uart.low_until_ms = 0;
-        }
-        // Update P4.5 based on current RX line state
-        unsigned char p4 = p4_value;
-        if (g_uart.rxd_line_state) {
-            p4 |=
-                static_cast<unsigned char>(1 << 5); // Set P4.5 high (MARK/idle)
-        } else {
-            p4 &= static_cast<unsigned char>(~static_cast<unsigned char>(
-                1 << 5)); // Clear P4.5 low (SPACE/break)
+
+        // UNBREAK timer: Return K-line to HIGH (12V idle) after BREAK hold period expires
+        // This timer is set by read_and_process() when BREAK is detected (0xFF 0x00 0x00)
+        // Only active in PTY/PARMRK mode (not during SIGUSR1 injection)
+        if (!g_uart.override_rxd) {
+            // PTY/PARMRK mode: Handle UNBREAK timer
+            if (g_uart.low_until_ms &&
+                UartBridge::now_ms() >= g_uart.low_until_ms) {
+                if (!g_uart.rxd_line_state) {
+                    fprintf(stderr,
+                            "[K-LINE] UNBREAK: RXD LOW→HIGH (timer expired)\n");
+                    fflush(stderr);
+                }
+                g_uart.rxd_line_state = true; // Physical K-line returns to 12V
+                g_uart.low_until_ms = 0;       // Clear timer
+            }
         }
 
-        // Only log when P4.5 bit changes (avoid flood)
+        unsigned char p4 = cpu->mSFR[addr - 0x80];
+
+        // K-line physical state (12V = idle/MARK, 0V = BREAK/SPACE)
+        // override_rxd=true: SIGUSR1 injection mode
+        // override_rxd=false: PTY/PARMRK mode
+        bool kline_physical_high =
+            g_uart.override_rxd ? g_uart.override_state : g_uart.rxd_line_state;
+
+        // CRITICAL: K-line transceiver (L9637/MC33199) INVERTS the signal!
+        // Physical K-line → Transceiver → P4.5 bit
+        // ------------------------------------------------
+        // 12V (IDLE/MARK)  →  Transceiver  →  P4.5 = 0
+        // 0V (BREAK/SPACE) →  Transceiver  →  P4.5 = 1
+        //
+        // This inversion is standard in automotive K-line transceivers.
+        // The firmware expects P4.5=1 during BREAK, P4.5=0 during idle.
+        if (!kline_physical_high)
+            p4 |= (1 << 5);   // K-line BREAK (0V) → P4.5 = 1
+        else
+            p4 &= ~(1 << 5);  // K-line IDLE (12V) → P4.5 = 0
+
         static unsigned char last_p4_value = 0xFF;
         if (p4 != last_p4_value) {
-            fprintf(stderr, "[P4.5] Read: 0x%02X (RXD=%s)\n", p4,
-                    g_uart.rxd_line_state ? "HIGH" : "LOW");
+            fprintf(stderr, "[P4.5] Read: 0x%02X (K-line=%s, P4.5=%d); PC=0x%04X\n",
+                    p4,
+                    kline_physical_high ? "IDLE(12V)" : "BREAK(0V)",
+                    (p4 >> 5) & 1,
+                    cpu->mPC);
             fflush(stderr);
             last_p4_value = p4;
         }
 
         p4_value = p4;
+        cpu->mSFR[addr - 0x80] = p4;
         return p4;
     }
 
-    // For other SFR addresses, return the value from mSFR array
     return cpu->mSFR[addr - 0x80];
+}
+
+static void cb_sfr_write(struct em8051 *aCPU, uint8_t aRegister) {
+    (void)aCPU;
+    (void)aRegister;
+    /*if (aRegister == SFR_P4) {
+        unsigned char new_p4 = aCPU->mSFR[aRegister - 0x80];
+        p4_value = new_p4;
+        fprintf(stderr, "[P4 WRITE] 0x%02X at PC=0x%04X\n", new_p4, aCPU->mPC);
+        fflush(stderr);
+    }*/
 }
 
 // Estado para detectar mudanças de SBUF/SCON (polling de TX)
@@ -616,6 +757,18 @@ static inline void uart_poll_nohooks(em8051 *cpu) {
     // Atualiza estado anterior
     last_sbuf = sbuf;
     last_scon = scon;
+}
+
+static void on_sfr_write(em8051 *cpu, uint8_t addr) {
+    if (addr == SFR_SBUF) {
+        uint8_t b = cpu->mSFR[addr - 0x80]; // valor recém-escrito em SBUF
+        /*g_uart.tx(b);                            // envia para o PTY
+        // Marca transmissão concluída (modelo não “cycle-accurate”)
+        uint8_t scon = cpu->mSFR[SFR_SCON - 0x80];
+        scon |= 0x02;                            // TI = 1
+        cpu->mSFR[SFR_SCON - 0x80] = scon;*/
+        fprintf(stderr, "[UART TX] 0x%02X\n", b);
+    }
 }
 
 static bool load_bin_to_code(em8051 *cpu, const char *path,
@@ -701,10 +854,23 @@ int main(int argc, char **argv) {
     cpu.mUpperData = upper_data; // ALWAYS allocate for Bosch MA1.7
     (void)want8052;              // Suppress unused variable warning
 
+    cpu.sfrwrite[SFR_SBUF - 0x80] = on_sfr_write;
+
     // Reset - agora é seguro chamar com aWipe=true
     fprintf(stderr, "[DEBUG] Chamando reset()...\n");
     fflush(stderr);
     reset(&cpu, true);
+
+    // EEPROM/NVM simulation: initialize calibration/config data
+    // MUST be done AFTER reset() since reset() clears mExtData
+    // The firmware reads XRAM[0xF8] → RAM_47 (watchdog counter)
+    // If RAM_47 = 0, it triggers a system reset @ 0x4B67
+    // Set to 0xFF to prevent continuous reset loop
+    cpu.mExtData[0xF8] = 0xFF;   // EEPROM watchdog value
+    cpu.mLowerData[0x47] = 0xFF; // Initialize RAM_47 directly
+    fprintf(stderr, "[EEPROM] Initialized XRAM[0xF8]=0xFF, RAM_47=0xFF "
+                    "(prevents reset loop)\n");
+    fflush(stderr);
 
     // Timer 2 support now fully implemented via PR #40
     // (https://github.com/jarikomppa/emu8051/pull/40)
@@ -734,6 +900,7 @@ int main(int argc, char **argv) {
     // Register SFR read callback for P4 (K-line RX bit sampling via P4.5)
     // Direct assignment to emu8051 callback array (native mechanism)
     cpu.sfrread[SFR_P4 - 0x80] = cb_sfr_read;
+    cpu.sfrwrite[SFR_P4 - 0x80] = cb_sfr_write;
     fprintf(stderr, "[DEBUG] Callback registrado: P4 (0x%02X) -> cb_sfr_read\n",
             static_cast<unsigned int>(SFR_P4));
     fflush(stderr);
@@ -755,15 +922,14 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[DEBUG] Callback registrado: exception handler\n");
     fflush(stderr);
 
-    // HACK: Register IRCON write callback to prevent infinite loop in Timer 0
-    // ISR SAB80C537 IRCON register at 0xC0, bit 0 = IADC (ADC interrupt flag)
-    // Timer 0 ISR waits for this bit at code_711: jbc IRCON.0, code_716
-    // JBC clears the bit after testing - callback immediately sets it back to 1
+    // WORKAROUND: ADC emulation - force IRCON.0=1 (ADC ready)
+    // SAB80C517 IRCON @ 0xC0, bit 0 = IADC (ADC interrupt flag)
+    // Timer 0 ISR busy-waits: jbc IRCON.0, code_716 @ 0x0711
+    // Without ADC emulation, firmware hangs in infinite loop
     cpu.mSFR[0xC0 - 0x80] = 0x01;                   // Initial: IRCON.0 = 1
     cpu.sfrwrite[0xC0 - 0x80] = cb_sfr_write_ircon; // IRCON = 0xC0
-    fprintf(stderr, "[ADC-HACK] IRCON write callback registered (fake ADC "
-                    "ready to prevent infinite loop)\n");
-    fflush(stderr);
+    fprintf(stderr,
+            "[WORKAROUND] IRCON callback registered (fake ADC ready)\n");
 
     // SCON modo 1 (8-bit UART, variável): SM0=0, SM1=1 por padrão de muitas
     // ROMs Forçar estado limpo: Mode 1, REN=1, flags TI/RI limpos Isso evita
@@ -785,8 +951,12 @@ int main(int argc, char **argv) {
 
     // Loop principal: step e serviço de UART
     signal(SIGINT, sigint_handler);
+    signal(SIGUSR1, sigusr1_handler);
 
     fprintf(stderr, "[DEBUG] Iniciando loop principal de emulação...\n");
+    fprintf(stderr,
+            "[DEBUG] Send SIGUSR1 to inject 5-baud init: kill -USR1 %d\n",
+            getpid());
     fprintf(stderr, "[DEBUG] PC inicial: 0x%04X\n", cpu.mPC);
     fflush(stderr);
 
@@ -802,9 +972,31 @@ int main(int argc, char **argv) {
     // Track last valid PC to detect jumps to invalid regions
     uint16_t last_pc = cpu.mPC;
 
+    // Global instruction counter for timing synchronization
+    // This counter tracks total emulated instructions (NOT wall-clock time!)
+    // Used by FiveBaudInjector for accurate 5-baud bit timing (198,000 instr/bit)
+    // Increments once per tick() call = once per 8051 instruction executed
+    long long global_instruction_counter = 0;
+
     while (g_running.load()) {
+        // Check if SIGUSR1 was received - start 5-baud injector
+        if (g_inject_5baud.load()) {
+            g_inject_5baud = false; // Reset flag
+            fprintf(stderr, "\n[SIGUSR1] Received - starting 5-baud injection "
+                            "(non-blocking)\n");
+            fflush(stderr);
+            g_5baud_injector.start(global_instruction_counter);
+        }
+
+        // Process 5-baud state machine (non-blocking, instruction-synchronized)
+        g_5baud_injector.tick(global_instruction_counter);
+
         for (int i = 0; i < steps_per_tick; ++i) {
-            // Detect if PC enters invalid region (beyond 32KB ROM)
+            global_instruction_counter++; // Increment BEFORE tick() to match actual instruction count
+
+            // Stack corruption bug @ PC=0x36DF was FIXED in emu8051/opcodes.c
+            // (mov_mem_indir_rx now uses correct read_mem/write_mem_indir
+            // functions) Detect if PC enters invalid region (beyond 32KB ROM)
             if (cpu.mPC >= 0x8000) {
                 static int alert_count = 0;
                 if (alert_count <
@@ -857,6 +1049,197 @@ int main(int argc, char **argv) {
                         cpu.mPC, cpu.mSFR[REG_SP], main_loop_counter);
                 last_trace_at = main_loop_counter;
             }
+
+            // RAM_17 (K-line enabled flag)
+            static unsigned char last_ram_17 = 0x00;
+            unsigned char current_ram_17 = cpu.mLowerData[0x17];
+            if (current_ram_17 != last_ram_17) {
+                fprintf(stderr, "[RAM_17] 0x%02X → 0x%02X (PC=0x%04X)\n",
+                        last_ram_17, current_ram_17, cpu.mPC);
+                fflush(stderr);
+                last_ram_17 = current_ram_17;
+            }
+
+            // K-line decoder instrumentation
+            static int decoder_trace_count = 0;
+            static unsigned char last_ram_40_decoder = 0xFF;
+
+            // PC=0x4C34: Actual shift register for slow-init decoding (not
+            // 0x4C3A!) 0x4C3A is just a jump to 0x4C80
+            if (cpu.mPC == 0x4C34 && decoder_trace_count < 200) {
+                unsigned char ram_40 = cpu.mLowerData[0x40];
+                unsigned char p4 = cpu.mSFR[SFR_P4 - 0x80];
+                unsigned char p4_bit5 =
+                    (p4 >> 5) & 1; // Bit 5 of P4 (K-line RX)
+
+                // Only print when RAM_40 changes to reduce spam
+                if (ram_40 != last_ram_40_decoder) {
+                    fprintf(
+                        stderr,
+                        "[DECODER-4C34] Instr=%lld RAM_40: 0x%02X → 0x%02X (0b",
+                        global_instruction_counter, last_ram_40_decoder,
+                        ram_40);
+                    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) {
+                        fprintf(stderr, "%d", (ram_40 >> bit_idx) & 1);
+                    }
+                    fprintf(stderr, ") P4.5=%d\n", p4_bit5);
+                    last_ram_40_decoder = ram_40;
+                }
+                decoder_trace_count++;
+                fflush(stderr);
+            }
+
+            // PC=0x4C44: Check if received address == 0x10
+            if (cpu.mPC == 0x4C44 && decoder_trace_count < 200) {
+                fprintf(stderr,
+                        "[DECODER-4C44] Entry: RAM_17=0x%02X, RAM_40=0x%02X, "
+                        "A=0x%02X\n",
+                        cpu.mLowerData[0x17], cpu.mLowerData[0x40],
+                        cpu.mSFR[REG_ACC]);
+                decoder_trace_count++;
+                fflush(stderr);
+            }
+
+            // PC=0x4C48: About to compare A with 0x10
+            if (cpu.mPC == 0x4C48 && decoder_trace_count < 200) {
+                fprintf(stderr,
+                        "[DECODER-4C48] Before cmp: A=0x%02X (expect 0x10), "
+                        "RAM_40=0x%02X\n",
+                        cpu.mSFR[REG_ACC], cpu.mLowerData[0x40]);
+                decoder_trace_count++;
+                fflush(stderr);
+            }
+
+            // PC=0x4C4A: After loading 0x10, before CJNE
+            if (cpu.mPC == 0x4C4A && decoder_trace_count < 200) {
+                fprintf(stderr,
+                        "[DECODER-4C4A] CJNE A, RAM_40: A=0x%02X vs "
+                        "RAM_40=0x%02X (need match!)\n",
+                        cpu.mSFR[REG_ACC], cpu.mLowerData[0x40]);
+                decoder_trace_count++;
+                fflush(stderr);
+            }
+
+            // RAM_47 (watchdog counter - triggers reset if 0!)
+            static unsigned char last_ram_47 = 0xFF;
+            unsigned char current_ram_47 = cpu.mLowerData[0x47];
+            if (current_ram_47 != last_ram_47) {
+                fprintf(stderr, "[RAM_47] 0x%02X → 0x%02X (PC=0x%04X) %s\n",
+                        last_ram_47, current_ram_47, cpu.mPC,
+                        (current_ram_47 == 0) ? "**TRIGGERS RESET!**" : "");
+                fflush(stderr);
+                last_ram_47 = current_ram_47;
+            }
+
+            // Track PC @ 0x01AB (loads XRAM[0xF8] → RAM_47)
+            static bool seen_01ab = false;
+            if (cpu.mPC == 0x01AB && !seen_01ab) {
+                fprintf(stderr,
+                        "[PC=0x01AB] Loading XRAM[0xF8]=%02X → RAM_47\n",
+                        cpu.mExtData[0xF8]);
+                fflush(stderr);
+                seen_01ab = true;
+            }
+
+            // Track all paths that lead to RESET_0 @ 0x4B85
+            static bool seen_4b85 = false;
+            static uint16_t last_pc_before_reset = 0;
+            if (cpu.mPC == 0x4B85 && !seen_4b85) {
+                fprintf(stderr,
+                        "[RESET TRIGGER] PC=0x4B85 (ljmp RESET_0), came from "
+                        "PC=0x%04X\n",
+                        last_pc_before_reset);
+                fprintf(stderr,
+                        "[RESET TRIGGER] RAM_47=0x%02X, triggering full system "
+                        "reset\n",
+                        cpu.mLowerData[0x47]);
+                fflush(stderr);
+                seen_4b85 = true;
+            }
+            last_pc_before_reset = cpu.mPC;
+
+            // Track when we enter Timer 0 ISR watchdog check @ 0x4B65
+            static bool seen_4b65 = false;
+            if (cpu.mPC == 0x4B65 && !seen_4b65) {
+                fprintf(stderr, "[WATCHDOG CHECK] PC=0x4B65, RAM_47=0x%02X\n",
+                        cpu.mLowerData[0x47]);
+                fflush(stderr);
+                seen_4b65 = true;
+            }
+
+            // Track RESET_0 entry @ 0x0850
+            static int reset_0_count = 0;
+            static uint16_t last_pc_before_0850 = 0;
+            if (cpu.mPC == 0x0850) {
+                reset_0_count++;
+                if (reset_0_count <= 3) { // Log first 3 resets only
+                    fprintf(stderr,
+                            "[RESET_0 ENTRY #%d] PC=0x0850, came from "
+                            "PC=0x%04X, SP=0x%02X\n",
+                            reset_0_count, last_pc_before_0850,
+                            cpu.mSFR[REG_SP]);
+                    fflush(stderr);
+                }
+            }
+            last_pc_before_0850 = cpu.mPC;
+
+            // STACK OVERFLOW DETECTION
+            // 8051 stack: SP points to last written byte
+            // Normal range: 0x08-0xDF (init SP=0xD0, grows upward)
+            // Underflow: SP < 0x08
+            // Overflow: SP > 0xDF (enters SFR region @ 0x80-0xFF indirect
+            // addressing)
+            static unsigned char last_sp = 0xD0;
+            static unsigned char min_sp_seen = 0xFF;
+            static unsigned char max_sp_seen = 0x00;
+            unsigned char current_sp = cpu.mSFR[REG_SP];
+
+            // Track min/max SP
+            if (current_sp < min_sp_seen)
+                min_sp_seen = current_sp;
+            if (current_sp > max_sp_seen)
+                max_sp_seen = current_sp;
+
+            // Detect underflow (SP went below safe zone)
+            if (current_sp < 0x08 && last_sp >= 0x08) {
+                fprintf(stderr,
+                        "[STACK UNDERFLOW] SP: 0x%02X → 0x%02X (PC=0x%04X)\n",
+                        last_sp, current_sp, cpu.mPC);
+                fprintf(stderr, "[STACK RANGE] Min=0x%02X Max=0x%02X\n",
+                        min_sp_seen, max_sp_seen);
+                fflush(stderr);
+            }
+
+            // Detect overflow (SP went above Upper RAM boundary)
+            // Upper RAM @ 0x80-0xFF is accessed via @R0/@R1, not stack
+            // Stack overflow if SP > 0x7F
+            if (current_sp > 0x7F && last_sp <= 0x7F) {
+                fprintf(stderr,
+                        "[STACK OVERFLOW] SP: 0x%02X → 0x%02X (PC=0x%04X)\n",
+                        last_sp, current_sp, cpu.mPC);
+                fprintf(stderr, "[STACK RANGE] Min=0x%02X Max=0x%02X\n",
+                        min_sp_seen, max_sp_seen);
+                fflush(stderr);
+            }
+
+            // Detect SP = 0x00 (critical underflow)
+            if (current_sp == 0x00 && last_sp != 0x00) {
+                fprintf(stderr,
+                        "[STACK CRITICAL] SP reached 0x00! (PC=0x%04X, "
+                        "last_SP=0x%02X)\n",
+                        cpu.mPC, last_sp);
+                // Show stack top bytes
+                fprintf(stderr, "[STACK DUMP] Stack[0x00-0x07]: ");
+                for (int j = 0; j <= 7; j++) {
+                    fprintf(stderr, "%02X ", cpu.mLowerData[j]);
+                }
+                fprintf(stderr, "\n");
+                fflush(stderr);
+            }
+
+            last_sp = current_sp;
+
+            // K-line decoder traces disabled - enable if needed for debugging
         }
 
         // Read PTY: detect BREAK, echo bytes (K-line half-duplex), queue for
@@ -866,41 +1249,7 @@ int main(int argc, char **argv) {
         if (!g_hooks.has_hooks)
             uart_poll_nohooks(&cpu);
 
-        // Debug periódico (a cada ~0.5s)
-        // DISABLED: Verbose logging for production testing
-        /*
-        if (++debug_counter >= 1) {
-          debug_counter = 0;
-          unsigned char scon_dbg = EMU_GET_SFR(&cpu, SFR_SCON);
-          unsigned char sbuf_dbg = EMU_GET_SFR(&cpu, SFR_SBUF);
-
-          // Special detailed logging when stuck at 0x15CA
-          if (cpu.mPC == 0x15CA) {
-            unsigned char acc = EMU_GET_SFR(&cpu, 0xE0);  // ACC register
-            unsigned char b_reg = EMU_GET_SFR(&cpu, 0xF0); // B register
-            unsigned char ie = EMU_GET_SFR(&cpu, 0xA8);    // IE (interrupt
-        enable)
-            // Address 0x87 via indirect addressing (@R0) accesses upper
-        internal RAM
-            // (mUpperData[0x87 - 0x80] = mUpperData[7]) if 8052 mode, otherwise
-        undefined unsigned char ram_87 = (cpu.mUpperData != nullptr) ?
-        cpu.mUpperData[0x87 - 0x80] : 0xFF; fprintf(stderr, "[DEBUG] *** STUCK
-        AT 0x15CA ***\n"); fprintf(stderr, "[DEBUG]     A=0x%02X  B=0x%02X
-        RAM[0x87]=0x%02X (upper RAM)\n", acc, b_reg, ram_87); fprintf(stderr,
-        "[DEBUG]     IE=0x%02X  mInterruptActive=%d\n", ie,
-        cpu.mInterruptActive); fprintf(stderr, "[DEBUG]     SCON=0x%02X
-        SBUF=0x%02X\n", scon_dbg, sbuf_dbg); fprintf(stderr, "[DEBUG]
-        mUpperData=%s\n", cpu.mUpperData ? "ALLOCATED" : "NULL");
-            fflush(stderr);
-          } else {
-            fprintf(stderr, "[DEBUG] PC=0x%04X SCON=0x%02X SBUF=0x%02X\n",
-                    cpu.mPC, scon_dbg, sbuf_dbg);
-            fflush(stderr);
-          }
-        }
-        */
-
-        // dá um respiro para o SO e mantém o terminal responsivo
+        // Sleep to maintain ~1-2 MIPS logical speed
         nanosleep(&ts, nullptr);
     }
 
