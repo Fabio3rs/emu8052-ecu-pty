@@ -11,6 +11,12 @@ set(CMAKE_C_EXTENSIONS ON)
 option(ENABLE_TESTS "Enable tests" ON)
 option(ENABLE_SANITIZERS "Enable sanitizers" ON)
 
+# Enable 8052 mode by default (Timer 2, 6 interrupt sources, 256B IRAM)
+# This is required for Bosch Monomotronic MA1.7 firmware which uses Timer 2
+add_compile_definitions(__8052__)
+
+include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/emu8051)
+
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
     message(STATUS "Setting G++ flags")
     add_compile_options(-Wall -Werror -Wextra -Wformat-security -Wconversion -Wsign-conversion -Wno-gnu -Wno-gnu-statement-expression)
@@ -19,7 +25,7 @@ elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC")
     add_compile_options(/W4 /WX)
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     message(STATUS "Setting Clang flags")
-    add_compile_options(-Werror -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-padded -Wno-global-constructors -Wno-exit-time-destructors -Wno-weak-vtables -Wno-documentation -Wno-documentation-unknown-command)
+    add_compile_options(-Werror -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-padded -Wno-global-constructors -Wno-exit-time-destructors -Wno-weak-vtables -Wno-documentation -Wno-documentation-unknown-command -Wno-unsafe-buffer-usage -Wno-unsafe-buffer-usage-in-libc-call -Wno-unused-macros -Wno-c99-designator)
 endif()
 
 if(ENABLE_TESTS)
@@ -102,18 +108,33 @@ file(GLOB_RECURSE SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 set(EXCLUDE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 filter_out(EXCLUDE_FILES SOURCES)
 
-message(STATUS "Sources: ${SOURCES}")
+# Add emu8051 core C files
+set(EMU8051_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/emu8051/core.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/emu8051/opcodes.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/emu8051/disasm.c"
+)
 
-add_library(emu8051-tty_lib STATIC ${SOURCES})
+message(STATUS "Sources: ${SOURCES}")
+message(STATUS "EMU8051 Sources: ${EMU8051_SOURCES}")
+
+add_library(emu8051-tty_lib STATIC ${SOURCES} ${EMU8051_SOURCES})
+
+# The emu8051 C code is third-party and doesn't compile with strict warnings
+# Apply more lenient flags to C files
+set_source_files_properties(${EMU8051_SOURCES} PROPERTIES
+    COMPILE_FLAGS "-Wno-everything"
+)
+
 add_executable(emu8051-tty "src/main.cpp")
 target_link_libraries(emu8051-tty emu8051-tty_lib)
 
-# Set up precompiled headers if supported and available
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.16" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/stdafx.hpp")
-    target_precompile_headers(emu8051-tty_lib PRIVATE "include/stdafx.hpp")
-    target_precompile_headers(emu8051-tty REUSE_FROM emu8051-tty_lib)
-    message(STATUS "Precompiled headers enabled for faster compilation")
-endif()
+# Precompiled headers disabled for now due to complexity with mixed C/C++ code
+# if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.16" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/stdafx.hpp")
+#     target_precompile_headers(emu8051-tty_lib PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:include/stdafx.hpp>")
+#     target_precompile_headers(emu8051-tty REUSE_FROM emu8051-tty_lib)
+#     message(STATUS "Precompiled headers enabled for C++ files")
+# endif()
 
 if(ENABLE_TESTS AND GTest_FOUND)
     add_subdirectory(tests)
