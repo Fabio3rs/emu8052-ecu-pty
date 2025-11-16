@@ -12,10 +12,12 @@
 // entre revisões.
 //    Confira exatamente em `emulator.h`/`emu8051.h` do jarikomppa/emu8051 e
 //    ajuste os #defines abaixo.
-// 2) Este harness não é cycle-accurate; TI é setado logo após o write em SBUF,
-// e RI quando um byte chega do PTY.
-//    Para testes de protocolo (ACK/eco invertido etc.) isso costuma ser
-//    suficiente.
+// 2) Este harness implementa timing UART cycle-accurate baseado em instruções:
+//    - TX: byte enviado imediatamente, mas TI sobe após ~9 bit times (~1854
+//    instruções @ 4800 baud)
+//    - RX: byte agendado quando chega do PTY, RI sobe após ~9.5 bit times
+//    (~1959 instruções) Isso permite testar timing real de protocolo (ACK
+//    delays, overruns, etc.)
 //
 // ============================================================================
 // WORKAROUNDS PARA FUNCIONALIDADE NÃO EMULADA (SAB80C537 ECU BOSCH)
@@ -57,6 +59,7 @@
 extern "C" {
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h> // llround()
 #include <poll.h>
 #include <pty.h> // openpty()
 #include <signal.h>
@@ -103,22 +106,6 @@ extern "C" {
          static_cast<unsigned char>(VAL))
 #endif
 
-// 3) As funções do emu8051 já estão declaradas em emu8051.h, que é incluído via
-// <emu8051.h> Não precisamos redeclará-las aqui
-
-// 4) Callbacks de leitura/escrita em SFR/XRAM (nem todo fork exige; alguns
-// apenas notificam) Se seu fork oferecer "hooks", exponha-os aqui. Ex.:
-// set_sfr_read_cb/cb_write etc. Caso não existam, este harness fará polling
-// direto nos SFRs após cada step.
-struct HooksAPI {
-    bool has_hooks = false;
-    // ponteiros para registro de callbacks, se existirem
-    void (*set_sfr_read)(em8051 *, int (*)(em8051 *, int)) = nullptr;
-    void (*set_sfr_write)(em8051 *, void (*)(em8051 *, int, int)) = nullptr;
-};
-
-static HooksAPI g_hooks;
-
 // =========================
 // UART/SCON helpers (8051)
 // =========================
@@ -133,6 +120,9 @@ static constexpr unsigned char SCON_REN = 0x10;
 [[maybe_unused]] static constexpr unsigned char SCON_RB8 = 0x04;
 static constexpr unsigned char SCON_TI = 0x02;
 static constexpr unsigned char SCON_RI = 0x01;
+
+// Forward declaration for cycle-accurate UART timing
+static void uart_on_scanner_byte(uint8_t b);
 
 struct UartBridge {
     int mfd = -1; // master pty
@@ -283,14 +273,14 @@ struct UartBridge {
             }
             // Normal data byte do scanner externo:
             // 1. ECHO de volta (simula half-duplex K-line no PTY)
-            // 2. QUEUE para RX do firmware
+            // 2. AGENDA RX para firmware (cycle-accurate timing)
             fprintf(stderr,
                     "[PTY-RX] [%lld] Scanner sent 0x%02X, echoing back + "
-                    "queuing for firmware\n",
+                    "scheduling for firmware\n",
                     UartBridge::now_ms(), b);
             fflush(stderr);
             (void)!write(mfd, &b, 1); // Echo K-line para o scanner
-            rx_queue.push(b);         // Entrega ao firmware
+            uart_on_scanner_byte(b);  // Agenda RX (timing-aware)
             rxd_line_state = true;    // Physical K-line returns to 12V
             return;
         }
@@ -305,16 +295,16 @@ struct UartBridge {
                 // Escaped 0xFF: real data byte is 0xFF
                 unsigned char ff = 0xFF;
                 (void)!write(mfd, &ff, 1); // Echo para o scanner
-                rx_queue.push(ff);
+                uart_on_scanner_byte(ff);  // Agenda RX (timing-aware)
                 rxd_line_state = true;
                 break_detect_idx = 0;
                 return;
             } else {
-                // Was start of something else - echo and queue both bytes
+                // Was start of something else - echo and schedule both bytes
                 (void)!write(mfd, break_detect_buffer,
                              2); // Echo para o scanner
-                rx_queue.push(break_detect_buffer[0]);
-                rx_queue.push(b);
+                uart_on_scanner_byte(break_detect_buffer[0]); // Agenda RX
+                uart_on_scanner_byte(b);                      // Agenda RX
                 rxd_line_state = true;
                 break_detect_idx = 0;
                 return;
@@ -352,7 +342,7 @@ struct UartBridge {
             } else {
                 // Framing error or other pattern - treat as data
                 (void)!write(mfd, &b, 1); // Echo para o scanner
-                rx_queue.push(b);
+                uart_on_scanner_byte(b);  // Agenda RX (timing-aware)
                 rxd_line_state = true;
             }
             break_detect_idx = 0;
@@ -365,6 +355,180 @@ static UartBridge g_uart;
 static std::atomic<bool> g_running{true};
 static std::atomic<bool> g_inject_5baud{
     false}; // Trigger 5-baud init via SIGUSR1
+
+// =========================
+// Cycle-Accurate UART Timing Infrastructure
+// =========================
+
+// Cristal real do hardware (11.880 MHz)
+static constexpr double FOSC_HZ = 11'880'000.0;
+
+// Global instruction counter (moved from main() local scope)
+// Tracks total emulated instructions for cycle-accurate timing
+static long long g_instr_counter = 0;
+
+// Ponteiro global para a CPU (usado pelos eventos UART)
+static em8051 *g_uart_cpu = nullptr;
+
+// Event types para agendar TI/RI em "instruction ticks"
+enum class UartEventKind : uint8_t {
+    TxDone, // TI flag should be set
+    RxByte, // RI flag should be set + SBUF loaded
+};
+
+struct UartEvent {
+    long long when_icount; // em unidades de instrução 8051
+    UartEventKind kind;
+    uint8_t data; // só usado para RxByte
+
+    // priority_queue como min-heap (earliest event first)
+    bool operator<(UartEvent const &o) const {
+        return when_icount > o.when_icount;
+    }
+};
+
+static std::priority_queue<UartEvent> g_uart_events;
+
+// --- Helpers de timing ---
+
+// Calculate baud rate (fixed 4800 for K-line)
+static double uart_current_baud([[maybe_unused]] const em8051 *cpu) {
+    // TODO: ler de Timer1/Timer2 -> por enquanto assume 4800 fixo (K-line)
+    return 4800.0;
+}
+
+// Calculate instructions per UART bit
+static long long uart_instr_per_bit(const em8051 *cpu) {
+    double baud = uart_current_baud(cpu);
+    if (baud <= 0.0)
+        return 0;
+    double instr_per_sec = FOSC_HZ / 12.0;       // 990,000 instr/s
+    double instr_per_bit = instr_per_sec / baud; // ~206.25 @ 4800 baud
+    return static_cast<long long>(llround(instr_per_bit));
+}
+
+// Schedule TI flag setting after TX completes
+// TI rises at START of stop bit → ~9 bit times after start
+static void uart_schedule_tx_done(em8051 *cpu) {
+    long long ipb = uart_instr_per_bit(cpu);
+    if (ipb <= 0)
+        return;
+
+    UartEvent ev{};
+    ev.kind = UartEventKind::TxDone;
+    ev.data = 0;
+    // TI sobe no INÍCIO do stop bit → ~9 Tbit após o start (1 start + 8 dados)
+    ev.when_icount = g_instr_counter + 9 * ipb;
+    g_uart_events.push(ev);
+
+    fprintf(
+        stderr,
+        "[UART TIMING] TX scheduled, TI will be set at instr=%lld (+%lld)\n",
+        ev.when_icount, 9 * ipb);
+    fflush(stderr);
+}
+
+// Schedule RX byte delivery + RI flag setting
+// RI rises in MIDDLE of stop bit → ~9.5 bit times after start
+static void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
+    long long ipb = uart_instr_per_bit(cpu);
+    if (ipb <= 0)
+        return;
+
+    UartEvent ev{};
+    ev.kind = UartEventKind::RxByte;
+    ev.data = b;
+    // RI sobe no MEIO do stop bit → ~9.5 Tbit após início do start
+    double ipb_double = static_cast<double>(ipb);
+    ev.when_icount =
+        g_instr_counter + static_cast<long long>(llround(9.5 * ipb_double));
+    g_uart_events.push(ev);
+
+    fprintf(stderr,
+            "[UART TIMING] RX 0x%02X scheduled, RI will be set at instr=%lld "
+            "(+%lld)\n",
+            b, ev.when_icount,
+            static_cast<long long>(llround(9.5 * ipb_double)));
+    fflush(stderr);
+}
+
+// Process UART events that are due
+// Called after each instruction in main loop
+static void uart_timing_tick(em8051 *cpu, long long current_icount) {
+    while (!g_uart_events.empty() &&
+           g_uart_events.top().when_icount <= current_icount) {
+
+        UartEvent ev = g_uart_events.top();
+        g_uart_events.pop();
+
+        uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+
+        switch (ev.kind) {
+        case UartEventKind::TxDone: {
+            // Transmissão terminou → sobe TI
+            scon |= SCON_TI;
+            EMU_SET_SFR(cpu, SFR_SCON, scon);
+
+            fprintf(stderr, "[UART TIMING] TX done @instr=%lld (TI=1)\n",
+                    current_icount);
+            fflush(stderr);
+            break;
+        }
+
+        case UartEventKind::RxByte: {
+            // Se REN=0, RX desabilitado → hardware ignora o byte
+            if (!(scon & SCON_REN)) {
+                fprintf(
+                    stderr,
+                    "[UART TIMING] RX 0x%02X descartado (REN=0) @instr=%lld\n",
+                    ev.data, current_icount);
+                fflush(stderr);
+                break;
+            }
+
+            // Se RI já era 1, isso é um overrun (novo byte chegou antes
+            // do firmware ler o anterior). Descarta novo byte como hardware
+            // real.
+            if (scon & SCON_RI) {
+                fprintf(stderr,
+                        "[UART TIMING] RX overrun: RI já=1, descartando 0x%02X "
+                        "@instr=%lld\n",
+                        ev.data, current_icount);
+                fflush(stderr);
+                break; // Discard new byte (real hardware behavior)
+            }
+
+            // Entrega byte: empilha na fila e sobe RI
+            g_uart.rx_queue.push(ev.data);
+            scon |= SCON_RI;
+            EMU_SET_SFR(cpu, SFR_SCON, scon);
+
+            fprintf(stderr,
+                    "[UART TIMING] RX pronto 0x%02X (RI=1, queue=%zu) "
+                    "@instr=%lld\n",
+                    ev.data, g_uart.rx_queue.size(), current_icount);
+            fflush(stderr);
+            break;
+        }
+
+        default:
+            __builtin_unreachable(); // All enum values covered
+        }
+    }
+}
+
+// Helper: called when scanner byte arrives from PTY
+// Schedules RX event instead of immediate delivery
+static void uart_on_scanner_byte(uint8_t b) {
+    if (!g_uart_cpu) {
+        // fallback: comportamento antigo se algo der errado
+        g_uart.rx_queue.push(b);
+        return;
+    }
+
+    // Agenda a chegada do byte na UART do 8051
+    uart_schedule_rx_byte(g_uart_cpu, b);
+}
 
 // Non-blocking 5-baud state machine (instruction-based timing)
 // ISO 9141-2 slow-init: 5 baud = 200ms per bit (0x10 address byte, LSB-first)
@@ -730,83 +894,10 @@ static void cb_sfr_write(struct em8051 *aCPU, uint8_t aRegister) {
     }*/
 }
 
-// Estado para detectar mudanças de SCON (polling de RX)
-// TX agora é tratado via uart_sbuf_write_callback (SFR hook)
-static unsigned char last_scon = 0;
-static bool uart_initialized = false;
-
-// Polling de RX/TX caso não haja hooks
-// RX-only polling: injects bytes from rx_queue into SBUF when RI=0
-// TX is now handled by uart_sbuf_write_callback (immediate via SFR hook)
-static inline void uart_poll_rx_only(em8051 *cpu) {
-    unsigned char scon = EMU_GET_SFR(cpu, SFR_SCON);
-
-    // Inicialização
-    if (!uart_initialized) {
-        last_scon = scon;
-        uart_initialized = true;
-    }
-
-    g_uart.read_and_process();
-
-    if (!g_uart.rx_queue.empty()) {
-        fprintf(stderr,
-                "[UART POLL] [%lld] RX queue has %zu bytes pending for "
-                "injection; CPU PC=%04X\n",
-                UartBridge::now_ms(), g_uart.rx_queue.size(), cpu->mPC);
-        fflush(stderr);
-    }
-
-    // Debug: detecta mudanças em SCON (especialmente RI e REN flags)
-    if (scon != last_scon) {
-        unsigned char ri_old = last_scon & SCON_RI;
-        unsigned char ri_new = scon & SCON_RI;
-        unsigned char ren_old = last_scon & SCON_REN;
-        unsigned char ren_new = scon & SCON_REN;
-
-        if (ri_old != ri_new) {
-            fprintf(
-                stderr,
-                "[SCON] RI mudou: %d → %d (PC=0x%04X, SCON: 0x%02X → 0x%02X)\n",
-                ri_old ? 1 : 0, ri_new ? 1 : 0, cpu->mPC, last_scon, scon);
-            fflush(stderr);
-        }
-
-        if (ren_old != ren_new) {
-            fprintf(stderr,
-                    "[SCON] REN mudou: %d → %d (PC=0x%04X, SCON: 0x%02X → "
-                    "0x%02X) %s\n",
-                    ren_old ? 1 : 0, ren_new ? 1 : 0, cpu->mPC, last_scon, scon,
-                    ren_new ? "ENABLED" : "DISABLED");
-            fflush(stderr);
-        }
-    }
-
-    // RX: PTY -> injeta em SBUF e seta RI
-    // APENAS se RI=0 (firmware processou byte anterior)
-    // CRITICAL: K-line half-duplex transceivers (L9637D/MC33199) deliver RX
-    // bytes EVEN with REN=0! The firmware expects to receive scanner ACKs
-    // via SBUF regardless of REN state during handshake.
-    if (!(scon & SCON_RI)) {
-        int ch = g_uart.rx_try();
-        if (ch >= 0) {
-            EMU_SET_SFR(cpu, SFR_SBUF, static_cast<unsigned char>(ch));
-            scon |= SCON_RI;
-            EMU_SET_SFR(cpu, SFR_SCON, scon);
-
-            fprintf(stderr, "[UART RX] 0x%02X injected into SBUF (REN=%d)\n",
-                    static_cast<unsigned>(ch), (scon & SCON_REN) ? 1 : 0);
-            fflush(stderr);
-        }
-    }
-
-    // Atualiza estado anterior de SCON
-    last_scon = scon;
-}
-
 // Callback: firmware ESCREVEU em SBUF (TX)
 // CRITICAL: K-line half-duplex hardware behavior:
-// - TX byte goes to physical line via transceiver
+// - TX byte goes to physical line via transceiver (IMMEDIATE)
+// - TI flag rises after ~9 bit times (cycle-accurate timing)
 // - Transceiver ECHOES the byte back to RX automatically (same SBUF!)
 // - Firmware reads SBUF to validate echo, even with REN=0
 // - This is how L9637D/MC33199 transceivers work in half-duplex mode
@@ -814,27 +905,26 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
     (void)aRegister; // unused - always SFR_SBUF (0x99)
 
     uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
-    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
 
-    // TX: Envia byte para PTY (scanner externo)
+    // TX: Envia byte para PTY (scanner externo) - IMEDIATO
     g_uart.tx(sbuf);
+
+    // Agenda TI flag para subir após ~9 bit times (cycle-accurate)
+    uart_schedule_tx_done(cpu);
+
+    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+    scon &= ~SCON_RI; // Clear RI flag - RX byte not ready yet
+    EMU_SET_SFR(cpu, SFR_SCON, scon);
 
     // HARDWARE ECHO: TX byte permanece em SBUF (eco half-duplex)
     // Firmware lê SBUF de volta para validar o eco
     // SBUF já tem o valor correto (foi escrito pelo firmware)
 
-    // Seta TI (transmissão completa)
-    scon |= SCON_TI;
-    EMU_SET_SFR(cpu, SFR_SCON, scon);
-
     fprintf(stderr,
-            "[UART TX] [%lld] 0x%02X (via callback, SBUF keeps echo) CPU "
-            "PC=0x%04X\n",
-            UartBridge::now_ms(), sbuf, cpu->mPC);
+            "[UART TX] instr=%lld PC=0x%04X SBUF=0x%02X → TX imediato, TI "
+            "agendado\n",
+            g_instr_counter, cpu->mPC, sbuf);
     fflush(stderr);
-
-    // NOTE: RX injection agora é handled por cb_sfr_write_scon() callback
-    // (zero-latency quando firmware limpa RI flag)
 }
 
 // Callback: firmware LEU SBUF (RX)
@@ -877,12 +967,18 @@ static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
     if (aRegister == SFR_SCON) {
         uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
 
+        // Poll PTY for new data (maintains backward compatibility)
+        // Actual RX delivery is handled by uart_timing_tick events
         if (g_uart.rx_queue.empty()) {
             g_uart.read_and_process();
         }
 
-        if (!g_uart.rx_queue.empty()) {
-            scon |= 1; // Always set RI=1 to indicate data ready
+        // If queue has data and RI not yet set, set it
+        // (mostly for compatibility - events should already set RI)
+        if (!g_uart.rx_queue.empty() && !(scon & SCON_RI)) {
+            scon |= SCON_RI; // Always set RI=1 to indicate data ready
+            EMU_SET_SFR(cpu, SFR_SBUF, g_uart.rx_queue.front());
+            EMU_SET_SFR(cpu, SFR_SCON, scon);
         }
 
         return scon;
@@ -890,26 +986,12 @@ static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
 
     // Retorna o valor atual do SFR solicitado
     uint8_t sbuf = EMU_GET_SFR(cpu, aRegister);
-    /*fprintf(stderr,
-            "[UART RX-READ] Firmware leu ADDR=0x%02X VALUE=0x%02X PC=0x%04X\n",
-            aRegister, sbuf, cpu->mPC);
-    fflush(stderr);*/
-
     return sbuf;
 }
 
 // Callback: firmware ESCREVEU em S0CON (controle UART)
-// ESTRATÉGIA: Detectar quando firmware limpa RI flag (1→0) = "processou byte,
-// pronto para próximo" Isso permite ZERO-LATENCY RX injection - injeta
-// imediatamente quando firmware fica ready
-//
-// Firmware clearing RI significa:
-// 1. Leu o byte anterior de SBUF
-// 2. Processou o byte (ACK validation, data handling, etc.)
-// 3. Está PRONTO para receber próximo byte
-//
-// Callback dispara instantaneamente (1-2 instruções) vs polling (250-500
-// instruções)
+// Com cycle-accurate timing, RX injection agora é controlada por eventos
+// Este callback apenas monitora mudanças de configuração (REN, SM0/SM1, etc)
 static void cb_sfr_write_scon(em8051 *cpu, uint8_t aRegister) {
     (void)aRegister; // unused - sempre SFR_SCON (0x98)
 
@@ -936,26 +1018,6 @@ static void cb_sfr_write_scon(em8051 *cpu, uint8_t aRegister) {
                 ri_prev ? 1 : 0, ri_new ? 1 : 0, ren_new ? 1 : 0);
         fflush(stderr);
     }
-
-    // CRÍTICO: Detectar RI clear transition (1→0)
-    // Firmware acabou de processar byte anterior e está READY para próximo
-    if (!g_uart.rx_queue.empty()) {
-        unsigned char next_byte =
-            static_cast<unsigned char>(g_uart.rx_queue.front());
-
-        // Injeta IMEDIATAMENTE em SBUF
-        EMU_SET_SFR(cpu, SFR_SBUF, next_byte);
-
-        // Seta RI flag (byte ready para firmware ler)
-        scon_new |= SCON_RI;
-    } /*else {
-         // rx_queue vazio - firmware ready mas sem dados
-         // Isso é normal, firmware vai esperar próximo byte
-         fprintf(stderr,
-                 "[S0CON-CALLBACK] RI cleared mas rx_queue vazio (PC=0x%04X)\n",
-                 cpu->mPC);
-         fflush(stderr);
-     }*/
 
     // Update previous S0CON state para próximo callback
     scon_prev = scon_new;
@@ -1179,12 +1241,8 @@ int main(int argc, char **argv) {
     // Track last valid PC to detect jumps to invalid regions
     uint16_t last_pc = cpu.mPC;
 
-    // Global instruction counter for timing synchronization
-    // This counter tracks total emulated instructions (NOT wall-clock time!)
-    // Used by FiveBaudInjector for accurate 5-baud bit timing (198,000
-    // instr/bit) Increments once per tick() call = once per 8051 instruction
-    // executed
-    long long global_instruction_counter = 0;
+    // Set global CPU pointer for UART timing events
+    g_uart_cpu = &cpu;
 
     while (g_running.load()) {
         // Check if SIGUSR1 was received - start 5-baud injector
@@ -1193,15 +1251,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "\n[SIGUSR1] Received - starting 5-baud injection "
                             "(non-blocking)\n");
             fflush(stderr);
-            g_5baud_injector.start(global_instruction_counter);
+            g_5baud_injector.start(g_instr_counter);
         }
 
         // Process 5-baud state machine (non-blocking, instruction-synchronized)
-        g_5baud_injector.tick(global_instruction_counter);
+        g_5baud_injector.tick(g_instr_counter);
 
         for (int i = 0; i < steps_per_tick; ++i) {
-            global_instruction_counter++; // Increment BEFORE tick() to match
-                                          // actual instruction count
+            g_instr_counter++; // Increment BEFORE tick() to match
+                               // actual instruction count
 
             // Stack corruption bug @ PC=0x36DF was FIXED in emu8051/opcodes.c
             // (mov_mem_indir_rx now uses correct read_mem/write_mem_indir
@@ -1244,11 +1302,15 @@ int main(int argc, char **argv) {
             }
             last_pc = cpu.mPC;
             tick(&cpu);
+
+            // Process cycle-accurate UART timing events
+            uart_timing_tick(&cpu, g_instr_counter);
+
             detect_isr_call(&cpu); // Detect ISR vector calls
 
-            // NOTE: RX injection agora é handled por cb_sfr_write_scon()
-            // callback (zero-latency: dispara quando firmware limpa RI flag)
-            // Não precisa mais de polling aqui!
+            // NOTE: RX injection agora é handled por eventos UART
+            // (cycle-accurate: dispara após ~9.5 bit times)
+            // Não precisa mais de polling ou callbacks imediatos!
 
             // DEBUG: Trace PC when stuck in high-priority ISR
             static int main_loop_counter = 0;
@@ -1290,8 +1352,7 @@ int main(int argc, char **argv) {
                     fprintf(
                         stderr,
                         "[DECODER-4C34] Instr=%lld RAM_40: 0x%02X → 0x%02X (0b",
-                        global_instruction_counter, last_ram_40_decoder,
-                        ram_40);
+                        g_instr_counter, last_ram_40_decoder, ram_40);
                     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) {
                         fprintf(stderr, "%d", (ram_40 >> bit_idx) & 1);
                     }
@@ -1458,24 +1519,6 @@ int main(int argc, char **argv) {
         // Read PTY: detect BREAK, echo bytes (K-line half-duplex), queue for
         // UART RX
         g_uart.read_and_process();
-
-        // RX injection agora é handled por cb_sfr_write_scon() callback
-        // (ZERO-LATENCY!) Callback dispara quando firmware limpa RI flag =
-        // "ready for next byte"
-        //
-        // Fallback polling RARO apenas para edge case (firmware travado e nunca
-        // limpa RI) Polling a cada 10,000 quantums = ~5 milhões de instruções =
-        // ~5 segundos @ 1 MIPS
-        static int fallback_poll_counter = 0;
-        if (!g_hooks.has_hooks && (++fallback_poll_counter % 10000) == 0) {
-            // Safety net: se firmware travar e nunca escrever em S0CON
-            uart_poll_rx_only(&cpu);
-            fprintf(
-                stderr,
-                "[FALLBACK-POLL] Executed at counter=%d (rare safety net)\n",
-                fallback_poll_counter);
-            fflush(stderr);
-        }
 
         // Sleep to maintain ~1-2 MIPS logical speed
         nanosleep(&ts, nullptr);
