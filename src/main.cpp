@@ -135,15 +135,16 @@ static constexpr unsigned char SCON_TI = 0x02;
 static constexpr unsigned char SCON_RI = 0x01;
 
 struct UartBridge {
-    int mfd = -1;  // master pty
-    int sfd = -1;  // slave pty
+    int mfd = -1; // master pty
+    int sfd = -1; // slave pty
     std::string slave_path;
 
     // K-line signal injection control (SIGUSR1 mode)
     // When override_rxd=true, FiveBaudInjector controls the K-line state
     // When override_rxd=false, PTY/PARMRK mode is active (normal operation)
-    bool override_rxd = false;     // true = SIGUSR1 injection, false = PTY mode
-    bool override_state = true;    // Physical K-line state: true=12V(IDLE), false=0V(BREAK)
+    bool override_rxd = false; // true = SIGUSR1 injection, false = PTY mode
+    bool override_state =
+        true; // Physical K-line state: true=12V(IDLE), false=0V(BREAK)
 
     // K-line BREAK detection state (PTY/PARMRK mode)
     // rxd_line_state represents the PHYSICAL K-line voltage:
@@ -206,10 +207,18 @@ struct UartBridge {
             static_cast<tcflag_t>(~static_cast<tcflag_t>(IGNBRK | BRKINT));
         tio.c_iflag |= PARMRK;
 
+        // CRITICAL: Disable all buffering for immediate byte delivery
+        tio.c_cc[VMIN] = 1;  // Read 1 byte at a time
+        tio.c_cc[VTIME] = 0; // No timeout
+
         if (tcsetattr(sfd, TCSANOW, &tio) < 0) {
             perror("tcsetattr");
             return false;
         }
+
+        // Flush all pending data
+        tcflush(sfd, TCIOFLUSH);
+        tcflush(mfd, TCIOFLUSH);
 
         // Non-blocking no master
         int flags = fcntl(mfd, F_GETFL, 0);
@@ -222,9 +231,18 @@ struct UartBridge {
     }
 
     // envia byte para o terminal
+    // K-line half-duplex: Byte é enviado ao PTY e o scanner externo recebe +
+    // ecoa O echo do scanner volta pelo PTY e é capturado por
+    // read_and_process() NÃO colocamos na rx_queue aqui (evita duplicação
+    // quando firmware lê SBUF)
     void tx(unsigned char b) {
-        if (mfd >= 0)
-            (void)!write(mfd, &b, 1);
+        if (mfd >= 0) {
+            ssize_t written = write(mfd, &b, 1);
+            fprintf(stderr,
+                    "[PTY-TX] Byte 0x%02X written to PTY (result=%zd)\n", b,
+                    written);
+            fflush(stderr);
+        }
     }
 
     // Tenta ler 1 byte da queue RX; retorna -1 se vazia
@@ -234,6 +252,9 @@ struct UartBridge {
             return -1;
         unsigned char b = rx_queue.front();
         rx_queue.pop();
+        fprintf(stderr, "[RX-QUEUE] Dequeued 0x%02X (queue size was %zu)\n", b,
+                rx_queue.size() + 1);
+        fflush(stderr);
         return static_cast<int>(b);
     }
 
@@ -260,10 +281,17 @@ struct UartBridge {
                 break_detect_idx = 1;
                 return;
             }
-            // Normal data byte: ECHO + QUEUE + mark line as HIGH (12V idle)
-            (void)!write(mfd, &b, 1); // K-line echo (half-duplex)
-            rx_queue.push(b);
-            rxd_line_state = true; // Physical K-line returns to 12V
+            // Normal data byte do scanner externo:
+            // 1. ECHO de volta (simula half-duplex K-line no PTY)
+            // 2. QUEUE para RX do firmware
+            fprintf(stderr,
+                    "[PTY-RX] [%lld] Scanner sent 0x%02X, echoing back + "
+                    "queuing for firmware\n",
+                    UartBridge::now_ms(), b);
+            fflush(stderr);
+            (void)!write(mfd, &b, 1); // Echo K-line para o scanner
+            rx_queue.push(b);         // Entrega ao firmware
+            rxd_line_state = true;    // Physical K-line returns to 12V
             return;
         }
 
@@ -276,14 +304,15 @@ struct UartBridge {
             } else if (b == 0xFF) {
                 // Escaped 0xFF: real data byte is 0xFF
                 unsigned char ff = 0xFF;
-                (void)!write(mfd, &ff, 1); // Echo the 0xFF
+                (void)!write(mfd, &ff, 1); // Echo para o scanner
                 rx_queue.push(ff);
                 rxd_line_state = true;
                 break_detect_idx = 0;
                 return;
             } else {
                 // Was start of something else - echo and queue both bytes
-                (void)!write(mfd, break_detect_buffer, 2);
+                (void)!write(mfd, break_detect_buffer,
+                             2); // Echo para o scanner
                 rx_queue.push(break_detect_buffer[0]);
                 rx_queue.push(b);
                 rxd_line_state = true;
@@ -296,15 +325,17 @@ struct UartBridge {
             break_detect_buffer[2] = b;
             if (b == 0x00) {
                 // BREAK confirmed! (0xFF 0x00 0x00 pattern complete)
-                rxd_line_state = false; // Physical K-line goes LOW (0V BREAK/SPACE)
+                rxd_line_state =
+                    false; // Physical K-line goes LOW (0V BREAK/SPACE)
 
-                // UNBREAK timer strategy: Each BREAK extends the LOW period, but not indefinitely
-                // In 5-baud init, BREAKs arrive ~200ms apart (one per bit)
-                // We keep line LOW until 250ms after LAST BREAK received
-                // This accumulates multiple BREAKs into one continuous LOW period
-                // CRITICAL: Timer MUST be > 200ms to avoid premature UNBREAK between consecutive bits!
+                // UNBREAK timer strategy: Each BREAK extends the LOW period,
+                // but not indefinitely In 5-baud init, BREAKs arrive ~200ms
+                // apart (one per bit) We keep line LOW until 250ms after LAST
+                // BREAK received This accumulates multiple BREAKs into one
+                // continuous LOW period CRITICAL: Timer MUST be > 200ms to
+                // avoid premature UNBREAK between consecutive bits!
                 long long now = now_ms();
-                long long extend_to = now + 210; // 210ms > 200ms bit period
+                long long extend_to = now + 210;
 
                 // Only extend if new time is later (don't reset on each BREAK)
                 if (extend_to > low_until_ms) {
@@ -316,11 +347,11 @@ struct UartBridge {
                     "[K-LINE] BREAK detected (RXD=LOW, hold until +%lld ms)\n",
                     low_until_ms - now);
                 fflush(stderr);
-                // Do NOT echo BREAK, do NOT queue (BREAKs are control signals, not data)
+                // Do NOT echo BREAK, do NOT queue (BREAKs are control signals,
+                // not data)
             } else {
                 // Framing error or other pattern - treat as data
-                // Echo and queue the actual byte value
-                (void)!write(mfd, &b, 1);
+                (void)!write(mfd, &b, 1); // Echo para o scanner
                 rx_queue.push(b);
                 rxd_line_state = true;
             }
@@ -347,9 +378,11 @@ struct FiveBaudInjector {
     bool active = false;
     int current_bit = 0;
     long long bit_end_instruction = 0;
-    const int bits[10] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 1}; // 0x10 LSB-first + start(0) + stop(1)
+    const int bits[10] = {0, 0, 0, 0, 0,
+                          1, 0, 0, 0, 1}; // 0x10 LSB-first + start(0) + stop(1)
 
-    static constexpr long long INSTRUCTIONS_PER_BIT = 198000; // See timing calculation above
+    static constexpr long long INSTRUCTIONS_PER_BIT =
+        198000; // See timing calculation above
 
     void start(long long current_instruction) {
         if (active)
@@ -629,9 +662,10 @@ static void cb_sfr_write_ircon(em8051 *cpu, uint8_t addr) {
 static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
     if (addr == SFR_P4) {
 
-        // UNBREAK timer: Return K-line to HIGH (12V idle) after BREAK hold period expires
-        // This timer is set by read_and_process() when BREAK is detected (0xFF 0x00 0x00)
-        // Only active in PTY/PARMRK mode (not during SIGUSR1 injection)
+        // UNBREAK timer: Return K-line to HIGH (12V idle) after BREAK hold
+        // period expires This timer is set by read_and_process() when BREAK is
+        // detected (0xFF 0x00 0x00) Only active in PTY/PARMRK mode (not during
+        // SIGUSR1 injection)
         if (!g_uart.override_rxd) {
             // PTY/PARMRK mode: Handle UNBREAK timer
             if (g_uart.low_until_ms &&
@@ -642,7 +676,7 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
                     fflush(stderr);
                 }
                 g_uart.rxd_line_state = true; // Physical K-line returns to 12V
-                g_uart.low_until_ms = 0;       // Clear timer
+                g_uart.low_until_ms = 0;      // Clear timer
             }
         }
 
@@ -663,17 +697,16 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
         // This inversion is standard in automotive K-line transceivers.
         // The firmware expects P4.5=1 during BREAK, P4.5=0 during idle.
         if (!kline_physical_high)
-            p4 |= (1 << 5);   // K-line BREAK (0V) → P4.5 = 1
+            p4 |= (1 << 5); // K-line BREAK (0V) → P4.5 = 1
         else
-            p4 &= ~(1 << 5);  // K-line IDLE (12V) → P4.5 = 0
+            p4 &= ~(1 << 5); // K-line IDLE (12V) → P4.5 = 0
 
         static unsigned char last_p4_value = 0xFF;
         if (p4 != last_p4_value) {
-            fprintf(stderr, "[P4.5] Read: 0x%02X (K-line=%s, P4.5=%d); PC=0x%04X\n",
-                    p4,
+            fprintf(stderr,
+                    "[P4.5] Read: 0x%02X (K-line=%s, P4.5=%d); PC=0x%04X\n", p4,
                     kline_physical_high ? "IDLE(12V)" : "BREAK(0V)",
-                    (p4 >> 5) & 1,
-                    cpu->mPC);
+                    (p4 >> 5) & 1, cpu->mPC);
             fflush(stderr);
             last_p4_value = p4;
         }
@@ -697,27 +730,40 @@ static void cb_sfr_write(struct em8051 *aCPU, uint8_t aRegister) {
     }*/
 }
 
-// Estado para detectar mudanças de SBUF/SCON (polling de TX)
-static unsigned char last_sbuf = 0;
+// Estado para detectar mudanças de SCON (polling de RX)
+// TX agora é tratado via uart_sbuf_write_callback (SFR hook)
 static unsigned char last_scon = 0;
 static bool uart_initialized = false;
 
 // Polling de RX/TX caso não haja hooks
-static inline void uart_poll_nohooks(em8051 *cpu) {
+// RX-only polling: injects bytes from rx_queue into SBUF when RI=0
+// TX is now handled by uart_sbuf_write_callback (immediate via SFR hook)
+static inline void uart_poll_rx_only(em8051 *cpu) {
     unsigned char scon = EMU_GET_SFR(cpu, SFR_SCON);
-    unsigned char sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
 
     // Inicialização
     if (!uart_initialized) {
         last_scon = scon;
-        last_sbuf = sbuf;
         uart_initialized = true;
     }
 
-    // Debug: detecta mudanças em SCON (especialmente RI flag)
+    g_uart.read_and_process();
+
+    if (!g_uart.rx_queue.empty()) {
+        fprintf(stderr,
+                "[UART POLL] [%lld] RX queue has %zu bytes pending for "
+                "injection; CPU PC=%04X\n",
+                UartBridge::now_ms(), g_uart.rx_queue.size(), cpu->mPC);
+        fflush(stderr);
+    }
+
+    // Debug: detecta mudanças em SCON (especialmente RI e REN flags)
     if (scon != last_scon) {
         unsigned char ri_old = last_scon & SCON_RI;
         unsigned char ri_new = scon & SCON_RI;
+        unsigned char ren_old = last_scon & SCON_REN;
+        unsigned char ren_new = scon & SCON_REN;
+
         if (ri_old != ri_new) {
             fprintf(
                 stderr,
@@ -725,50 +771,194 @@ static inline void uart_poll_nohooks(em8051 *cpu) {
                 ri_old ? 1 : 0, ri_new ? 1 : 0, cpu->mPC, last_scon, scon);
             fflush(stderr);
         }
-    }
 
-    // TX: Detecta escrita em SBUF quando TI estava em 0
-    // (Write to SBUF clears TI, then we detect it and send to PTY)
-    if (sbuf != last_sbuf && !(last_scon & SCON_TI)) {
-        // Byte foi escrito em SBUF, envia para PTY
-        g_uart.tx(sbuf);
-
-        // Seta TI (transmissão completa - instantânea no nosso caso)
-        scon |= SCON_TI;
-        EMU_SET_SFR(cpu, SFR_SCON, scon);
-
-        fprintf(stderr, "[UART TX] 0x%02X\n", sbuf);
-        fflush(stderr);
-    }
-
-    // RX: PTY -> injeta em SBUF e seta RI se REN=1
-    int ch = g_uart.rx_try();
-    if (ch >= 0) {
-        if (scon & SCON_REN) {
-            EMU_SET_SFR(cpu, SFR_SBUF, static_cast<unsigned char>(ch));
-            scon |= SCON_RI;
-            EMU_SET_SFR(cpu, SFR_SCON, scon);
-
-            fprintf(stderr, "[UART RX] 0x%02X\n", static_cast<unsigned>(ch));
+        if (ren_old != ren_new) {
+            fprintf(stderr,
+                    "[SCON] REN mudou: %d → %d (PC=0x%04X, SCON: 0x%02X → "
+                    "0x%02X) %s\n",
+                    ren_old ? 1 : 0, ren_new ? 1 : 0, cpu->mPC, last_scon, scon,
+                    ren_new ? "ENABLED" : "DISABLED");
             fflush(stderr);
         }
     }
 
-    // Atualiza estado anterior
-    last_sbuf = sbuf;
+    // RX: PTY -> injeta em SBUF e seta RI
+    // APENAS se RI=0 (firmware processou byte anterior)
+    // CRITICAL: K-line half-duplex transceivers (L9637D/MC33199) deliver RX
+    // bytes EVEN with REN=0! The firmware expects to receive scanner ACKs
+    // via SBUF regardless of REN state during handshake.
+    if (!(scon & SCON_RI)) {
+        int ch = g_uart.rx_try();
+        if (ch >= 0) {
+            EMU_SET_SFR(cpu, SFR_SBUF, static_cast<unsigned char>(ch));
+            scon |= SCON_RI;
+            EMU_SET_SFR(cpu, SFR_SCON, scon);
+
+            fprintf(stderr, "[UART RX] 0x%02X injected into SBUF (REN=%d)\n",
+                    static_cast<unsigned>(ch), (scon & SCON_REN) ? 1 : 0);
+            fflush(stderr);
+        }
+    }
+
+    // Atualiza estado anterior de SCON
     last_scon = scon;
 }
 
-static void on_sfr_write(em8051 *cpu, uint8_t addr) {
-    if (addr == SFR_SBUF) {
-        uint8_t b = cpu->mSFR[addr - 0x80]; // valor recém-escrito em SBUF
-        /*g_uart.tx(b);                            // envia para o PTY
-        // Marca transmissão concluída (modelo não “cycle-accurate”)
-        uint8_t scon = cpu->mSFR[SFR_SCON - 0x80];
-        scon |= 0x02;                            // TI = 1
-        cpu->mSFR[SFR_SCON - 0x80] = scon;*/
-        fprintf(stderr, "[UART TX] 0x%02X\n", b);
+// Callback: firmware ESCREVEU em SBUF (TX)
+// CRITICAL: K-line half-duplex hardware behavior:
+// - TX byte goes to physical line via transceiver
+// - Transceiver ECHOES the byte back to RX automatically (same SBUF!)
+// - Firmware reads SBUF to validate echo, even with REN=0
+// - This is how L9637D/MC33199 transceivers work in half-duplex mode
+static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
+    (void)aRegister; // unused - always SFR_SBUF (0x99)
+
+    uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
+    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+
+    // TX: Envia byte para PTY (scanner externo)
+    g_uart.tx(sbuf);
+
+    // HARDWARE ECHO: TX byte permanece em SBUF (eco half-duplex)
+    // Firmware lê SBUF de volta para validar o eco
+    // SBUF já tem o valor correto (foi escrito pelo firmware)
+
+    // Seta TI (transmissão completa)
+    scon |= SCON_TI;
+    EMU_SET_SFR(cpu, SFR_SCON, scon);
+
+    fprintf(stderr,
+            "[UART TX] [%lld] 0x%02X (via callback, SBUF keeps echo) CPU "
+            "PC=0x%04X\n",
+            UartBridge::now_ms(), sbuf, cpu->mPC);
+    fflush(stderr);
+
+    // NOTE: RX injection agora é handled por cb_sfr_write_scon() callback
+    // (zero-latency quando firmware limpa RI flag)
+}
+
+// Callback: firmware LEU SBUF (RX)
+static uint8_t uart_sbuf_read_callback(em8051 *cpu, uint8_t aRegister) {
+    if (aRegister != SFR_SBUF) {
+        [[unlikely]];
+        return EMU_GET_SFR(cpu, aRegister); // Should not happen
     }
+
+    uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
+    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+
+    if (scon & SCON_RI) {
+        // Temos bytes na fila
+        if (!g_uart.rx_queue.empty()) {
+            // Remove byte lido da fila
+            sbuf = g_uart.rx_queue.front();
+            g_uart.rx_queue.pop();
+            fprintf(stderr,
+                    "[UART RX-READ] Firmware leu SBUF=0x%02X, dequeued byte "
+                    "from RX queue (size now %zu)\n",
+                    sbuf, g_uart.rx_queue.size());
+            fflush(stderr);
+        } else {
+            fprintf(stderr,
+                    "[UART RX-READ] Firmware leu SBUF=0x%02X, but RX queue "
+                    "was already empty!\n",
+                    sbuf);
+            fflush(stderr);
+        }
+    }
+
+    fprintf(stderr, "[UART RX-READ] Firmware leu SBUF=0x%02X\n", sbuf);
+    fflush(stderr);
+
+    return sbuf;
+}
+
+static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
+    if (aRegister == SFR_SCON) {
+        uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+
+        if (g_uart.rx_queue.empty()) {
+            g_uart.read_and_process();
+        }
+
+        if (!g_uart.rx_queue.empty()) {
+            scon |= 1; // Always set RI=1 to indicate data ready
+        }
+
+        return scon;
+    }
+
+    // Retorna o valor atual do SFR solicitado
+    uint8_t sbuf = EMU_GET_SFR(cpu, aRegister);
+    /*fprintf(stderr,
+            "[UART RX-READ] Firmware leu ADDR=0x%02X VALUE=0x%02X PC=0x%04X\n",
+            aRegister, sbuf, cpu->mPC);
+    fflush(stderr);*/
+
+    return sbuf;
+}
+
+// Callback: firmware ESCREVEU em S0CON (controle UART)
+// ESTRATÉGIA: Detectar quando firmware limpa RI flag (1→0) = "processou byte,
+// pronto para próximo" Isso permite ZERO-LATENCY RX injection - injeta
+// imediatamente quando firmware fica ready
+//
+// Firmware clearing RI significa:
+// 1. Leu o byte anterior de SBUF
+// 2. Processou o byte (ACK validation, data handling, etc.)
+// 3. Está PRONTO para receber próximo byte
+//
+// Callback dispara instantaneamente (1-2 instruções) vs polling (250-500
+// instruções)
+static void cb_sfr_write_scon(em8051 *cpu, uint8_t aRegister) {
+    (void)aRegister; // unused - sempre SFR_SCON (0x98)
+
+    if (aRegister != SFR_SCON) {
+        return;
+    }
+
+    unsigned char scon_new = EMU_GET_SFR(cpu, SFR_SCON);
+
+    // Track previous S0CON value para detectar transições
+    static unsigned char scon_prev = 0x50; // Initial: Mode 1, REN=1, TI=0, RI=0
+
+    unsigned char ri_prev = scon_prev & SCON_RI;
+    unsigned char ri_new = scon_new & SCON_RI;
+    unsigned char ren_new = scon_new & SCON_REN;
+
+    // DEBUG: Log S0CON writes (primeiros 50 para ver padrão)
+    static int scon_write_count = 0;
+    if (scon_write_count < 50) {
+        fprintf(stderr,
+                "[S0CON-WRITE] #%d PC=0x%04X S0CON: 0x%02X→0x%02X (RI: %d→%d, "
+                "REN=%d)\n",
+                ++scon_write_count, cpu->mPC, scon_prev, scon_new,
+                ri_prev ? 1 : 0, ri_new ? 1 : 0, ren_new ? 1 : 0);
+        fflush(stderr);
+    }
+
+    // CRÍTICO: Detectar RI clear transition (1→0)
+    // Firmware acabou de processar byte anterior e está READY para próximo
+    if (!g_uart.rx_queue.empty()) {
+        unsigned char next_byte =
+            static_cast<unsigned char>(g_uart.rx_queue.front());
+
+        // Injeta IMEDIATAMENTE em SBUF
+        EMU_SET_SFR(cpu, SFR_SBUF, next_byte);
+
+        // Seta RI flag (byte ready para firmware ler)
+        scon_new |= SCON_RI;
+    } /*else {
+         // rx_queue vazio - firmware ready mas sem dados
+         // Isso é normal, firmware vai esperar próximo byte
+         fprintf(stderr,
+                 "[S0CON-CALLBACK] RI cleared mas rx_queue vazio (PC=0x%04X)\n",
+                 cpu->mPC);
+         fflush(stderr);
+     }*/
+
+    // Update previous S0CON state para próximo callback
+    scon_prev = scon_new;
 }
 
 static bool load_bin_to_code(em8051 *cpu, const char *path,
@@ -854,7 +1044,23 @@ int main(int argc, char **argv) {
     cpu.mUpperData = upper_data; // ALWAYS allocate for Bosch MA1.7
     (void)want8052;              // Suppress unused variable warning
 
-    cpu.sfrwrite[SFR_SBUF - 0x80] = on_sfr_write;
+    // Register UART callbacks for SBUF (immediate TX/RX via SFR hooks)
+    cpu.sfrwrite[SFR_SBUF - 0x80] = uart_sbuf_write_callback;
+    cpu.sfrread[SFR_SBUF - 0x80] = uart_sbuf_read_callback;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: SBUF (0x%02X) -> UART TX/RX\n",
+            static_cast<unsigned int>(SFR_SBUF));
+    fflush(stderr);
+
+    // Register S0CON write callback for zero-latency RX injection
+    // Detecta quando firmware limpa RI flag = "ready for next byte"
+    cpu.sfrwrite[SFR_SCON - 0x80] = cb_sfr_write_scon;
+    cpu.sfrread[SFR_SCON - 0x80] = uart_generic_read_callback;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: S0CON (0x%02X) -> Zero-latency RX "
+            "injection\n",
+            static_cast<unsigned int>(SFR_SCON));
+    fflush(stderr);
 
     // Reset - agora é seguro chamar com aWipe=true
     fprintf(stderr, "[DEBUG] Chamando reset()...\n");
@@ -966,16 +1172,18 @@ int main(int argc, char **argv) {
 
     // temporização: 1 MIPS (8051 real com cristal 12 MHz)
     // 8051: 12 MHz crystal / 12 cycles per instruction = 1 MIPS
-    const int steps_per_tick = 500; // quantum (1 MIPS)
-    struct timespec ts{0, 500000};  // 0.5 ms
+    const int steps_per_tick =
+        500; // quantum (1 MIPS) - DO NOT CHANGE (breaks 5-baud timing!)
+    struct timespec ts{0, 500000}; // 0.5 ms
 
     // Track last valid PC to detect jumps to invalid regions
     uint16_t last_pc = cpu.mPC;
 
     // Global instruction counter for timing synchronization
     // This counter tracks total emulated instructions (NOT wall-clock time!)
-    // Used by FiveBaudInjector for accurate 5-baud bit timing (198,000 instr/bit)
-    // Increments once per tick() call = once per 8051 instruction executed
+    // Used by FiveBaudInjector for accurate 5-baud bit timing (198,000
+    // instr/bit) Increments once per tick() call = once per 8051 instruction
+    // executed
     long long global_instruction_counter = 0;
 
     while (g_running.load()) {
@@ -992,7 +1200,8 @@ int main(int argc, char **argv) {
         g_5baud_injector.tick(global_instruction_counter);
 
         for (int i = 0; i < steps_per_tick; ++i) {
-            global_instruction_counter++; // Increment BEFORE tick() to match actual instruction count
+            global_instruction_counter++; // Increment BEFORE tick() to match
+                                          // actual instruction count
 
             // Stack corruption bug @ PC=0x36DF was FIXED in emu8051/opcodes.c
             // (mov_mem_indir_rx now uses correct read_mem/write_mem_indir
@@ -1036,6 +1245,10 @@ int main(int argc, char **argv) {
             last_pc = cpu.mPC;
             tick(&cpu);
             detect_isr_call(&cpu); // Detect ISR vector calls
+
+            // NOTE: RX injection agora é handled por cb_sfr_write_scon()
+            // callback (zero-latency: dispara quando firmware limpa RI flag)
+            // Não precisa mais de polling aqui!
 
             // DEBUG: Trace PC when stuck in high-priority ISR
             static int main_loop_counter = 0;
@@ -1246,8 +1459,23 @@ int main(int argc, char **argv) {
         // UART RX
         g_uart.read_and_process();
 
-        if (!g_hooks.has_hooks)
-            uart_poll_nohooks(&cpu);
+        // RX injection agora é handled por cb_sfr_write_scon() callback
+        // (ZERO-LATENCY!) Callback dispara quando firmware limpa RI flag =
+        // "ready for next byte"
+        //
+        // Fallback polling RARO apenas para edge case (firmware travado e nunca
+        // limpa RI) Polling a cada 10,000 quantums = ~5 milhões de instruções =
+        // ~5 segundos @ 1 MIPS
+        static int fallback_poll_counter = 0;
+        if (!g_hooks.has_hooks && (++fallback_poll_counter % 10000) == 0) {
+            // Safety net: se firmware travar e nunca escrever em S0CON
+            uart_poll_rx_only(&cpu);
+            fprintf(
+                stderr,
+                "[FALLBACK-POLL] Executed at counter=%d (rare safety net)\n",
+                fallback_poll_counter);
+            fflush(stderr);
+        }
 
         // Sleep to maintain ~1-2 MIPS logical speed
         nanosleep(&ts, nullptr);
