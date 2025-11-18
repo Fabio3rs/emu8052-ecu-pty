@@ -71,7 +71,7 @@ With this emulator:
 
 ### Technical Note: Emulator Core Bug Discovery
 
-Testing MA1.7 firmware revealed a bug in emu8051 core (`opcodes.c:854`). The `MOV @Ri, direct` opcode incorrectly handled memory access functions, causing stack corruption after ~12k instructions. A 2-line fix resolved the issue. See [BUGFIXES.md](BUGFIXES.md) for details.
+Testing MA1.7 firmware revealed a bug in emu8051 core (`opcodes.c:854`). The `MOV @Ri, direct` opcode incorrectly handled memory access functions, causing stack corruption after ~12k instructions. A 2-line fix resolved the issue.
 
 ---
 
