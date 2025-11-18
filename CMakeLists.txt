@@ -68,7 +68,7 @@ if(ENABLE_SANITIZERS)
         -fsanitize=vptr
         -g
     )
-    
+
     add_compile_options(${SANITIZER_FLAGS})
     add_link_options(${SANITIZER_FLAGS})
 

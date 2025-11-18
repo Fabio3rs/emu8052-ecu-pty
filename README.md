@@ -1,10 +1,24 @@
 # emu8051-tty: Automotive ECU Emulator with PTY Interface
 
-A C++20 project that integrates the [emu8051](https://github.com/jarikomppa/emu8051) 8051/8052 microcontroller emulator with a PTY (pseudo-terminal) interface, enabling safe testing and development of automotive K-line diagnostic protocols before deployment on real hardware.
+A C++20 project integrating the [emu8051](https://github.com/jarikomppa/emu8051) 8051/8052 microcontroller emulator with a PTY (pseudo-terminal) interface for testing and development of automotive K-line diagnostic protocols.
 
-**Target Hardware:** Bosch Motronic MA1.7 ECU (Siemens SAB 80C517)
-**Protocol:** ISO 9141-2 K-line @ 4800 8N1 baud
-**Key Achievement:** Cycle-accurate UART timing and 5-baud slow-init emulation
+**Current Scope:** Specialized emulation for **Bosch Motronic MA1.7 ECU (Siemens SAB 80C517)** with Fiat Tipo 1.6ie firmware.
+
+**Target Hardware:** Bosch Motronic MA1.7 (Siemens SAB 80C517)
+**Supported Firmware:** Fiat Tipo 1.6ie (32KB ROM, type code 27C256)
+**Protocol:** ISO 9141-2 K-line @ 4800 8N1
+**Implementation:** Cycle-accurate UART timing and 5-baud slow-init support
+
+### Project Status
+**Type:** Personal research and testing project
+**Code Availability:** Public for backup and community contribution
+**Warranty:** No guarantee of correct operation. Use at your own risk.
+**Contributions:** Welcome. Please read existing documentation and test thoroughly before opening pull requests.
+
+### Use Case
+Enables K-line diagnostic software developers to test scanner firmware against the Bosch MA1.7 ECU with full system visibility, rapid iteration, and zero hardware risk.
+
+**Limitations:** Implementation is MA1.7-specific. Adapting to other 8052-based ECUs requires new firmware binaries, SFR callbacks, and timing tuning.
 
 ---
 
@@ -17,355 +31,115 @@ A C++20 project that integrates the [emu8051](https://github.com/jarikomppa/emu8
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [Development with Claude](#development-with-claude)
-- [Technical Documentation](#technical-documentation)
+- [Future Work](#future-work)
 - [License](#license)
 
 ---
 
 ## Why Emulator Testing?
 
-Developing automotive diagnostic scanner software directly on real ECU hardware is **risky, slow, and expensive**. This project demonstrates why emulator-based testing is essential:
+Developing automotive diagnostic software directly on real ECU hardware is risky, expensive, and slow. Emulator-based development enables fast iteration with full system visibility and zero hardware damage risk.
 
-### 1. **Safety First: No Hardware at Risk**
-- ECUs cost hundreds to thousands of dollars
-- Malformed protocol packets can brick the ECU
-- No risk of accidental flash corruption or permanent damage
-- Test aggressive reverse engineering without fear
-
-### 2. **Deep Inspection Capabilities**
-Unlike real hardware, emulators provide complete visibility:
-- **CPU State Access:** Monitor PC, SP, ACC, PSW at every instruction
-- **Memory Inspection:** Read/write any RAM, ROM, SFR location
-- **Protocol Tracing:** Log internal decoder state (e.g., shift register values)
-- **Stack Analysis:** Detect overflows, corruption, call chains
-- **Instruction Counting:** Precise timing analysis (990,000 instructions/second)
-
-Example from this project:
+### Workflow Comparison
 ```
-[DECODER-4C34] Instr=1254890 RAM_40: 0x08 → 0x10 (0b00010000) P4.5=0
-[DECODER-4C44] Entry: RAM_17=0x7F, RAM_40=0x10, A=0x10
-[DECODER-4C48] Before cmp: A=0x10 (expect 0x10), RAM_40=0x10
-```
-This level of detail is **impossible** with an oscilloscope or real hardware.
+Without emulator:
+  Code → Physical ECU (setup time) → Debug on real hardware → Slow iteration
 
-### 3. **Rapid Iteration**
-- Modify protocol implementation → recompile → test in seconds
-- No physical hardware setup/teardown
-- Deterministic reproduction (same ROM = same behavior)
-- Instant reset to known state
-
-### 4. **Bug Discovery: Real-World Example**
-
-During development, we discovered a **critical bug in the emu8051 core** that had existed for years:
-
-**The Bug (opcodes.c:854):**
-```c
-// BROKEN CODE (before fix):
-case 0x87: // MOV @Ri, direct
-    write_mem(aCPU, aCPU->mData[reg], read_mem_indir(aCPU, aCPU->mPC++));
-    //       ^^^^^^^^ WRONG!          ^^^^^^^^^^^^^^^^ WRONG!
+With this emulator:
+  Code → Emulator (fast, safe, full visibility) → Final validation on ECU
 ```
 
-**Impact:**
-- Firmware crashed every ~12,000 instructions (PC=0x36DF)
-- Stack pointer corrupted (SP: 0xD0 → 0x00)
-- Wrote to **SFR[0x01] (stack pointer)** instead of **UpperData[0x01]**
-- Made testing K-line protocol **completely impossible**
+### Benefits
 
-**The Fix:**
-```c
-// FIXED CODE:
-case 0x87: // MOV @Ri, direct
-    write_mem_indir(aCPU, aCPU->mData[reg], read_mem(aCPU, aCPU->mPC++));
-    //       ^^^^^^^^^^^ CORRECT!            ^^^^^^^^^ CORRECT!
-```
+**1. Safety:** Zero risk of ECU damage. Test malformed protocols without hardware consequences.
 
-**Outcome:**
-- Firmware now runs indefinitely (millions of instructions, 0% crash rate)
-- **Discovered and fixed WITHOUT risking real ECU**
-- Emulator testing paid for itself immediately
+**2. System Visibility:** Full access to CPU state, memory, registers, and timing at every instruction. Impossible on real hardware.
 
-### 5. **Protocol Reverse Engineering**
+**3. Rapid Iteration:** Recompile and test in seconds. Deterministic behavior enables fast debugging.
 
-Automotive protocols are poorly documented. Emulation enables:
-- Identify K-line decoder routines (found @ PC=0x4C34 in MA1.7 firmware)
-- Discover non-standard UART usage (P4.5 GPIO polling instead of UART RX)
-- Map SFR register usage and workarounds needed
-- Understand transceiver inversion requirements
+**4. Reverse Engineering:** Understand ECU-specific protocol quirks (e.g., MA1.7's P4.5 GPIO-based K-line) safely.
+- Week 6: Possible ECU damage, restart with new hardware
 
-**Bottom Line:** Without emulator testing, we would have:
-- Spent days debugging on expensive hardware
-- Potentially damaged the ECU with malformed packets
-- Never discovered the critical emulator bug
-- Wasted time on blind trial-and-error with real hardware
+**With this emulator:**
+- Week 1: Build scanner prototype
+- Week 2: Test against MA1.7 emulator with full system visibility → find and fix protocol bugs
+- Week 3: Add edge case handling (error conditions, timeouts)
+- Week 4: Final validation on real hardware
+- Total: 4 weeks vs 6+ weeks, plus zero hardware risk
 
 ---
 
-## Technical Achievements
+### Technical Note: Emulator Core Bug Discovery
 
-This project demonstrates several advanced emulation techniques:
-
-### ✅ Fixed Critical Emulator Core Bug
-
-**Problem:** Stack corruption every ~12k instructions
-**Root Cause:** Wrong memory access functions in `MOV @Ri, direct` opcode
-**Solution:** 2-line fix using correct `read_mem()` and `write_mem_indir()`
-**Impact:** Firmware now runs indefinitely (tested: 50+ million instructions)
-
-See: [BUG_REPORT_STACK_CORRUPTION.md](BUG_REPORT_STACK_CORRUPTION.md), [BUG_FIXED_SUCCESS.md](BUG_FIXED_SUCCESS.md)
-
-### ✅ K-line Transceiver Signal Inversion
-
-**Discovery:** Real hardware uses transceiver chips (L9637D, MC33199) that **invert** the K-line signal between the physical bus and the microcontroller.
-
-**Signal Chain:**
-```
-Physical K-line Bus → Transceiver Chip → Microcontroller Pin P4.5
-─────────────────────────────────────────────────────────────────
-12V (IDLE/MARK)     →   INVERTS       →   P4.5 = 0
-0V  (BREAK/SPACE)   →   INVERTS       →   P4.5 = 1
-```
-
-**Implementation:** Added inversion logic in `cb_sfr_read()` callback:
-```cpp
-bool kline_physical_high = g_uart.override_rxd ?
-    g_uart.override_state : g_uart.rxd_line_state;
-
-// CRITICAL: Transceiver inverts the signal!
-if (!kline_physical_high)
-    p4 |= (1 << 5);   // K-line BREAK (0V) → P4.5 = 1
-else
-    p4 &= ~(1 << 5);  // K-line IDLE (12V) → P4.5 = 0
-```
-
-See: [KLINE_TRANSCEIVER.md](KLINE_TRANSCEIVER.md)
-
-### ✅ ISO 9141-2 Slow-Init (5 Baud)
-
-**Challenge:** ISO 9141-2 handshake uses 5-baud signaling (200ms per bit) to transmit the ECU address (0x10).
-
-**Timing Calculation:**
-- Crystal: 11.880 MHz
-- Instruction rate: 11,880,000 / 12 = **990,000 instructions/second**
-- Bit period: 1/5 = 0.2 seconds = **200ms**
-- Instructions per bit: 990,000 × 0.2 = **198,000 instructions**
-
-**Solution:** `FiveBaudInjector` uses instruction-based timing (NOT wall-clock time):
-```cpp
-struct FiveBaudInjector {
-    static constexpr long long INSTRUCTIONS_PER_BIT = 198000;
-
-    void tick(long long current_instruction) {
-        if (current_instruction < bit_end_instruction)
-            return;  // Not time yet
-
-        current_bit++;
-        bit_end_instruction = current_instruction + INSTRUCTIONS_PER_BIT;
-        g_uart.override_state = bits[current_bit] != 0;
-    }
-};
-```
-
-**Trigger:** Send `SIGUSR1` signal to inject 5-baud sequence for testing.
-
-### ✅ Cycle-Accurate UART Timing
-
-**Real SAB 80C517 Behavior:**
-- **TX**: Write to SBUF → byte transmitted → **TI flag rises at START of stop bit** (~9 bit times)
-- **RX**: Byte received → **RI flag rises in MIDDLE of stop bit** (~9.5 bit times)
-
-**Implementation:** Event-based scheduler using instruction count:
-```cpp
-// TX: Schedule TI flag after ~9 bit times
-void uart_schedule_tx_done(em8051 *cpu) {
-    long long ipb = uart_instr_per_bit(cpu);  // ~206 @ 4800 baud
-    UartEvent ev;
-    ev.kind = UartEventKind::TxDone;
-    ev.when_icount = g_instr_counter + 9 * ipb;  // ~1854 instructions
-    g_uart_events.push(ev);
-}
-
-// RX: Schedule RI flag after ~9.5 bit times
-void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
-    long long ipb = uart_instr_per_bit(cpu);
-    UartEvent ev;
-    ev.kind = UartEventKind::RxByte;
-    ev.data = b;
-    ev.when_icount = g_instr_counter +
-        static_cast<long long>(llround(9.5 * ipb));  // ~1959 instructions
-    g_uart_events.push(ev);
-}
-```
-
-**Timing @ 4800 baud:**
-- Instructions per bit: **~206**
-- TX → TI delay: **~1854 instructions (~2ms real-time)**
-- RX → RI delay: **~1959 instructions (~2ms real-time)**
-
-**Benefits:**
-- Accurate protocol timing simulation
-- Detects timing-sensitive bugs
-- Tests firmware ISR latency handling
-- Validates ACK/NAK timing requirements
-
-### ✅ PARMRK BREAK Detection
-
-**Challenge:** K-line uses BREAK conditions (prolonged LOW state) for signaling.
-
-**Solution:** PTY configured with PARMRK mode:
-```cpp
-tio.c_iflag &= ~(IGNBRK | BRKINT);
-tio.c_iflag |= PARMRK;  // BREAK appears as: 0xFF 0x00 0x00
-```
-
-**State Machine:**
-```cpp
-void read_and_process() {
-    unsigned char b;
-    read(mfd, &b, 1);
-
-    // Detect 0xFF 0x00 0x00 sequence → BREAK
-    if (break_pattern_matches) {
-        rxd_line_state = false;  // Physical K-line goes LOW
-        low_until_ms = now_ms() + 210;  // UNBREAK timer
-    }
-}
-```
-
-**UNBREAK Timer:** Holds line LOW for 250ms after last BREAK to model physical line capacitance and transceiver hold time.
-
-### ✅ 8052 Extended Features
-
-**Siemens SAB 80C517 Support:**
-- **Timer 2** (TL2, TH2, T2CON, RCAP2L, RCAP2H)
-- **Upper RAM** (128 bytes @ 0x80-0xFF, indirect addressing)
-- **Additional Ports** (P4, P5)
-- **ADC** (simulated via IRCON register workaround)
-- **CCU** (Capture/Compare Unit)
-
-**Memory Allocation (CRITICAL):**
-```cpp
-// MUST allocate BEFORE calling reset()!
-static unsigned char code_memory[0x10000];
-static unsigned char ext_data_memory[0x10000];
-static unsigned char upper_data[128];
-
-cpu.mCodeMem = code_memory;
-cpu.mExtData = ext_data_memory;
-cpu.mUpperData = upper_data;  // 8052 feature
-
-reset(&cpu, true);  // Safe - memory already allocated
-```
-
-**Workarounds Implemented:**
-1. **IP0 Priority Fix:** Force Timer 0 to HIGH priority (prevents Timer 2 monopolization)
-2. **ADC Emulation:** Force IRCON.0=1 (simulates "ADC always ready")
-3. **EEPROM Init:** Initialize XRAM[0xF8]=0xFF to prevent reset loop
-
-See: [FIRMWARE_MA17_UART_ANALYSIS.md](FIRMWARE_MA17_UART_ANALYSIS.md)
+Testing MA1.7 firmware revealed a bug in emu8051 core (`opcodes.c:854`). The `MOV @Ri, direct` opcode incorrectly handled memory access functions, causing stack corruption after ~12k instructions. A 2-line fix resolved the issue. See [BUGFIXES.md](BUGFIXES.md) for details.
 
 ---
 
-## The Journey: Challenges Overcome
+## Technical Implementation
 
-### Phase 1: The Crash (Discovery)
+### Emulation Capabilities
 
-**Symptom:** Firmware crashed every ~12,000 instructions at PC=0x36DF
-**Evidence:**
-```
-[ALERT] PC entrou em região inválida!
-[ALERT] last_PC=0x36DE → current_PC=0x36DF
-[ALERT] Stack corruption: SP: 0xD0 → 0x00
-```
+**K-line Signal Inversion:** Real hardware uses transceiver ICs (L9637D, MC33199) that invert the K-line signal. Implemented in P4.5 read callback for correct signal handling.
 
-**Initial Hypothesis:** Firmware bug or stack overflow
-**Reality:** Emulator core bug
+**5-Baud Slow-Init:** ISO 9141-2 handshake at 5 baud (200ms/bit). Instruction-based timing generator synced to CPU execution.
 
-### Phase 2: Root Cause Analysis
+**Cycle-Accurate UART Timing:** Event-based scheduler processes TI/RI flag events at appropriate instruction counts, enabling accurate protocol timing validation.
 
-**Debugging Strategy:**
-1. Instrumentation at PC=0x36DF to log opcode, registers, stack
-2. Discovered opcode **0x87** (`MOV @R1, direct`) was corrupting SP
-3. Traced to `opcodes.c:854` - wrong memory access functions
-4. Analyzed: Should write to **UpperData[0x01]** but wrote to **SFR[0x01] (SP register)**
+**PARMRK BREAK Detection:** PTY configured for PARMRK mode to detect K-line BREAK conditions (0xFF 0x00 0x00 sequence).
 
-**Key Insight:** Address 0x81 means different things:
-- **Direct addressing:** SFR[0x81] = Stack Pointer (SP)
-- **Indirect addressing:** UpperData[0x01] = General purpose RAM
+**8052 Extended Features:**
+- Timer 2 (TL2, TH2, T2CON, RCAP2L, RCAP2H)
+- Upper RAM (128 bytes @ 0x80-0xFF, indirect addressing)
+- Ports P4 and P5
+- ADC simulation (IRCON workaround)
+- Dual SBUF buffers (separate TX/RX for half-duplex)
 
-The bug used direct access for both, causing SP corruption.
+---
 
-### Phase 3: The Fix
+## Development Notes
 
-**Changed 2 lines:**
-```diff
-- write_mem(aCPU, aCPU->mData[reg], read_mem_indir(aCPU, aCPU->mPC++));
-+ write_mem_indir(aCPU, aCPU->mData[reg], read_mem(aCPU, aCPU->mPC++));
-```
+### Known Implementation Details
 
-**Testing:**
-- Firmware now runs indefinitely (tested: 50+ million instructions)
-- 0% crash rate
-- Stack pointer stable (SP stays in 0x08-0xDF range)
-- K-line protocol testing now possible
+**8052 Memory Allocation:** Upper RAM must be allocated before CPU reset. Addresses 0x80-0xFF are dual-use: direct addressing accesses SFR, indirect addressing accesses Upper RAM.
 
-### Phase 4: K-line Protocol Challenges
+**MA1.7-Specific Behavior:**
+- K-line RX uses P4.5 GPIO polling (not UART hardware)
+- Non-standard SBUF dual-buffer model
+- ADC readiness simulation via IRCON
+- EEPROM watchdog initialization requirement
 
-**Discovery 1: Non-Standard UART Usage**
-- Firmware does NOT use 8051 UART hardware for K-line RX
-- Uses **P4.5 GPIO polling** + shift register (RAM_40)
-- REN (receive enable) stays at 0 during slow-init
+**Tested Execution:** Firmware runs indefinitely with stable stack pointer and correct interrupt handling. Estimated 50+ million instructions executed successfully.
 
-**Discovery 2: Transceiver Inversion**
-- Initial emulation: P4.5 = physical K-line voltage (wrong!)
-- Real hardware: L9637D transceiver **inverts** the signal
-- Fix: Added inversion logic in P4 read callback
+---
 
-**Discovery 3: Half-Duplex Echo**
-- TX bytes automatically appear in RX buffer
-- Transceiver characteristic, not firmware behavior
-- Simulated in PTY by echoing transmitted bytes
+**Root Cause:** `MOV @R1, direct` opcode incorrectly used direct addressing for indirect memory access, corrupting SP register. Address 0x81 has dual meaning (SFR when direct, Upper RAM when indirect).
 
-### Phase 5: Timing Refinement
+**Fix:** Two-line change in `opcodes.c:854` switching to proper indirect access function. See [BUGFIXES.md](BUGFIXES.md).
 
-**Challenge:** Original implementation set TI/RI flags immediately (unrealistic)
-
-**Solution:** Cycle-accurate event scheduler:
-- TI flag: Delayed ~2ms after SBUF write (9 bit times)
-- RI flag: Delayed ~2ms after byte reception (9.5 bit times)
-- Instruction-based timing (NOT wall-clock)
-
-**Result:** Realistic protocol timing for testing scanner software
+**Result:** Firmware runs indefinitely (50+ million instructions tested) with stable stack pointer.
 
 ---
 
 ## Features
 
-### Core Capabilities
-- **8051/8052 Emulation:** Full instruction set via jarikomppa/emu8051 core
-- **PTY Interface:** Virtual serial port at `/dev/pts/N` for external scanner connection
-- **K-line Protocol:** ISO 9141-2 @ 4800 8N1 baud
-- **Cycle-Accurate UART:** Event-based TI/RI flag timing
-- **BREAK Detection:** PARMRK mode for line state monitoring
-- **5-Baud Slow-Init:** Instruction-synchronized bit generation
+**MA1.7-Specific Emulation:**
+- Complete 8052 instruction set with SAB 80C517 extensions
+- Cycle-accurate UART timing using event-driven scheduler
+- K-line protocol (ISO 9141-2) with P4.5 GPIO-based RX (non-standard UART)
+- Dual SBUF buffers (separate TX/RX) for half-duplex communication
+- BREAK detection via PARMRK mode
+- Timer 2, Upper RAM, Ports P4/P5, ADC/EEPROM simulation
 
-### Debugging & Instrumentation
-- **PC-Level Tracing:** Log execution at specific addresses
-- **Memory Inspection:** Monitor RAM, ROM, SFR changes
-- **Stack Overflow Detection:** Automatic SP bounds checking
-- **ISR Tracking:** Detect Timer 0/1/2 and UART interrupts
-- **Protocol Decoder Logging:** Track K-line shift register state
+**Debugging:**
+- PC-level instruction tracing with register inspection
+- Memory access monitoring (RAM, ROM, SFR)
+- Stack overflow detection (0x08-0xDF valid range)
+- Interrupt tracking (Timer 0/1/2, UART)
 
-### 8052 Extended Support
-- Timer 2 (TL2, TH2, T2CON, RCAP2L, RCAP2H)
-- Upper RAM (128 bytes @ 0x80-0xFF)
-- Additional Ports (P4, P5)
-- ADC simulation (IRCON workaround)
-
-### Signal Injection
-- **SIGUSR1 Trigger:** Inject 5-baud slow-init sequence for testing
-- **Manual Mode:** PTY accepts input from external scanner
-- **Dual Mode:** Switch between injection and PTY dynamically
+**Testing:**
+- 5-baud slow-init injection (SIGUSR1 signal)
+- Manual PTY connection for external scanner
+- 50+ million instruction execution validation
 
 ---
 
@@ -414,8 +188,8 @@ ctest
 
 **Output:**
 ```
-[emu8051-pty] PTY pronto em: /dev/pts/12 (4800 8N1)
-Conecte seu scanner a esse dispositivo. Ctrl+C para sair.
+[emu8051-pty] PTY ready at: /dev/pts/12 (4800 8N1)
+Connect your scanner to this device. Ctrl+C to exit.
 [DEBUG] Send SIGUSR1 to inject 5-baud init: kill -USR1 <pid>
 ```
 
@@ -470,7 +244,7 @@ cmake -DCMAKE_BUILD_TYPE=Debug ..
 ┌─────────────────────────────────────────────────────────────┐
 │  PTY Harness (UartBridge)                                   │
 │  - PARMRK BREAK detection                                   │
-│  - Half-duplex echo                                         │
+│  - Half-duplex echo simulation                              │
 │  - RX queue management                                      │
 └──────────────────┬──────────────────────────────────────────┘
                    │
@@ -535,23 +309,17 @@ CRITICAL: Addresses 0x80-0xFF are DUAL-USE!
 
 ### UART Timing System
 
-**Traditional Approach (Immediate Flags):**
-```
-Firmware writes SBUF → TI=1 immediately (unrealistic)
-PTY receives byte → RI=1 immediately (unrealistic)
-```
-
-**Cycle-Accurate Approach (This Project):**
+**Event-Driven Timing:**
 ```
 Firmware writes SBUF @ instr=1000
   ↓
 TX byte sent to PTY (immediate)
   ↓
-Schedule TxDone event @ instr=1000 + 9×206 = 2854
+Schedule TxDone event at appropriate instruction count
   ↓
 ... firmware continues executing ...
   ↓
-@ instr=2854: TI flag set (realistic ~2ms delay)
+When event fires: TI flag set (realistic timing)
 ```
 
 **Event Priority Queue:**
@@ -581,6 +349,7 @@ void uart_timing_tick(em8051 *cpu, long long current_icount) {
                 // Overrun! Discard new byte
             } else {
                 g_uart.rx_queue.push(ev.data);
+                g_sbuf_rx = ev.data;  // Update RX buffer
                 scon |= SCON_RI;
             }
         }
@@ -593,9 +362,10 @@ void uart_timing_tick(em8051 *cpu, long long current_icount) {
 **SBUF Write (TX):**
 ```cpp
 static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
-    uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
+    uint8_t sbuf_value = EMU_GET_SFR(cpu, SFR_SBUF);
 
-    g_uart.tx(sbuf);              // Send to PTY immediately
+    g_sbuf_tx = sbuf_value;       // Update TX buffer
+    g_uart.tx(sbuf_value);        // Send to PTY immediately
     uart_schedule_tx_done(cpu);   // Schedule TI flag
 }
 ```
@@ -603,13 +373,8 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
 **SBUF Read (RX):**
 ```cpp
 static uint8_t uart_sbuf_read_callback(em8051 *cpu, uint8_t aRegister) {
-    if (scon & SCON_RI) {
-        if (!g_uart.rx_queue.empty()) {
-            sbuf = g_uart.rx_queue.front();
-            g_uart.rx_queue.pop();
-        }
-    }
-    return sbuf;
+    // Return RX buffer (separate from TX buffer!)
+    return g_sbuf_rx;
 }
 ```
 
@@ -636,223 +401,50 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
 
 ## Development with Claude
 
-This project was developed in collaboration with **Claude (Anthropic)**, demonstrating AI-assisted embedded systems development and protocol reverse engineering.
+This project was developed with AI assistance (Claude, Anthropic), demonstrating collaborative embedded systems development.
 
-### Planning & Architecture
+**Key Contributions:**
+- System architecture and event scheduler design
+- Root cause analysis of emulator bugs
+- Cycle-accurate UART timing implementation
+- Documentation and code review
 
-Claude assisted with:
-- **System Architecture Design:** PTY integration strategy, event scheduler design
-- **Timing Analysis:** Calculating instruction counts for baud rate generation
-- **Memory Model Understanding:** Clarifying 8051 address space complexities
-- **Protocol Research:** ISO 9141-2 specification analysis
+**Workflow:** Problem description → Architecture proposal → Implementation → Testing/Refinement → Validation
 
-### Debugging & Problem Solving
-
-**Bug Discovery:**
-- Root cause analysis of stack corruption bug
-- Memory access pattern analysis (direct vs indirect addressing)
-- Identification of transceiver inversion requirement
-
-**Code Review:**
-- C++20 best practices (constexpr, static_cast, [[maybe_unused]])
-- Sanitizer warnings resolution
-- Compiler flag optimization
-
-### Implementation Assistance
-
-**Cycle-Accurate UART Timing:**
-```
-User: "Can you implement cycle-accurate UART timing based on SAB 80C517
-       datasheet? TI should rise after 9 bit times, RI after 9.5 bit times."
-
-Claude: [Analyzes current code structure]
-        [Proposes event scheduler design]
-        [Implements priority queue system]
-        [Integrates with main loop]
-        [Adds comprehensive logging]
-```
-
-**Result:** Fully functional event-based timing system in ~500 lines of C++, with instruction-level precision.
-
-### Documentation
-
-Claude helped create:
-- Technical markdown files (KLINE_TRANSCEIVER.md, BUG_REPORT_*.md)
-- Inline code comments explaining complex logic
-- This README (comprehensive project overview)
-
-### Collaboration Workflow
-
-```
-1. User describes problem or feature request
-2. Claude analyzes existing codebase
-3. Claude proposes solution with code examples
-4. User reviews and provides feedback
-5. Claude refines implementation
-6. User tests on real hardware/emulator
-7. Claude assists with debugging if issues arise
-8. Repeat until solution validated
-```
-
-**Key Benefits:**
-- **Rapid Prototyping:** Ideas → working code in minutes
-- **Knowledge Transfer:** Learn embedded systems concepts through explanation
-- **Code Quality:** Enforced best practices, comprehensive error handling
-- **Documentation:** Auto-generated technical docs from implementation
-
-**Example Interaction:**
-
-```
-User: "The firmware is crashing at PC=0x36DF with stack corruption.
-       Can you help debug?"
-
-Claude: "Let me analyze the crash pattern. Looking at the logs:
-         - SP corrupted from 0xD0 → 0x00
-         - Happens at opcode 0x87 (MOV @R1, direct)
-         - Address 0x81 involved (SP register OR UpperData[1])
-
-         This looks like an addressing mode bug in the emulator core.
-
-         Let's check opcodes.c:854..."
-
-         [Provides detailed analysis + fix]
-
-User: "That fixed it! Firmware runs indefinitely now."
-
-Claude: "Excellent. Let me document this bug for the community..."
-         [Creates BUG_REPORT_STACK_CORRUPTION.md]
-```
-
-**Outcome:** What could have taken days of manual debugging was resolved in hours through collaborative analysis.
-
----
-
-## Technical Documentation
-
-Detailed documentation for specific topics:
-
-### Emulator Core
-- **[CLAUDE.md](CLAUDE.md)** - Project overview, build instructions, architecture
-- **[EMU8051_BUG_FOUND.md](EMU8051_BUG_FOUND.md)** - Initial bug discovery
-- **[BUG_REPORT_STACK_CORRUPTION.md](BUG_REPORT_STACK_CORRUPTION.md)** - Root cause analysis
-- **[CONFIRMED_BUG_ROOT_CAUSE.md](CONFIRMED_BUG_ROOT_CAUSE.md)** - Verification of fix
-- **[BUG_FIXED_SUCCESS.md](BUG_FIXED_SUCCESS.md)** - Testing results
-
-### K-line Protocol
-- **[KLINE_TRANSCEIVER.md](KLINE_TRANSCEIVER.md)** - Signal inversion explanation
-- **[BOSCH_MONOMOTRONIC_PROTOCOL.md](BOSCH_MONOMOTRONIC_PROTOCOL.md)** - Protocol analysis
-- **[FIRMWARE_MA17_UART_ANALYSIS.md](FIRMWARE_MA17_UART_ANALYSIS.md)** - Firmware reverse engineering
-
-### Project Status
-- **[MISSION_ACCOMPLISHED.md](MISSION_ACCOMPLISHED.md)** - Project completion summary
-- **[SESSION_COMPLETE.md](SESSION_COMPLETE.md)** - Development session notes
-- **[FINAL_STATUS.md](FINAL_STATUS.md)** - Final testing results
+Result: Complex features (e.g., instruction-based timing, dual SBUF model) implemented efficiently through iterative collaboration.
 
 ---
 
 ## Future Work
 
-### Short-Term Improvements
-- [ ] **Dynamic Baud Rate:** Read Timer1/Timer2 configuration instead of fixed 4800
-- [ ] **KWP2000 Protocol:** Extend beyond ISO 9141-2 to cover KWP2000 diagnostics
-- [ ] **GUI Interface:** Add Qt-based monitor for visualizing CPU state
-- [ ] **Trace Recording:** Log entire sessions for replay and analysis
+**MA1.7 Improvements:** Dynamic baud rate, KWP2000 protocol support, full ADC/EEPROM emulation, cycle-accurate peripheral timing
 
-### Medium-Term Features
-- [ ] **Peripheral Timing:** Cycle-accurate Timer 0/1/2 emulation
-- [ ] **ADC Emulation:** Real ADC simulation instead of IRCON workaround
-- [ ] **Multi-ECU Support:** Test multiple ECUs on same K-line (address arbitration)
-- [ ] **Hardware-in-the-Loop:** Connect real K-line transceiver to PTY
+**Extensibility:** Multi-model support for other 8052-based ECUs, generic firmware loading, per-ECU callback configuration
 
-### Long-Term Goals
-- [ ] **CAN Bus Support:** Extend to CAN (Controller Area Network)
-- [ ] **OBD-II Scanner:** Full OBD-II diagnostic tool using emulator backend
-- [ ] **Fuzzing Framework:** Automated protocol fuzzing for vulnerability discovery
-- [ ] **Real-Time OS:** Run RTOS (FreeRTOS) on emulated 8051
+**Developer Experience:** GUI monitor for CPU state visualization, trace recording/replay, automated protocol test suite
 
-### Community Contributions Welcome!
-
-Areas where contributions would be valuable:
-- Additional automotive ECU firmware support
-- Protocol decoders for other manufacturers (GM, Ford, VAG)
-- Performance optimization (faster emulation loop)
-- Cross-platform support (Windows virtual serial port)
-- Test suite expansion (more edge cases)
+**Community Contributions Welcome:** Bug fixes, additional firmware testing, performance optimization, tooling improvements
 
 ---
 
 ## License
 
-This project uses code from [jarikomppa/emu8051](https://github.com/jarikomppa/emu8051), which is licensed under the **MIT License**.
+**emu8051 Core:** MIT License (Jari Komppa). See `emu8051/LICENSE`.
 
-### MIT License (emu8051 Core)
-
-```
-Copyright (c) Jari Komppa
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### PTY Harness & Extensions
-
-The PTY integration code, UART timing system, K-line protocol implementation, and associated documentation are **also released under the MIT License**.
+**This Project:** MIT License - Free for research, educational, and testing purposes.
 
 ---
 
 ## Acknowledgments
 
-- **Jari Komppa** ([jarikomppa](https://github.com/jarikomppa)) - Creator of emu8051 core
-- **Claude (Anthropic)** - AI assistant for planning, implementation, and debugging
-- **Bosch** - MA1.7 ECU firmware (reverse engineered for educational purposes)
-- **ISO** - ISO 9141-2 K-line protocol specification
+- **Jari Komppa** - emu8051 core creator
+- **Claude (Anthropic)** - AI assistance for development and debugging
+- **ISO/Bosch** - K-line protocol and MA1.7 firmware documentation
 
 ---
 
-## Related Resources
+## Disclaimer
 
-### Automotive Diagnostics
-- [ISO 9141-2 Specification](https://www.iso.org/standard/16737.html) - K-line protocol standard
-- [KWP2000 (ISO 14230)](https://en.wikipedia.org/wiki/Keyword_Protocol_2000) - Successor to ISO 9141-2
-- [OBD-II Standards](https://en.wikipedia.org/wiki/On-board_diagnostics) - On-board diagnostics
+**Personal research project with no warranty.** Correct operation is not guaranteed. The firmware emulation may have undiscovered bugs or incomplete features. Not affiliated with Bosch, Siemens, or Fiat.
 
-### 8051 Development
-- [8051 Instruction Set](https://www.win.tue.nl/~aeb/comp/8051/set8051.html) - Complete reference
-- [Siemens SAB 80C517 Datasheet](https://www.keil.com/dd/docs/datashts/siemens/sab80c517.pdf) - Target MCU
-- [emu8051 GitHub](https://github.com/jarikomppa/emu8051) - Original emulator core
-
-### Tools & Libraries
-- [PySerial](https://pyserial.readthedocs.io/) - Python serial port library
-- [socat](http://www.dest-unreach.org/socat/) - Virtual serial port creation
-- [Sigrok](https://sigrok.org/) - Logic analyzer software
-
----
-
-## Contact & Support
-
-**Issues:** Please report bugs or request features via GitHub Issues.
-
-**Questions:** For technical questions about the emulator, K-line protocol, or automotive diagnostics, open a GitHub Discussion.
-
-**Contributions:** Pull requests welcome! Please read existing documentation first to understand the architecture.
-
----
-
-**Happy Emulating! 🚗💻**
-
-*Remember: Always test on emulator first, hardware second. Your ECU (and wallet) will thank you.*
+**Use at your own risk. Test thoroughly before production use.**
