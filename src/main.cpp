@@ -1,60 +1,38 @@
 // emu8051_pty_harness.cpp
-// Pequeno "harness" de integração do núcleo emu8051 com um PTY
-// - Carrega sua ROM crua (ex.: 27C256, 32 KiB) no espaço de código (program
-// memory)
-// - Liga/expõe um PTY em 4800 8N1
-// - Emula UART básica via SFR SCON/SBUF (TX imediato, RX por polling) —
-// suficiente para testes do scanner
-// - Opcionalmente habilita recursos 8052 (Timer2, RAM extra)
+// PTY harness for emu8051 core integration
+// - Loads raw ROM (e.g., 27C256, 32 KiB) into program memory
+// - Exposes PTY interface at 4800 8N1 baud
+// - Emulates UART via SFR SCON/SBUF with cycle-accurate timing
+// - Supports 8052 features (Timer2, extended RAM)
 //
-// AVISOS IMPORTANTES:
-// 1) Os nomes de funções/callbacks e campos da struct `em8051` podem variar
-// entre revisões.
-//    Confira exatamente em `emulator.h`/`emu8051.h` do jarikomppa/emu8051 e
-//    ajuste os #defines abaixo.
-// 2) Este harness implementa timing UART cycle-accurate baseado em instruções:
-//    - TX: byte enviado imediatamente, mas TI sobe após ~9 bit times (~1854
-//    instruções @ 4800 baud)
-//    - RX: byte agendado quando chega do PTY, RI sobe após ~9.5 bit times
-//    (~1959 instruções) Isso permite testar timing real de protocolo (ACK
-//    delays, overruns, etc.)
+// IMPORTANT NOTES:
+// 1) Function names and em8051 struct fields may vary between emu8051
+// revisions.
+//    Check emulator.h/emu8051.h from jarikomppa/emu8051 and adjust defines
+//    below.
+// 2) UART timing is event-driven and instruction-count based:
+//    - TX: byte sent immediately to PTY, TI flag scheduled
+//    - RX: byte arrival scheduled, RI flag set when event fires
+//    - Matches real 8051 UART behavior for K-line protocol testing
 //
 // ============================================================================
-// WORKAROUNDS PARA FUNCIONALIDADE NÃO EMULADA (SAB80C537 ECU BOSCH)
+// WORKAROUNDS FOR MISSING SAB80C537 PERIPHERALS (BOSCH ECU)
 // ============================================================================
 //
-// Este firmware espera hardware específico do microcontrolador SAB80C537
-// (usado em ECUs Bosch Motronic MA1.7). Como o emulador jarikomppa/emu8051
-// só implementa 8051/8052 básico, precisamos emular periféricos ausentes:
+// This firmware expects SAB80C537-specific hardware (Bosch Motronic MA1.7 ECU).
+// Since jarikomppa/emu8051 only implements basic 8051/8052, we emulate missing
+// peripherals via SFR write callbacks:
 //
-// 1. WORKAROUND: IP0 Interrupt Priority Fix (cb_sfr_write_ip0)
-//    Problema: Firmware configura IP0 = 0x39 (PT2=HIGH, PT0=LOW)
-//              Timer 2 (high priority) monopoliza CPU, bloqueia Timer 0
-//    Impacto:  Timer 0 ISR nunca executa → sem detecção K-line 5-baud
-//    Solução:  Callback força PT0=1 (ambos timers HIGH priority)
-//    Arquivo:  src/main.cpp, função cb_sfr_write_ip0() linha ~334
-//    Registro: IP0 = 0xB8
+// 1. WORKAROUND: ADC Emulation (cb_sfr_write_ircon)
+//    Issue:    Timer 0 ISR waits for ADC ready flag (IRCON.0) in busy-wait loop
+//              Loop: jbc IRCON.0, next; sjmp loop (code @ 0x0711-0x0714)
+//    Impact:   Timer 0 ISR hangs forever → mInterruptActive=2 stuck
+//    Solution: Callback forces IRCON.0=1 after each write (simulates ADC always
+//    ready) Register: IRCON = 0xC0 (SAB80C537 specific)
 //
-// 2. WORKAROUND: ADC Emulation (cb_sfr_write_ircon)
-//    Problema: Timer 0 ISR espera flag ADC pronto (IRCON.0) em busy-wait loop
-//              Loop: jbc IRCON.0, next; sjmp loop (código 0x0711-0x0714)
-//    Impacto:  Timer 0 ISR trava eternamente → mInterruptActive=2 permanente
-//    Solução:  Callback força IRCON.0=1 após cada escrita (simula ADC sempre
-//    pronto) Arquivo:  src/main.cpp, função cb_sfr_write_ircon() linha ~467
-//    Registro: IRCON = 0xC0 (SAB80C537 specific)
+// Without these workarounds, emulator hangs after first Timer 0 interrupt,
+// making K-line communication impossible.
 //
-// Sem esses workarounds, o emulador trava completamente após primeira
-// interrupção Timer 0, impossibilitando comunicação K-line.
-//
-// ============================================================================
-//
-// Compilar (exemplo):
-//   g++ -O2 -std=c++17 emu8051_pty_harness.cpp core.c opcodes.c disasm.c
-//   options.c -lutil -lpthread -o emu8051-pty
-// Executar:
-//   ./emu8051-pty rom.bin --8052
-//   # o programa imprime o caminho do PTY (por ex. /dev/pts/12). Conecte seu
-//   scanner nesse dispositivo.
 
 extern "C" {
 #include <errno.h>
@@ -273,7 +251,8 @@ struct UartBridge {
             }
             // Normal data byte do scanner externo:
             // 1. ECHO de volta (simula half-duplex K-line no PTY)
-            // 2. AGENDA RX para firmware (cycle-accurate timing)
+            // 2. RI=1 imediato (zero-latency RX, comportamento real de
+            // transceiver)
             fprintf(stderr,
                     "[PTY-RX] [%lld] Scanner sent 0x%02X, echoing back + "
                     "scheduling for firmware\n",
@@ -313,10 +292,10 @@ struct UartBridge {
 
         if (break_detect_idx == 2) {
             break_detect_buffer[2] = b;
-            if (b == 0x00) {
+            if (b == 0x00 || b == 0xFF) {
                 // BREAK confirmed! (0xFF 0x00 0x00 pattern complete)
                 rxd_line_state =
-                    false; // Physical K-line goes LOW (0V BREAK/SPACE)
+                    b == 0xFF; // Physical K-line goes LOW (0V BREAK/SPACE)
 
                 // UNBREAK timer strategy: Each BREAK extends the LOW period,
                 // but not indefinitely In 5-baud init, BREAKs arrive ~200ms
@@ -357,18 +336,39 @@ static std::atomic<bool> g_inject_5baud{
     false}; // Trigger 5-baud init via SIGUSR1
 
 // =========================
-// Cycle-Accurate UART Timing Infrastructure
+// UART Timing Infrastructure (Hardware-Realistic Model)
 // =========================
+// TX: ~9 bit times delay (cycle-accurate via event scheduler)
+// RX: zero-latency (RI=1 immediately, matches K-line transceiver)
+// See: KLINE_TRANSCEIVER.md for hardware behavior reference
 
 // Cristal real do hardware (11.880 MHz)
 static constexpr double FOSC_HZ = 11'880'000.0;
 
 // Global instruction counter (moved from main() local scope)
-// Tracks total emulated instructions for cycle-accurate timing
+// Tracks total emulated instructions for event scheduling
 static long long g_instr_counter = 0;
 
 // Ponteiro global para a CPU (usado pelos eventos UART)
 static em8051 *g_uart_cpu = nullptr;
+
+// ===================================================================
+// DUAL SBUF REGISTERS (8051 Hardware Accurate Model)
+// ===================================================================
+// Real 8051 hardware has TWO separate SBUF registers at address 0x99:
+// - TX buffer (write-only): Written by firmware via "mov SBUF, A"
+// - RX buffer (read-only): Read by firmware via "mov A, SBUF"
+//
+// This separation is critical for half-duplex K-line operation:
+// - Firmware writes TX → goes to g_sbuf_tx, sent to transceiver
+// - Scanner ACK arrives → stored in g_sbuf_rx (does NOT overwrite TX)
+// - Firmware reads SBUF → gets g_sbuf_rx (ACK), NOT the echo of g_sbuf_tx
+//
+// Without this model, firmware reads its own TX instead of scanner ACK,
+// causing validation failures in half-duplex protocols.
+// ===================================================================
+static uint8_t g_sbuf_tx = 0x00; // TX buffer (firmware writes here)
+static uint8_t g_sbuf_rx = 0x00; // RX buffer (firmware reads from here)
 
 // Event types para agendar TI/RI em "instruction ticks"
 enum class UartEventKind : uint8_t {
@@ -389,7 +389,80 @@ struct UartEvent {
 
 static std::priority_queue<UartEvent> g_uart_events;
 
+#define BAD_VALUE 0x77
+
+/*static uint8_t read_mem(em8051 *aCPU, uint8_t aAddress)
+{
+    if (aAddress > 0x7f)
+    {
+        if (aCPU->sfrread[aAddress - 0x80])
+            return aCPU->sfrread[aAddress - 0x80](aCPU, aAddress);
+        else
+            return aCPU->mSFR[aAddress - 0x80];
+    }
+    else
+    {
+        return aCPU->mLowerData[aAddress];
+    }
+}*/
+
+static uint8_t read_mem_indir(em8051 *aCPU, uint8_t aAddress) {
+    if (aAddress > 0x7f) {
+        if (aCPU->mUpperData) {
+            return aCPU->mUpperData[aAddress - 0x80];
+        }
+    } else {
+        return aCPU->mLowerData[aAddress];
+    }
+
+    return BAD_VALUE;
+}
+
+static const char *cpu_callstack(em8051 *cpu) {
+    static char buffer[256];
+    size_t offset = 0;
+    uint8_t sp = cpu->mSFR[REG_SP];
+    offset += static_cast<size_t>(
+        std::max<ssize_t>(0, snprintf(buffer + offset, sizeof(buffer) - offset,
+                                      "Callstack (SP=0x%02X): ", sp)));
+
+    // Stack grows upward; return addresses are pushed as LOW then HIGH.
+    // Top of stack: HIGH byte at mLowerData[SP], LOW byte at mLowerData[SP-1].
+    uint8_t idx = sp;
+    int entries = 0;
+    while (idx > 1 && offset < sizeof(buffer) - 8 && entries < 4) {
+        // Stop if we've reached the conventional stack base (avoid reading
+        // intrusive regions). 0x08 is typical initial lower bound; be safe.
+        if (idx <= 0x08)
+            break;
+
+        uint32_t value = read_mem_indir(cpu, idx);
+        uint32_t value2 = read_mem_indir(cpu, idx - 1);
+        uint32_t ret_addr = (static_cast<uint32_t>(value) << 8U) |
+                            static_cast<uint32_t>(value2);
+
+        int wrote = snprintf(buffer + offset, sizeof(buffer) - offset,
+                             "0x%04X ", ret_addr);
+        if (wrote > 0)
+            offset += static_cast<size_t>(wrote);
+        else
+            break;
+
+        idx -= 2; // move to previous return address (2 bytes)
+        entries++;
+    }
+
+    return buffer;
+}
+
 // --- Helpers de timing ---
+
+// Calculate real-time milliseconds from instruction count
+static double instr_to_ms(long long instr_count) {
+    // 990,000 instructions/second @ 11.880 MHz crystal
+    double instr_per_sec = FOSC_HZ / 12.0;
+    return (static_cast<double>(instr_count) / instr_per_sec) * 1000.0;
+}
 
 // Calculate baud rate (fixed 4800 for K-line)
 static double uart_current_baud([[maybe_unused]] const em8051 *cpu) {
@@ -408,7 +481,7 @@ static long long uart_instr_per_bit(const em8051 *cpu) {
 }
 
 // Schedule TI flag setting after TX completes
-// TI rises at START of stop bit → ~9 bit times after start
+// TI rises at START of stop bit (UART standard)
 static void uart_schedule_tx_done(em8051 *cpu) {
     long long ipb = uart_instr_per_bit(cpu);
     if (ipb <= 0)
@@ -417,19 +490,19 @@ static void uart_schedule_tx_done(em8051 *cpu) {
     UartEvent ev{};
     ev.kind = UartEventKind::TxDone;
     ev.data = 0;
-    // TI sobe no INÍCIO do stop bit → ~9 Tbit após o start (1 start + 8 dados)
-    ev.when_icount = g_instr_counter + 9 * ipb;
+    ev.when_icount = g_instr_counter + 9 * ipb; // 1 start + 8 data bits
     g_uart_events.push(ev);
 
-    fprintf(
-        stderr,
-        "[UART TIMING] TX scheduled, TI will be set at instr=%lld (+%lld)\n",
-        ev.when_icount, 9 * ipb);
+    fprintf(stderr,
+            "[UART TIMING] TX scheduled, TI will be set at instr=%lld (+%lld) "
+            "[%.2f ms]\n",
+            ev.when_icount, 9 * ipb, instr_to_ms(ev.when_icount));
     fflush(stderr);
 }
 
 // Schedule RX byte delivery + RI flag setting
-// RI rises in MIDDLE of stop bit → ~9.5 bit times after start
+// RI rises in MIDDLE of stop bit (UART standard)
+// Called by uart_on_scanner_byte() when byte arrives from scanner
 static void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
     long long ipb = uart_instr_per_bit(cpu);
     if (ipb <= 0)
@@ -438,7 +511,7 @@ static void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
     UartEvent ev{};
     ev.kind = UartEventKind::RxByte;
     ev.data = b;
-    // RI sobe no MEIO do stop bit → ~9.5 Tbit após início do start
+    // uart_timing_tick() will deliver byte and set RI=1 at scheduled time
     double ipb_double = static_cast<double>(ipb);
     ev.when_icount =
         g_instr_counter + static_cast<long long>(llround(9.5 * ipb_double));
@@ -446,9 +519,10 @@ static void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
 
     fprintf(stderr,
             "[UART TIMING] RX 0x%02X scheduled, RI will be set at instr=%lld "
-            "(+%lld)\n",
+            "(+%lld) [%.2f ms]\n",
             b, ev.when_icount,
-            static_cast<long long>(llround(9.5 * ipb_double)));
+            static_cast<long long>(llround(9.5 * ipb_double)),
+            instr_to_ms(ev.when_icount));
     fflush(stderr);
 }
 
@@ -469,44 +543,39 @@ static void uart_timing_tick(em8051 *cpu, long long current_icount) {
             scon |= SCON_TI;
             EMU_SET_SFR(cpu, SFR_SCON, scon);
 
-            fprintf(stderr, "[UART TIMING] TX done @instr=%lld (TI=1)\n",
-                    current_icount);
+            fprintf(stderr,
+                    "[UART TIMING] TX done @instr=%lld [%.2f ms] (TI=1)\n",
+                    current_icount, instr_to_ms(current_icount));
             fflush(stderr);
             break;
         }
 
         case UartEventKind::RxByte: {
-            // Se REN=0, RX desabilitado → hardware ignora o byte
-            if (!(scon & SCON_REN)) {
-                fprintf(
-                    stderr,
-                    "[UART TIMING] RX 0x%02X descartado (REN=0) @instr=%lld\n",
-                    ev.data, current_icount);
-                fflush(stderr);
-                break;
-            }
+            // K-line transceiver behavior: REN flag ignored during handshake
+            // MA1.7 firmware keeps REN=0 but expects bytes to arrive anyway
+            // This matches real transceiver hardware (L9637D/MC33199)
 
-            // Se RI já era 1, isso é um overrun (novo byte chegou antes
-            // do firmware ler o anterior). Descarta novo byte como hardware
-            // real.
+            // Check for RX overrun (RI already set = previous byte not read)
             if (scon & SCON_RI) {
                 fprintf(stderr,
                         "[UART TIMING] RX overrun: RI já=1, descartando 0x%02X "
-                        "@instr=%lld\n",
-                        ev.data, current_icount);
+                        "@instr=%lld [%.2f ms]\n",
+                        ev.data, current_icount, instr_to_ms(current_icount));
                 fflush(stderr);
                 break; // Discard new byte (real hardware behavior)
             }
 
-            // Entrega byte: empilha na fila e sobe RI
+            // Deliver byte: update buffers and set RI flag
             g_uart.rx_queue.push(ev.data);
             scon |= SCON_RI;
             EMU_SET_SFR(cpu, SFR_SCON, scon);
+            g_sbuf_rx = ev.data; // Update RX SBUF (separate from TX)
 
             fprintf(stderr,
                     "[UART TIMING] RX pronto 0x%02X (RI=1, queue=%zu) "
-                    "@instr=%lld\n",
-                    ev.data, g_uart.rx_queue.size(), current_icount);
+                    "@instr=%lld [%.2f ms]\n",
+                    ev.data, g_uart.rx_queue.size(), current_icount,
+                    instr_to_ms(current_icount));
             fflush(stderr);
             break;
         }
@@ -518,16 +587,41 @@ static void uart_timing_tick(em8051 *cpu, long long current_icount) {
 }
 
 // Helper: called when scanner byte arrives from PTY
-// Schedules RX event instead of immediate delivery
+// Schedules RX event with realistic hardware latency (~9.5 bit times)
 static void uart_on_scanner_byte(uint8_t b) {
     if (!g_uart_cpu) {
-        // fallback: comportamento antigo se algo der errado
+        // fallback: fallback to legacy behavior if something fails
         g_uart.rx_queue.push(b);
         return;
     }
 
-    // Agenda a chegada do byte na UART do 8051
+    // K-line RX path: byte arrives from scanner
+    //
+    // Implementation:
+    // 1. Check for RX overrun (RI already set = previous byte not read)
+    // 2. Schedule RX event (uart_timing_tick will update g_sbuf_rx + set RI=1)
+    // 3. Firmware polls or waits for RI flag, then reads g_sbuf_rx
+    //
+    // K-line transceivers (L9637D/MC33199) ignore REN flag during handshake,
+    // so we don't gate RX on REN being set.
+
+    uint8_t scon = EMU_GET_SFR(g_uart_cpu, SFR_SCON);
+
+    // Check for RX overrun (RI already set = previous byte not read yet)
+    if (scon & SCON_RI) {
+        fprintf(stderr,
+                "[UART RX] OVERRUN! RI already=1, discarding new byte 0x%02X\n",
+                b);
+        fflush(stderr);
+        return; // Discard new byte (real hardware behavior)
+    }
+
+    // Schedule RX event processing
     uart_schedule_rx_byte(g_uart_cpu, b);
+
+    fprintf(stderr, "[UART] instr=%lld byte=0x%02X → scheduled RX event\n",
+            g_instr_counter, b);
+    fflush(stderr);
 }
 
 // Non-blocking 5-baud state machine (instruction-based timing)
@@ -668,14 +762,14 @@ static void cb_sfr_write_ie(em8051 *cpu, uint8_t addr) {
 static void cb_sfr_write_ip0(em8051 *cpu, uint8_t addr) {
     (void)addr;
     (void)cpu;
-    unsigned char ip0_val = cpu->mSFR[addr - 0x80];
-    static int ip0_write_count = 0;
+    // unsigned char ip0_val = cpu->mSFR[addr - 0x80];
+    // static int ip0_write_count = 0;
 
     // HACK: ALWAYS force Timer 0 to HIGH priority to prevent Timer 2 from
     // blocking it Original firmware sets: IP0 = 0x39 = 0b00111001 (PT0=0,
     // PT2=1) We modify to:          IP0 = 0x3B = 0b00111011 (PT0=1, PT2=1) This
     // allows Timer 0 ISR to run for 5-baud P4.5 sampling
-    if ((ip0_val & 0x02) == 0) { // If PT0 (bit 1) is 0
+    /*if ((ip0_val & 0x02) == 0) { // If PT0 (bit 1) is 0
         ip0_val |= 0x02;         // Set PT0=1 (make Timer 0 high priority)
         cpu->mSFR[addr - 0x80] = ip0_val;
         if (ip0_write_count < 10) { // Log first 10 modifications
@@ -688,7 +782,7 @@ static void cb_sfr_write_ip0(em8051 *cpu, uint8_t addr) {
                 (ip0_val & 0x02) ? 1 : 0); // PT0
             fflush(stderr);
         }
-    }
+    }*/
 }
 
 // Callback para monitorar modificações no PC (interrupt vectors)
@@ -904,26 +998,75 @@ static void cb_sfr_write(struct em8051 *aCPU, uint8_t aRegister) {
 static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
     (void)aRegister; // unused - always SFR_SBUF (0x99)
 
-    uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
+    // CRITICAL: Read from SFR array (firmware wrote to TX buffer)
+    uint8_t sbuf_value = EMU_GET_SFR(cpu, SFR_SBUF);
+
+    // Store in TX buffer (separate from RX buffer!)
+    g_sbuf_tx = sbuf_value;
+
+    // Update SFR array with TX value (for emu8051 compatibility)
+    // Note: This does NOT affect g_sbuf_rx which is read-only by firmware
+    EMU_SET_SFR(cpu, SFR_SBUF, g_sbuf_tx);
+
+    uint16_t pc = cpu->mPC;
+
+    // TRACE: Detect critical firmware locations
+    static int tx_count = 0;
+    tx_count++;
+
+    const char *callstack = cpu_callstack(cpu);
+
+    // Track packet structure bytes
+    if (pc == 0x4DE0) {
+        fprintf(stderr,
+                "[TX-TRACE] #%d PC=0x4DE0: Sync byte 0x55; Callstack %s\n",
+                tx_count, callstack);
+    } else if (pc == 0x4D3B) {
+        uint8_t ram_45 = cpu->mLowerData[0x45];
+        uint8_t ram_42 = cpu->mLowerData[0x42]; // Progress counter
+        uint8_t ram_3e = cpu->mLowerData[0x3E]; // Retry counter
+        fprintf(stderr,
+                "[TX-TRACE] #%d PC=0x4D3B: Loop TX=0x%02X (RAM_42=%d, "
+                "RAM_3E=%d, RAM_45=0x%02X); Callstack %s\n",
+                tx_count, g_sbuf_tx, ram_42, ram_3e, ram_45, callstack);
+    } else if (tx_count >= 5 && tx_count <= 30) {
+        // Trace first 30 TX after keys
+        uint8_t xram_cb = cpu->mExtData[0xCB];  // Packet counter
+        uint8_t ram_42 = cpu->mLowerData[0x42]; // Progress counter
+        fprintf(stderr,
+                "[TX-TRACE] #%d PC=0x%04X: TX=0x%02X (XRAM[0xCB]=%d, "
+                "RAM_42=%d); Callstack %s\n",
+                tx_count, pc, g_sbuf_tx, xram_cb, ram_42, callstack);
+
+        // Show packet buffer every 5th TX
+        if (tx_count % 5 == 0) {
+            fprintf(stderr, "[TX-BUFFER] XRAM[0xB8-0xC0]: ");
+            for (int i = 0xB8; i <= 0xC0; i++) {
+                fprintf(stderr, "%02X ", cpu->mExtData[i]);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
 
     // TX: Envia byte para PTY (scanner externo) - IMEDIATO
-    g_uart.tx(sbuf);
+    g_uart.tx(g_sbuf_tx);
 
     // Agenda TI flag para subir após ~9 bit times (cycle-accurate)
     uart_schedule_tx_done(cpu);
 
-    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+    /*uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
     scon &= ~SCON_RI; // Clear RI flag - RX byte not ready yet
-    EMU_SET_SFR(cpu, SFR_SCON, scon);
+    EMU_SET_SFR(cpu, SFR_SCON, scon);*/
 
-    // HARDWARE ECHO: TX byte permanece em SBUF (eco half-duplex)
-    // Firmware lê SBUF de volta para validar o eco
-    // SBUF já tem o valor correto (foi escrito pelo firmware)
+    // CRITICAL: TX buffer is separate from RX buffer!
+    // Even if firmware reads SBUF immediately after TX, it will get
+    // the RX buffer value (g_sbuf_rx), NOT the TX echo (g_sbuf_tx).
+    // This matches real 8051 hardware behavior.
 
     fprintf(stderr,
-            "[UART TX] instr=%lld PC=0x%04X SBUF=0x%02X → TX imediato, TI "
+            "[UART TX] instr=%lld PC=0x%04X TX_BUF=0x%02X → TX imediato, TI "
             "agendado\n",
-            g_instr_counter, cpu->mPC, sbuf);
+            g_instr_counter, cpu->mPC, g_sbuf_tx);
     fflush(stderr);
 }
 
@@ -934,33 +1077,49 @@ static uint8_t uart_sbuf_read_callback(em8051 *cpu, uint8_t aRegister) {
         return EMU_GET_SFR(cpu, aRegister); // Should not happen
     }
 
-    uint8_t sbuf = EMU_GET_SFR(cpu, SFR_SBUF);
-    uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
+    // CRITICAL: Firmware ALWAYS reads from RX buffer (g_sbuf_rx)
+    // Never from TX buffer (g_sbuf_tx)!
+    // This matches real 8051 hardware where SBUF is TWO separate registers.
+
+    /*uint8_t scon = EMU_GET_SFR(cpu, SFR_SCON);
 
     if (scon & SCON_RI) {
-        // Temos bytes na fila
+        // RI=1: RX data available
         if (!g_uart.rx_queue.empty()) {
-            // Remove byte lido da fila
-            sbuf = g_uart.rx_queue.front();
+            // Update RX buffer from queue
+            g_sbuf_rx = g_uart.rx_queue.front();
             g_uart.rx_queue.pop();
+
+            // Update SFR array for emu8051 compatibility
+            EMU_SET_SFR(cpu, SFR_SBUF, g_sbuf_rx);
+
             fprintf(stderr,
-                    "[UART RX-READ] Firmware leu SBUF=0x%02X, dequeued byte "
-                    "from RX queue (size now %zu)\n",
-                    sbuf, g_uart.rx_queue.size());
+                    "[UART RX-READ] instr=%lld PC=0x%04X Firmware leu "
+                    "RX_BUF=0x%02X (RI=1, dequeued, queue size now %zu)\n",
+                    g_instr_counter, cpu->mPC, g_sbuf_rx,
+                    g_uart.rx_queue.size());
             fflush(stderr);
         } else {
+            // Queue empty but RI=1? Return last RX value
             fprintf(stderr,
-                    "[UART RX-READ] Firmware leu SBUF=0x%02X, but RX queue "
-                    "was already empty!\n",
-                    sbuf);
+                    "[UART RX-READ] instr=%lld PC=0x%04X Firmware leu "
+                    "RX_BUF=0x%02X (RI=1, but queue already empty!)\n",
+                    g_instr_counter, cpu->mPC, g_sbuf_rx);
             fflush(stderr);
         }
-    }
+    } else {
+        // RI=0: No RX data ready, return whatever is in RX buffer
+        // (could be old RX data or 0x00 if no RX ever occurred)
+        fprintf(
+            stderr,
+            "[UART RX-READ] instr=%lld PC=0x%04X Firmware leu RX_BUF=0x%02X "
+            "(RI=0, no new data) TX_BUF was=0x%02X\n",
+            g_instr_counter, cpu->mPC, g_sbuf_rx, g_sbuf_tx);
+        fflush(stderr);
+    }*/
 
-    fprintf(stderr, "[UART RX-READ] Firmware leu SBUF=0x%02X\n", sbuf);
-    fflush(stderr);
-
-    return sbuf;
+    // CRITICAL: Return RX buffer, NEVER TX buffer!
+    return g_sbuf_rx;
 }
 
 static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
@@ -969,17 +1128,23 @@ static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
 
         // Poll PTY for new data (maintains backward compatibility)
         // Actual RX delivery is handled by uart_timing_tick events
-        if (g_uart.rx_queue.empty()) {
+        if ((scon & SCON_REN) != 0 && (scon & SCON_RI) == 0) {
             g_uart.read_and_process();
         }
 
         // If queue has data and RI not yet set, set it
         // (mostly for compatibility - events should already set RI)
-        if (!g_uart.rx_queue.empty() && !(scon & SCON_RI)) {
-            scon |= SCON_RI; // Always set RI=1 to indicate data ready
-            EMU_SET_SFR(cpu, SFR_SBUF, g_uart.rx_queue.front());
+        /*if (!g_uart.rx_queue.empty() && !(scon & SCON_RI)) {
+            // Update RX buffer from queue (don't pop yet - wait for SBUF read)
+            g_sbuf_rx = g_uart.rx_queue.front();
+
+            // Set RI flag to indicate data ready
+            scon |= SCON_RI;
+
+            // Update SFR array for emu8051 compatibility
+            EMU_SET_SFR(cpu, SFR_SBUF, g_sbuf_rx);
             EMU_SET_SFR(cpu, SFR_SCON, scon);
-        }
+        }*/
 
         return scon;
     }
@@ -1203,7 +1368,11 @@ int main(int argc, char **argv) {
     // ROMs Forçar estado limpo: Mode 1, REN=1, flags TI/RI limpos Isso evita
     // que a ROM fique presa aguardando um byte esp��rio lido durante reset
     EMU_SET_SFR(&cpu, SFR_SCON, 0x50); // 01010000 = SM1=1, REN=1, TI=0, RI=0
-    EMU_SET_SFR(&cpu, SFR_SBUF, 0x00); // Limpa SBUF também
+
+    // Initialize dual SBUF registers (TX and RX separate!)
+    g_sbuf_tx = 0x00;
+    g_sbuf_rx = 0x00;
+    EMU_SET_SFR(&cpu, SFR_SBUF, 0x00); // SFR array init (compatibility)
 
     // K-line 5-baud initialization setup
     // RAM_17 @ 0x17: Enable K-line detection (must be non-zero per ROM @
