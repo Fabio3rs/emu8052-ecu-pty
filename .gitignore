@@ -41,3 +41,14 @@ bin
 !.vscode/extensions.json
 
 build
+
+# rom_dumper outputs
+*.bin
+*.hex
+dump*.bin
+dump*.hex
+eprom_dump.*
+rom_dumper/cli/dumper
+__pycache__/
+*.pyc
+*.pyo
