@@ -34,6 +34,10 @@
 // making K-line communication impossible.
 //
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
 extern "C" {
 #include <errno.h>
 #include <fcntl.h>
@@ -56,6 +60,7 @@ extern "C" {
 }
 
 #include <atomic>
+#include <chrono>
 #include <queue>
 #include <string>
 #include <vector>
@@ -87,8 +92,12 @@ extern "C" {
 // =========================
 // UART/SCON helpers (8051)
 // =========================
-static constexpr int SFR_SCON = 0x98; // SM0..RI
-static constexpr int SFR_SBUF = 0x99; // buffer
+static constexpr int SFR_SCON = 0x98;   // SM0..RI
+static constexpr int SFR_SBUF = 0x99;   // buffer
+static constexpr int SFR_ADCON0 = 0xD8; // A/D Converter Control Register 0
+static constexpr int SFR_ADDAT = 0xD9;  // A/D Converter Data Register
+[[maybe_unused]] static constexpr int SFR_DAPR =
+    0xDA; // D/A Converter Program Register (used in debug traces)
 // Bits de SCON
 [[maybe_unused]] static constexpr unsigned char SCON_SM0 = 0x80;
 [[maybe_unused]] static constexpr unsigned char SCON_SM1 = 0x40;
@@ -131,6 +140,32 @@ struct UartBridge {
 
     // RX queue for bytes after PARMRK filtering (normal data bytes)
     std::queue<unsigned char> rx_queue;
+
+    std::chrono::steady_clock::time_point last_tx_time{};
+
+    bool ignore_parmark() {
+        if (last_tx_time == std::chrono::steady_clock::time_point{}) {
+            return false;
+        }
+
+        if (last_tx_time + std::chrono::milliseconds(1000) >
+            std::chrono::steady_clock::now()) {
+            return true;
+        }
+        return false;
+    }
+
+    bool is_receiving_packets() {
+        if (last_tx_time == std::chrono::steady_clock::time_point{}) {
+            return false;
+        }
+
+        if (last_tx_time + std::chrono::milliseconds(800) >
+            std::chrono::steady_clock::now()) {
+            return true;
+        }
+        return false;
+    }
 
     bool open_pty_4800_8N1() {
         char namebuf[128] = {0};
@@ -204,6 +239,7 @@ struct UartBridge {
     // read_and_process() NÃO colocamos na rx_queue aqui (evita duplicação
     // quando firmware lê SBUF)
     void tx(unsigned char b) {
+        last_tx_time = std::chrono::steady_clock::now();
         if (mfd >= 0) {
             ssize_t written = write(mfd, &b, 1);
             fprintf(stderr,
@@ -241,23 +277,45 @@ struct UartBridge {
         if (n != 1)
             return;
 
+        if (ignore_parmark()) {
+            break_detect_idx = 0;
+            break_detect_buffer[0] = 0;
+            break_detect_buffer[1] = 0;
+            break_detect_buffer[2] = 0;
+
+            last_tx_time = std::chrono::steady_clock::now();
+            /*fprintf(stderr,
+                    "[PTY-RX] [%lld] Scanner sent 0x%02X, echoing back + "
+                    "scheduling for firmware\n",
+                    UartBridge::now_ms(), b);
+            fflush(stderr);*/
+            (void)!write(mfd, &b, 1); // Echo K-line para o scanner
+            uart_on_scanner_byte(b);  // Agenda RX (timing-aware)
+            return;
+        }
+
         // PARMRK BREAK pattern detection state machine
         if (break_detect_idx == 0) {
-            if (b == 0xFF) {
+            if (b == 0xFF && !ignore_parmark()) {
                 // Possible BREAK or escaped 0xFF - wait for next byte
                 break_detect_buffer[0] = b;
                 break_detect_idx = 1;
+                std::cout << "[BREAK-DETECT] Possible BREAK detected"
+                          << std::endl;
                 return;
             }
+
+            last_tx_time = std::chrono::steady_clock::now();
+
             // Normal data byte do scanner externo:
             // 1. ECHO de volta (simula half-duplex K-line no PTY)
             // 2. RI=1 imediato (zero-latency RX, comportamento real de
             // transceiver)
-            fprintf(stderr,
+            /*fprintf(stderr,
                     "[PTY-RX] [%lld] Scanner sent 0x%02X, echoing back + "
                     "scheduling for firmware\n",
                     UartBridge::now_ms(), b);
-            fflush(stderr);
+            fflush(stderr);*/
             (void)!write(mfd, &b, 1); // Echo K-line para o scanner
             uart_on_scanner_byte(b);  // Agenda RX (timing-aware)
             rxd_line_state = true;    // Physical K-line returns to 12V
@@ -418,8 +476,11 @@ static uint8_t read_mem_indir(em8051 *aCPU, uint8_t aAddress) {
     return BAD_VALUE;
 }
 
-static const char *cpu_callstack(em8051 *cpu) {
-    static char buffer[256];
+static std::array<uint16_t, 2048> g_pc_hist{};
+static size_t g_pc_hist_idx = 0;
+
+[[maybe_unused]] static const char *cpu_callstack(em8051 *cpu) {
+    static char buffer[1024];
     size_t offset = 0;
     uint8_t sp = cpu->mSFR[REG_SP];
     offset += static_cast<size_t>(
@@ -430,10 +491,10 @@ static const char *cpu_callstack(em8051 *cpu) {
     // Top of stack: HIGH byte at mLowerData[SP], LOW byte at mLowerData[SP-1].
     uint8_t idx = sp;
     int entries = 0;
-    while (idx > 1 && offset < sizeof(buffer) - 8 && entries < 4) {
+    while (idx > 1 && offset < sizeof(buffer) - 8 && entries < 5) {
         // Stop if we've reached the conventional stack base (avoid reading
-        // intrusive regions). 0x08 is typical initial lower bound; be safe.
-        if (idx <= 0x08)
+        // intrusive regions). 0x02 is typical initial lower bound; be safe.
+        if (idx <= 0x02)
             break;
 
         uint32_t value = read_mem_indir(cpu, idx);
@@ -452,7 +513,127 @@ static const char *cpu_callstack(em8051 *cpu) {
         entries++;
     }
 
+    if (g_pc_hist_idx > 0 && offset < sizeof(buffer) - 8) {
+        // Print the PC history
+        int wrote =
+            snprintf(buffer + offset, sizeof(buffer) - offset, "[PC HISTORY] ");
+        if (wrote > 0) {
+            offset += static_cast<size_t>(wrote);
+        }
+
+        constexpr size_t MAX_PC_HISTORY = 2048;
+
+        for (size_t i = 0; i < g_pc_hist_idx && i < MAX_PC_HISTORY &&
+                           offset < sizeof(buffer) - 8;
+             i++) {
+            wrote = snprintf(buffer + offset, sizeof(buffer) - offset,
+                             "0x%04X ", g_pc_hist[g_pc_hist_idx - 1 - i]);
+            if (wrote > 0) {
+                offset += static_cast<size_t>(wrote);
+            }
+        }
+
+        if (offset < sizeof(buffer) - 8) {
+            wrote = snprintf(buffer + offset, sizeof(buffer) - offset, "\n");
+            if (wrote > 0) {
+                offset += static_cast<size_t>(wrote);
+            }
+        }
+
+        g_pc_hist_idx = 0;
+    }
+
     return buffer;
+}
+
+static constexpr uint16_t kXramTraceD0 = 0x00D0;
+static constexpr uint16_t kXramTraceD1 = 0x00D1;
+
+static inline uint8_t read_ext_data(em8051 *cpu, uint16_t address_masked) {
+    if (!cpu->mExtData)
+        return 0;
+    return cpu->mExtData[address_masked];
+}
+
+static inline bool is_xram_trace_target(uint16_t address) {
+    return address == kXramTraceD0 || address == kXramTraceD1;
+}
+
+static bool is_known_dtc_clear_site(uint16_t pc) {
+    switch (pc) {
+    /*case 0x0B5C:
+    case 0x0B5F:
+    case 0x42BB:
+    case 0x42BE:
+    case 0x4B95:
+    case 0x4B98:
+    case 0x5178:
+    case 0x517B:
+        return true;*/
+    default:
+        return false;
+    }
+}
+
+static bool should_log_xram() {
+    static std::chrono::steady_clock::time_point last_log_time =
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(1000);
+    auto now = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - last_log_time);
+    if (duration.count() > 400 || g_uart.is_receiving_packets()) {
+        last_log_time = now;
+        return true;
+    }
+    return false;
+}
+
+static uint8_t cb_xram_trace_read(em8051 *cpu, uint16_t address) {
+    const uint16_t masked = address & cpu->mExtDataMaxIdx;
+    const uint8_t value = read_ext_data(cpu, masked);
+
+    /*if (is_xram_trace_target(address) && should_log_xram()) {
+        const uint8_t psw = cpu->mSFR[REG_PSW];
+        const uint8_t bank_offset =
+            static_cast<uint8_t>(((psw >> 3) & 0x03u) * 8u);
+        const uint8_t r0 = cpu->mLowerData[bank_offset];
+        const uint8_t r1 = cpu->mLowerData[bank_offset + 1];
+
+        fprintf(stderr,
+                "[XRAM-DTC-READ] instr=%lld PC=0x%04X addr=0x%04X -> 0x%02X "
+                "(P2=0x%02X R0=0x%02X R1=0x%02X)\n",
+                g_instr_counter, cpu->mPC, address, value,
+                cpu->mSFR[REG_P2], r0, r1);
+        fflush(stderr);
+    }*/
+
+    return value;
+}
+
+static void cb_xram_trace_write(em8051 *cpu, uint16_t address, uint8_t value) {
+    const uint16_t masked = address & cpu->mExtDataMaxIdx;
+    // const uint8_t prev = read_ext_data(cpu, masked);
+
+    if (cpu->mExtData) {
+        cpu->mExtData[masked] = value;
+    }
+
+    if (!is_xram_trace_target(address))
+        return;
+
+    if (is_known_dtc_clear_site(cpu->mPC))
+        return;
+
+    if (!should_log_xram())
+        return;
+
+    /*const char *callstack = cpu_callstack(cpu);
+    fprintf(stderr,
+            "[XRAM-DTC-WRITE] instr=%lld PC=0x%04X addr=0x%04X %02X→%02X "
+            "(P2=0x%02X) %s\n",
+            g_instr_counter, cpu->mPC, address, prev, value,
+            cpu->mSFR[REG_P2], callstack);
+    fflush(stderr);*/
 }
 
 // --- Helpers de timing ---
@@ -493,11 +674,11 @@ static void uart_schedule_tx_done(em8051 *cpu) {
     ev.when_icount = g_instr_counter + 9 * ipb; // 1 start + 8 data bits
     g_uart_events.push(ev);
 
-    fprintf(stderr,
+    /*fprintf(stderr,
             "[UART TIMING] TX scheduled, TI will be set at instr=%lld (+%lld) "
             "[%.2f ms]\n",
             ev.when_icount, 9 * ipb, instr_to_ms(ev.when_icount));
-    fflush(stderr);
+    fflush(stderr);*/
 }
 
 // Schedule RX byte delivery + RI flag setting
@@ -517,13 +698,13 @@ static void uart_schedule_rx_byte(em8051 *cpu, uint8_t b) {
         g_instr_counter + static_cast<long long>(llround(9.5 * ipb_double));
     g_uart_events.push(ev);
 
-    fprintf(stderr,
+    /*fprintf(stderr,
             "[UART TIMING] RX 0x%02X scheduled, RI will be set at instr=%lld "
             "(+%lld) [%.2f ms]\n",
             b, ev.when_icount,
             static_cast<long long>(llround(9.5 * ipb_double)),
             instr_to_ms(ev.when_icount));
-    fflush(stderr);
+    fflush(stderr);*/
 }
 
 // Process UART events that are due
@@ -543,10 +724,10 @@ static void uart_timing_tick(em8051 *cpu, long long current_icount) {
             scon |= SCON_TI;
             EMU_SET_SFR(cpu, SFR_SCON, scon);
 
-            fprintf(stderr,
+            /*fprintf(stderr,
                     "[UART TIMING] TX done @instr=%lld [%.2f ms] (TI=1)\n",
                     current_icount, instr_to_ms(current_icount));
-            fflush(stderr);
+            fflush(stderr);*/
             break;
         }
 
@@ -571,12 +752,12 @@ static void uart_timing_tick(em8051 *cpu, long long current_icount) {
             EMU_SET_SFR(cpu, SFR_SCON, scon);
             g_sbuf_rx = ev.data; // Update RX SBUF (separate from TX)
 
-            fprintf(stderr,
+            /*fprintf(stderr,
                     "[UART TIMING] RX pronto 0x%02X (RI=1, queue=%zu) "
                     "@instr=%lld [%.2f ms]\n",
                     ev.data, g_uart.rx_queue.size(), current_icount,
                     instr_to_ms(current_icount));
-            fflush(stderr);
+            fflush(stderr);*/
             break;
         }
 
@@ -974,6 +1155,46 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
         return p4;
     }
 
+    // ADDAT: A/D Converter Data Register
+    // Firmware validates ADC range: 4 <= ADDAT <= 247
+    // Return simulated sensor values within valid range
+    if (addr == SFR_ADDAT) {
+        // Read ADCON0 to determine which ADC channel is selected
+        uint8_t adcon0 = cpu->mSFR[SFR_ADCON0 - 0x80];
+        uint8_t channel = adcon0 & 0x07; // Lower 3 bits = channel select
+
+        // Simulated ADC values for different channels (8-bit)
+        // Valid range: 4-247 (firmware validation @ code:0x0732)
+        static const uint8_t adc_values[8] = {
+            120, // Channel 0: Water temp sensor (0x62) - ~60°C
+            130, // Channel 1: Air temp sensor (0x63) - ~25°C
+            100, // Channel 2: TPS/Lambda (0x6C) - mid-range
+            80,  // Channel 3
+            90,  // Channel 4
+            110, // Channel 5
+            95,  // Channel 6
+            105  // Channel 7
+        };
+
+        uint8_t adc_value = adc_values[channel];
+
+        // Verbose logging disabled to reduce log noise
+        // ADC callback is working correctly (confirmed by testing)
+        // Uncomment below for debugging if needed:
+        /*
+        static uint8_t last_channel = 0xFF;
+        static uint8_t last_adc_value = 0xFF;
+        if (channel != last_channel || adc_value != last_adc_value) {
+            fprintf(stderr, "[ADC-READ] ADDAT=0x%02X (%d) for channel %d
+        (ADCON0=0x%02X); PC=0x%04X\n", adc_value, adc_value, channel, adcon0,
+        cpu->mPC); fflush(stderr); last_channel = channel; last_adc_value =
+        adc_value;
+        }
+        */
+
+        return adc_value;
+    }
+
     return cpu->mSFR[addr - 0x80];
 }
 
@@ -1008,16 +1229,16 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
     // Note: This does NOT affect g_sbuf_rx which is read-only by firmware
     EMU_SET_SFR(cpu, SFR_SBUF, g_sbuf_tx);
 
-    uint16_t pc = cpu->mPC;
+    //uint16_t pc = cpu->mPC;
 
     // TRACE: Detect critical firmware locations
-    static int tx_count = 0;
-    tx_count++;
+    //static int tx_count = 0;
+    //tx_count++;
 
-    const char *callstack = cpu_callstack(cpu);
+    //const char *callstack = cpu_callstack(cpu);
 
     // Track packet structure bytes
-    if (pc == 0x4DE0) {
+    /*if (pc == 0x4DE0) {
         fprintf(stderr,
                 "[TX-TRACE] #%d PC=0x4DE0: Sync byte 0x55; Callstack %s\n",
                 tx_count, callstack);
@@ -1046,7 +1267,7 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
             }
             fprintf(stderr, "\n");
         }
-    }
+    }*/
 
     // TX: Envia byte para PTY (scanner externo) - IMEDIATO
     g_uart.tx(g_sbuf_tx);
@@ -1063,11 +1284,11 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
     // the RX buffer value (g_sbuf_rx), NOT the TX echo (g_sbuf_tx).
     // This matches real 8051 hardware behavior.
 
-    fprintf(stderr,
+    /*fprintf(stderr,
             "[UART TX] instr=%lld PC=0x%04X TX_BUF=0x%02X → TX imediato, TI "
-            "agendado\n",
-            g_instr_counter, cpu->mPC, g_sbuf_tx);
-    fflush(stderr);
+            "agendado: Callstack %s\n",
+            g_instr_counter, cpu->mPC, g_sbuf_tx, callstack);
+    fflush(stderr);*/
 }
 
 // Callback: firmware LEU SBUF (RX)
@@ -1355,6 +1576,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[DEBUG] Callback registrado: exception handler\n");
     fflush(stderr);
 
+    // Trace XRAM D0/D1 accesses (diagnostic flags)
+    cpu.xread = cb_xram_trace_read;
+    cpu.xwrite = cb_xram_trace_write;
+    fprintf(stderr,
+            "[DEBUG] XRAM trace callbacks registrados (0xD0/0xD1 monitor)\n");
+    fflush(stderr);
+
     // WORKAROUND: ADC emulation - force IRCON.0=1 (ADC ready)
     // SAB80C517 IRCON @ 0xC0, bit 0 = IADC (ADC interrupt flag)
     // Timer 0 ISR busy-waits: jbc IRCON.0, code_716 @ 0x0711
@@ -1363,6 +1591,12 @@ int main(int argc, char **argv) {
     cpu.sfrwrite[0xC0 - 0x80] = cb_sfr_write_ircon; // IRCON = 0xC0
     fprintf(stderr,
             "[WORKAROUND] IRCON callback registered (fake ADC ready)\n");
+
+    // ADDAT: A/D Converter Data Register - return simulated sensor values
+    // Firmware validates range: 4 <= ADDAT <= 247 (see code:0x0732)
+    cpu.sfrread[SFR_ADDAT - 0x80] = cb_sfr_read;
+    fprintf(stderr,
+            "[WORKAROUND] ADDAT callback registered (simulated ADC values)\n");
 
     // SCON modo 1 (8-bit UART, variável): SM0=0, SM1=1 por padrão de muitas
     // ROMs Forçar estado limpo: Mode 1, REN=1, flags TI/RI limpos Isso evita
@@ -1469,8 +1703,29 @@ int main(int argc, char **argv) {
                 }
                 // Continue execution for now to see the pattern
             }
+
             last_pc = cpu.mPC;
             tick(&cpu);
+
+            // If cpu.mPC == 0x4C72 or cpu.mPC == 0x4C73 and they already are in
+            // g_pc_hist, ignore because they are busy loop
+            if (((cpu.mPC == 0x4C72 || cpu.mPC == 0x4C73) &&
+                 std::find_if(g_pc_hist.begin(), g_pc_hist.end(),
+                              [&](uint16_t pc) {
+                                  return pc == 0x4C72 || pc == 0x4C73;
+                              }) != g_pc_hist.end()) ||
+                (cpu.mPC >= 0x51B0 && cpu.mPC < 0x51B9)) {
+                // Ignore this PC value
+            } else {
+                if (g_pc_hist_idx < g_pc_hist.size()) {
+                    g_pc_hist[g_pc_hist_idx++] = cpu.mPC;
+                } else {
+                    // Lets move and discard byte and push to the end
+                    memmove(&g_pc_hist[0], &g_pc_hist[1],
+                            (g_pc_hist.size() - 1) * sizeof(uint16_t));
+                    g_pc_hist[g_pc_hist.size() - 1] = cpu.mPC;
+                }
+            }
 
             // Process cycle-accurate UART timing events
             uart_timing_tick(&cpu, g_instr_counter);
@@ -1482,14 +1737,14 @@ int main(int argc, char **argv) {
             // Não precisa mais de polling ou callbacks imediatos!
 
             // DEBUG: Trace PC when stuck in high-priority ISR
-            static int main_loop_counter = 0;
-            static int last_trace_at = 0;
+            static int64_t main_loop_counter = 0;
+            static int64_t last_trace_at = 0;
             main_loop_counter++;
             if (cpu.mInterruptActive == 2 &&
                 (main_loop_counter - last_trace_at) > 500 &&
                 main_loop_counter < 100000) {
                 fprintf(stderr,
-                        "[MAIN-TF0-TRACE] PC=0x%04X SP=0x%02X loop=%d\n",
+                        "[MAIN-TF0-TRACE] PC=0x%04X SP=0x%02X loop=%ld\n",
                         cpu.mPC, cpu.mSFR[REG_SP], main_loop_counter);
                 last_trace_at = main_loop_counter;
             }
@@ -1625,6 +1880,19 @@ int main(int argc, char **argv) {
                 }
             }
             last_pc_before_0850 = cpu.mPC;
+
+            /*{
+                uint8_t ram_45 = cpu.mLowerData[0x45];
+
+                static uint8_t last_ram_45 = ram_45;
+                if (ram_45 != last_ram_45) {
+                    auto *callstack = cpu_callstack(&cpu);
+                    fprintf(stderr, "[RAM_45] 0x%02X → 0x%02X (PC=0x%04X) %s\n",
+                            last_ram_45, ram_45, cpu.mPC, callstack);
+                    fflush(stderr);
+                    last_ram_45 = ram_45;
+                }
+            }*/
 
             // STACK OVERFLOW DETECTION
             // 8051 stack: SP points to last written byte
