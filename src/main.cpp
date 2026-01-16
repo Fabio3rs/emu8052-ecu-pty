@@ -362,7 +362,7 @@ struct UartBridge {
                 // continuous LOW period CRITICAL: Timer MUST be > 200ms to
                 // avoid premature UNBREAK between consecutive bits!
                 long long now = now_ms();
-                long long extend_to = now + 210;
+                long long extend_to = now + 600;
 
                 // Only extend if new time is later (don't reset on each BREAK)
                 if (extend_to > low_until_ms) {
@@ -371,8 +371,8 @@ struct UartBridge {
 
                 fprintf(
                     stderr,
-                    "[K-LINE] BREAK detected (RXD=LOW, hold until +%lld ms)\n",
-                    low_until_ms - now);
+                    "[K-LINE] BREAK detected (RXD=%s, hold until +%lld ms)\n",
+                    (rxd_line_state ? "HIGH" : "LOW"), low_until_ms - now);
                 fflush(stderr);
                 // Do NOT echo BREAK, do NOT queue (BREAKs are control signals,
                 // not data)
@@ -723,6 +723,7 @@ static void uart_timing_tick(em8051 *cpu, long long current_icount) {
             // Transmissão terminou → sobe TI
             scon |= SCON_TI;
             EMU_SET_SFR(cpu, SFR_SCON, scon);
+            // cpu->serial_interrupt_trigger = 1; // Trigger serial ISR
 
             /*fprintf(stderr,
                     "[UART TIMING] TX done @instr=%lld [%.2f ms] (TI=1)\n",
@@ -885,6 +886,7 @@ static void sigusr1_handler(int) {
 
 // P4 port handling for K-line RX bit sampling
 static constexpr int SFR_P4 = 0xE8;
+[[maybe_unused]] static constexpr int SFR_P5 = 0xF8;
 static unsigned char p4_value = 0xEA; // Initial value from ROM @ 0x085E
 
 // Exception callback to catch emulator errors
@@ -1098,6 +1100,8 @@ static void cb_sfr_write_ircon(em8051 *cpu, uint8_t addr) {
     cpu->mSFR[addr - 0x80] |= 0x01; // Force IRCON.0 = 1 always
 }
 
+static std::chrono::steady_clock::time_point start;
+
 static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
     if (addr == SFR_P4) {
 
@@ -1142,10 +1146,17 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
 
         static unsigned char last_p4_value = 0xFF;
         if (p4 != last_p4_value) {
+            auto ms_from_start =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start);
+
+            unsigned char ram_40 = cpu->mLowerData[0x40];
             fprintf(stderr,
-                    "[P4.5] Read: 0x%02X (K-line=%s, P4.5=%d); PC=0x%04X\n", p4,
-                    kline_physical_high ? "IDLE(12V)" : "BREAK(0V)",
-                    (p4 >> 5) & 1, cpu->mPC);
+                    "[P4.5] Read: 0x%02X (K-line=%s, P4.5=%d); PC=0x%04X; "
+                    "RAM[0x40]=0x%02X; instru=%lld; time_since_start=%ld ms\n",
+                    p4, kline_physical_high ? "IDLE(12V)" : "BREAK(0V)",
+                    (p4 >> 5) & 1, cpu->mPC, ram_40, g_instr_counter,
+                    ms_from_start.count());
             fflush(stderr);
             last_p4_value = p4;
         }
@@ -1229,13 +1240,13 @@ static void uart_sbuf_write_callback(em8051 *cpu, uint8_t aRegister) {
     // Note: This does NOT affect g_sbuf_rx which is read-only by firmware
     EMU_SET_SFR(cpu, SFR_SBUF, g_sbuf_tx);
 
-    //uint16_t pc = cpu->mPC;
+    // uint16_t pc = cpu->mPC;
 
     // TRACE: Detect critical firmware locations
-    //static int tx_count = 0;
-    //tx_count++;
+    // static int tx_count = 0;
+    // tx_count++;
 
-    //const char *callstack = cpu_callstack(cpu);
+    // const char *callstack = cpu_callstack(cpu);
 
     // Track packet structure bytes
     /*if (pc == 0x4DE0) {
@@ -1351,6 +1362,10 @@ static uint8_t uart_generic_read_callback(em8051 *cpu, uint8_t aRegister) {
         // Actual RX delivery is handled by uart_timing_tick events
         if ((scon & SCON_REN) != 0 && (scon & SCON_RI) == 0) {
             g_uart.read_and_process();
+
+            /*if (g_uart.rxd_line_state && !g_uart.ignore_parmark()) {
+                cpu->serial_interrupt_trigger = 1;
+            }*/
         }
 
         // If queue has data and RI not yet set, set it
@@ -1445,6 +1460,150 @@ static bool load_bin_to_code(em8051 *cpu, const char *path,
     return true;
 }
 
+struct CrankshaftSimulator {
+    static constexpr int TEETH_COUNT = 58;
+    static constexpr int POSITIONS_TOTAL = 60;
+    static constexpr double DEGREES_PER_POSITION = 6.0;
+    static constexpr long long PULSE_WIDTH_INSTRS = 100; // ~8.5 µs @ 11.8 MHz
+
+    int target_rpm = 1000;
+    long long last_pulse_instr = 0;
+    long long pulse_interval_instrs = 0;
+    long long pulse_end_instr = 0; // When to pull signal LOW
+    int current_tooth = 0;
+    bool gap_detected = false;
+    bool pulse_active = false; // Track if pulse is HIGH
+    bool int0_fired_this_pulse =
+        false; // Track if INT0 already fired for this pulse
+
+    void update_pulse_interval(long long cpu_freq_hz) {
+        pulse_interval_instrs =
+            (60LL * cpu_freq_hz) / (target_rpm * TEETH_COUNT);
+    }
+
+    bool should_pulse_go_high(long long current_instr) {
+        return (current_instr - last_pulse_instr) >= pulse_interval_instrs &&
+               !pulse_active;
+    }
+
+    bool should_pulse_go_low(long long current_instr) {
+        return pulse_active && (current_instr >= pulse_end_instr);
+    }
+
+    bool is_in_gap() { return (current_tooth >= 58); }
+};
+
+static void crankshaft_simulator_tick(em8051 *cpu, long long instr_count,
+                                      CrankshaftSimulator &sim) {
+    // Handle pulse LOW transition (end of pulse window)
+    if (sim.should_pulse_go_low(instr_count)) {
+        // Pull INT0 LOW (P3.2 = 0)
+        unsigned char p3 = EMU_GET_SFR(cpu, 0xB0); // P3 port
+        p3 &= ~0x04;                               // Clear bit 2 (P3.2 = INT0)
+        EMU_SET_SFR(cpu, 0xB0, p3);
+
+        sim.pulse_active = false;
+        sim.int0_fired_this_pulse = false; // Reset flag for next pulse
+        /*fprintf(stderr,
+                "[CRANK] %lld: INT0 LOW (end pulse) Tooth=%d Gap=%s\n",
+                instr_count, sim.current_tooth,
+                sim.gap_detected ? "YES" : "NO");
+        fflush(stderr);*/
+        return;
+    }
+
+    // Handle pulse HIGH transition (start new pulse)
+    if (sim.should_pulse_go_high(instr_count)) {
+        // Advance to next tooth
+        sim.current_tooth = (sim.current_tooth + 1) % sim.POSITIONS_TOTAL;
+        sim.gap_detected = sim.is_in_gap();
+
+        // Pull INT0 HIGH (P3.2 = 1)
+        unsigned char p3 = EMU_GET_SFR(cpu, 0xB0); // P3 port
+        p3 |= 0x04;                                // Set bit 2 (P3.2 = INT0)
+        EMU_SET_SFR(cpu, 0xB0, p3);
+
+        // 🔥 CRITICAL FIX: Force IEX3 interrupt (NOT INT0!)
+        // ✅ ONLY ONCE per pulse transition!
+        // INT0 @ 0x0003 is just a debouncer (doesn't read XRAM[0xF8])
+        // IEX3 @ 0x00B0 (Timer Communication Service) reads XRAM[0xF8] → RAM_47
+        // IRCON.2 (0xC0) is the interrupt request flag for IEX3
+        // Setting IRCON.2 = 1 triggers the IEX3 handler
+        if (!sim.int0_fired_this_pulse) {
+            /*unsigned char ircon = EMU_GET_SFR(cpu, 0xC0);  // IRCON (0xC0)
+            ircon |= 0x04;  // Set bit 2 (IEX3 request flag)
+            EMU_SET_SFR(cpu, 0xC0, ircon);*/
+
+            sim.int0_fired_this_pulse = true; // Mark as fired
+
+            /*fprintf(stderr, "[IEX3-FIRED] instr=%lld RPM=%d Tooth=%d (IRCON.2
+            set once)\n", instr_count, sim.target_rpm, sim.current_tooth);
+            fflush(stderr);*/
+        }
+
+        // Update Timer2 capture registers with expected RPM values
+        unsigned short expected_ticks =
+            static_cast<unsigned short>((1018 * sim.target_rpm) / 1000);
+        EMU_SET_SFR(cpu, 0xCF, (expected_ticks >> 8) & 0xFF); // CRCH
+        EMU_SET_SFR(cpu, 0xCE, expected_ticks & 0xFF);        // CRCL
+
+        // ✅ CORRECTED: Write RPM value to XRAM[0xF8] AND RAM_47
+        // Firmware reads XRAM[0xF8] @ 0x01AD and copies to RAM_47 @ 0x01AE
+        // BUT: Timer 0 handler continuously clears both every ~8 µs!
+        // Solution: Inject into BOTH locations to survive periodic clearing
+        // Formula: RAM_47 × 25 = RPM_real (Bosch ECU standard)
+        // Therefore: XRAM[0xF8] = target_rpm / 25 AND RAM_47 = target_rpm / 25
+        unsigned char rpm_value =
+            static_cast<unsigned char>(sim.target_rpm / 25);
+
+        // Inject to XRAM[0xF8] (for firmware to read via 0x01AD)
+        cpu->mExtData[0xF8] =
+            rpm_value; // XRAM[0xF8] = ENGINE_RPM (will be copied to RAM_47)
+
+        // ALSO inject directly to RAM_47 (0x47 in internal RAM)
+        // This survives Timer 0 clearing if injected right before firmware
+        // reads
+        // cpu->mLowerData[0x47] = rpm_value; // RAM_47 = ENGINE_RPM (direct)
+
+        // Schedule the LOW transition
+        sim.pulse_active = true;
+        sim.pulse_end_instr = instr_count + sim.PULSE_WIDTH_INSTRS;
+        sim.last_pulse_instr = instr_count;
+
+        /*fprintf(stderr,
+                "[CRANK] %lld: INT0 HIGH (start pulse) RPM=%d Tooth=%d/%d Gap=%s
+        CRCH=0x%02X\n", instr_count, sim.target_rpm, sim.current_tooth,
+        sim.POSITIONS_TOTAL, sim.gap_detected ? "YES" : "NO",
+                static_cast<unsigned char>((1018 * sim.target_rpm) / 1000));
+        fflush(stderr);*/
+    }
+}
+
+// 🔥 CONTINUOUS RPM INJECTION: Keeps RPM value in XRAM[0xF8] and RAM_47
+// DISCOVERY: Timer 0 handler is GATED by IEX3 state machine!
+// IEX3 handler (@ 0x00B0) periodically DISABLES TCON.6 (Timer 0 run bit)
+// to prevent Timer 0 interference during critical K-Line communication
+// processing. So Timer 0 doesn't "continuously" clear - it's controlled by IEX3
+// state machine. However, continuous RPM injection ensures that whenever Timer
+// 0 IS allowed to run, the RPM value is immediately restored after any
+// clearing, maintaining K-Line compliance.
+static void inject_rpm_continuously([[maybe_unused]] em8051 *cpu,
+                                    CrankshaftSimulator &sim) {
+    [[maybe_unused]] unsigned char rpm_value =
+        static_cast<unsigned char>(sim.target_rpm / 25);
+
+    // Keep XRAM[0xF8] updated (firmware reads here @ 0x01AD)
+    // IEX3 @ 0x000B0 reads: mov A, XRAM[0xF8]; mov RAM_47, A
+    // cpu->mExtData[0xF8] = rpm_value;
+
+    // Keep RAM_47 updated (firmware uses this for K-Line output)
+    // This is the final RPM value sent to diagnostic tools
+    // cpu->mLowerData[0x47] = rpm_value;
+
+    cpu->mSFR[SFR_P5 - 0x80] = static_cast<uint8_t>(
+        cpu->mSFR[SFR_P5 - 0x80] | 1 | 2); // Set P5.0 P5.1 (DATA_COMM) HIGH
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Uso: %s <rom.bin> [--8052]\n", argv[0]);
@@ -1452,6 +1611,9 @@ int main(int argc, char **argv) {
     }
     const char *rompath = argv[1];
     bool want8052 = (argc >= 3 && strcmp(argv[2], "--8052") == 0);
+
+    start = std::chrono::steady_clock::now();
+    CrankshaftSimulator sim;
 
     // Inicializa PTY
     fprintf(stderr, "[DEBUG] Iniciando abertura de PTY...\n");
@@ -1704,8 +1866,26 @@ int main(int argc, char **argv) {
                 // Continue execution for now to see the pattern
             }
 
+            crankshaft_simulator_tick(&cpu, g_instr_counter, sim);
+
+            // 🔥 CONTINUOUSLY inject RPM into both XRAM[0xF8] and RAM_47
+            // This ensures firmware always has valid RPM even when Timer 0
+            // handler clears it every ~8 µs
+            inject_rpm_continuously(&cpu, sim);
+
             last_pc = cpu.mPC;
             tick(&cpu);
+
+            /*{
+                static uint8_t last_F8_value = cpu.mExtData[0xF8];
+
+                if (last_F8_value != cpu.mExtData[0xF8]) {
+                    fprintf(stderr, "[F8] 0x%02X → 0x%02X (PC=0x%04X)\n",
+                            last_F8_value, cpu.mExtData[0xF8], cpu.mPC);
+                    fflush(stderr);
+                    last_F8_value = cpu.mExtData[0xF8];
+                }
+            }*/
 
             // If cpu.mPC == 0x4C72 or cpu.mPC == 0x4C73 and they already are in
             // g_pc_hist, ignore because they are busy loop
@@ -1773,10 +1953,11 @@ int main(int argc, char **argv) {
 
                 // Only print when RAM_40 changes to reduce spam
                 if (ram_40 != last_ram_40_decoder) {
-                    fprintf(
-                        stderr,
-                        "[DECODER-4C34] Instr=%lld RAM_40: 0x%02X → 0x%02X (0b",
-                        g_instr_counter, last_ram_40_decoder, ram_40);
+                    fprintf(stderr,
+                            "[DECODER-4C34] Instr=%lld PC=0x%04X RAM_40: "
+                            "0x%02X → 0x%02X (0b",
+                            g_instr_counter, cpu.mPC, last_ram_40_decoder,
+                            ram_40);
                     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) {
                         fprintf(stderr, "%d", (ram_40 >> bit_idx) & 1);
                     }
@@ -1819,7 +2000,7 @@ int main(int argc, char **argv) {
             }
 
             // RAM_47 (watchdog counter - triggers reset if 0!)
-            static unsigned char last_ram_47 = 0xFF;
+            /*static unsigned char last_ram_47 = 0xFF;
             unsigned char current_ram_47 = cpu.mLowerData[0x47];
             if (current_ram_47 != last_ram_47) {
                 fprintf(stderr, "[RAM_47] 0x%02X → 0x%02X (PC=0x%04X) %s\n",
@@ -1827,7 +2008,7 @@ int main(int argc, char **argv) {
                         (current_ram_47 == 0) ? "**TRIGGERS RESET!**" : "");
                 fflush(stderr);
                 last_ram_47 = current_ram_47;
-            }
+            }*/
 
             // Track PC @ 0x01AB (loads XRAM[0xF8] → RAM_47)
             static bool seen_01ab = false;

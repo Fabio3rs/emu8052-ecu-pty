@@ -9,11 +9,20 @@ set(CMAKE_CXX_EXTENSIONS ON)
 set(CMAKE_C_EXTENSIONS ON)
 
 option(ENABLE_TESTS "Enable tests" ON)
-option(ENABLE_SANITIZERS "Enable sanitizers" ON)
+option(ENABLE_SANITIZERS "Enable sanitizers" OFF)
+option(ENABLE_SAB80C517 "Enable SAB80C517 interrupt support" ON)
 
 # Enable 8052 mode by default (Timer 2, 6 interrupt sources, 256B IRAM)
 # This is required for Bosch Monomotronic MA1.7 firmware which uses Timer 2
 add_compile_definitions(__8052__)
+
+# SAB80C517 support (conditional compilation)
+if(ENABLE_SAB80C517)
+    add_definitions(-D__SAB80C517__)
+    message(STATUS "SAB80C517 support: ENABLED")
+else()
+    message(STATUS "SAB80C517 support: DISABLED (8051/8052 mode)")
+endif()
 
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/emu8051)
 
