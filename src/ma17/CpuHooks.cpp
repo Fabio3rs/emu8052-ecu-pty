@@ -1,0 +1,116 @@
+#include "ma17/CpuHooks.hpp"
+
+#include "ma17/AdcSimulator.hpp"
+#include "ma17/InterruptTracer.hpp"
+#include "ma17/PortController.hpp"
+#include "ma17/UartScheduler.hpp"
+#include "ma17/XramAccess.hpp"
+
+extern "C" {
+#include "emu8051.h"
+}
+
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+
+namespace ma17 {
+
+CpuHooks *CpuHooks::active_ = nullptr;
+
+CpuHooks::CpuHooks(UartScheduler &uart, PortController &ports, long long &ticks)
+    : uart_(uart), ports_(ports), ticks_(ticks) {
+    assert(active_ == nullptr);
+    active_ = this;
+}
+
+CpuHooks::~CpuHooks() { active_ = nullptr; }
+
+void CpuHooks::sbuf_write(em8051 *cpu, uint8_t) {
+    active_->uart_.on_sbuf_write(cpu);
+}
+
+uint8_t CpuHooks::sbuf_read(em8051 *cpu, uint8_t address) {
+    return active_->uart_.on_sbuf_read(cpu, address);
+}
+
+uint8_t CpuHooks::scon_read(em8051 *cpu, uint8_t address) {
+    return active_->uart_.on_scon_read(cpu, address);
+}
+
+void CpuHooks::scon_write(em8051 *cpu, uint8_t address) {
+    active_->uart_.on_scon_write(cpu, address);
+}
+
+uint8_t CpuHooks::port_read(em8051 *cpu, uint8_t address) {
+    return active_->ports_.read(cpu, address);
+}
+
+void CpuHooks::port_write(em8051 *, uint8_t) {}
+
+void CpuHooks::xram_write(em8051 *cpu, uint16_t address, uint8_t value) {
+    write_xram(cpu, address, value, active_->ticks_);
+}
+
+void CpuHooks::install_uart(em8051 &cpu) {
+    cpu.sfrwrite[0x99 - 0x80] = sbuf_write;
+    cpu.sfrread[0x99 - 0x80] = sbuf_read;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: SBUF (0x%02X) -> UART TX/RX\n",
+            0x99u);
+    fflush(stderr);
+
+    cpu.sfrwrite[0x98 - 0x80] = scon_write;
+    cpu.sfrread[0x98 - 0x80] = scon_read;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: S0CON (0x%02X) -> Zero-latency RX "
+            "injection\n",
+            0x98u);
+    fflush(stderr);
+}
+
+void CpuHooks::install_fiat_peripherals(em8051 &cpu) {
+    cpu.sfrread[0xE8 - 0x80] = port_read;
+    cpu.sfrwrite[0xE8 - 0x80] = port_write;
+    fprintf(stderr, "[DEBUG] Callback registrado: P4 (0x%02X) -> cb_sfr_read\n",
+            0xE8u);
+    fflush(stderr);
+
+    cpu.sfrread[0xF8 - 0x80] = port_read;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: P5 (0x%02X) -> cb_sfr_read "
+            "(external-high=%s)\n",
+            0xF8u, std::getenv("MA17_P5_FORCE_HIGH") ? "on" : "off");
+    fflush(stderr);
+
+    cpu.sfrwrite[0xA8 - 0x80] = trace_ie_write;
+    fprintf(stderr, "[DEBUG] Callback registrado: IE write monitor\n");
+    fflush(stderr);
+
+    // B8h is IEN1 on SAB80C517, not the generic 8051 priority register.
+    cpu.sfrwrite[0xB8 - 0x80] = trace_ien1_write;
+    fprintf(stderr, "[DEBUG] Callback registrado: IEN1 (0xB8) write monitor\n");
+    fflush(stderr);
+
+    cpu.except = trace_cpu_exception;
+    fprintf(stderr, "[DEBUG] Callback registrado: exception handler\n");
+    fflush(stderr);
+
+    cpu.xread = read_xram;
+    cpu.xwrite = xram_write;
+    fprintf(stderr,
+            "[DEBUG] XRAM trace callbacks registrados (0xD0/0xD1 monitor)\n");
+    fflush(stderr);
+
+    // Timer 0 ISR waits for SAB80C517 IRCON.0 after each ADC conversion.
+    cpu.mSFR[0xC0 - 0x80] = 0x01;
+    cpu.sfrwrite[0xC0 - 0x80] = write_ircon;
+    fprintf(stderr,
+            "[WORKAROUND] IRCON callback registered (fake ADC ready)\n");
+
+    cpu.sfrread[0xD9 - 0x80] = read_addat;
+    fprintf(stderr,
+            "[WORKAROUND] ADDAT callback registered (simulated ADC values)\n");
+}
+
+} // namespace ma17

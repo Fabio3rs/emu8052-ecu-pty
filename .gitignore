@@ -41,6 +41,7 @@ bin
 !.vscode/extensions.json
 
 build
+/build-*/
 
 # rom_dumper outputs
 *.bin

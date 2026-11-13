@@ -28,7 +28,7 @@ include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/emu8051)
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
     message(STATUS "Setting G++ flags")
-    add_compile_options(-Wall -Werror -Wextra -Wformat-security -Wconversion -Wsign-conversion -Wno-gnu -Wno-gnu-statement-expression)
+    add_compile_options(-Wall -Werror -Wextra -Wformat-security -Wconversion -Wsign-conversion)
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC")
     message(STATUS "Setting MSVC flags")
     add_compile_options(/W4 /WX)
@@ -101,21 +101,24 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.16")
     endif()
 endif()
 
-# Function to filter out excluded files.
-function(filter_out excluded output)
-    set(result "")
-    foreach(file ${${output}})
-        if(NOT "${file}" IN_LIST ${excluded})
-            list(APPEND result ${file})
-        endif()
-    endforeach()
-    set(${output} "${result}" PARENT_SCOPE)
-endfunction()
-
-# Gather all source files.
-file(GLOB_RECURSE SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-set(EXCLUDE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-filter_out(EXCLUDE_FILES SOURCES)
+# Explicit sources keep component ownership and build changes reviewable.
+set(SOURCES
+    src/lib.cpp
+    src/ma17/AdcSimulator.cpp
+    src/ma17/CrankInput.cpp
+    src/ma17/CpuHooks.cpp
+    src/ma17/EmulatorConfig.cpp
+    src/ma17/EmulatorLoop.cpp
+    src/ma17/ExecutionTracer.cpp
+    src/ma17/FiveBaudInjector.cpp
+    src/ma17/FirmwareLoader.cpp
+    src/ma17/FirmwareProbes.cpp
+    src/ma17/InterruptTracer.cpp
+    src/ma17/PortController.cpp
+    src/ma17/PtyBridge.cpp
+    src/ma17/UartScheduler.cpp
+    src/ma17/XramAccess.cpp
+)
 
 # Add emu8051 core C files
 set(EMU8051_SOURCES
@@ -131,9 +134,13 @@ add_library(emu8051-tty_lib STATIC ${SOURCES} ${EMU8051_SOURCES})
 
 # The emu8051 C code is third-party and doesn't compile with strict warnings
 # Apply more lenient flags to C files
-set_source_files_properties(${EMU8051_SOURCES} PROPERTIES
-    COMPILE_FLAGS "-Wno-everything"
-)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(${EMU8051_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-Wno-conversion -Wno-sign-conversion -Wno-unused-parameter")
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(${EMU8051_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-Wno-everything")
+endif()
 
 add_executable(emu8051-tty "src/main.cpp")
 target_link_libraries(emu8051-tty emu8051-tty_lib)
