@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disassemble and reassemble a SAB80C517/537 external ROM with asm51."""
+"""Disassemble and reassemble a C517A-compatible external ROM with asm51."""
 
 import argparse
 import hashlib
@@ -14,16 +14,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SFR = re.compile(r"^\s*(sfr|sbit)\s+(\w+)\s*=\s*0x([0-9a-fA-F]+);", re.M)
 MA17_SHA256 = "a34734350611cf561eb39ac1a63097defcaaff642cd7780526f632dda40f8e1f"
-# Interrupt vectors confirmed against the IDA C517 listing for this exact dump.
-MA17_VECTORS = (0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B, 0x43,
-                0x4B, 0x53, 0x5B, 0x63, 0x6B, 0x83)
+RENAULT_CLIO_SHA256 = "cf0c841d924bfc740ffbe825d7b87d9df22cfa7f3bfcfa4eafe7765e03795412"
+# Fiat Tipo only: non-erased C517 vector entries in this 27C256 dump.
+# CTF at 009Bh is also reached by the Timer 1 output handler at 0090h.
+MA17_VECTORS = (0x03, 0x0B, 0x1B, 0x23, 0x2B, 0x43,
+                0x53, 0x63, 0x6B, 0x9B)
 
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def definitions(header):
+def definitions(header, c517a=False):
     result = []
     seen = set()
     for kind, name, value in SFR.findall(header):
@@ -31,13 +33,18 @@ def definitions(header):
             raise ValueError(f"duplicate symbol: {name}")
         seen.add(name.lower())
         result.append((name, "DATA" if kind == "sfr" else "BIT", int(value, 16)))
+    if c517a:
+        # Infineon D80517A, XRAM section, pp. 20-22. This ROM uses both SFRs.
+        result += [("XPAGE", "DATA", 0x91), ("SYSCON", "DATA", 0xB1)]
     # Late C517 serial reload registers in SAB80C517 manual, pp. 22, 81.
     result += [("S0RELL", "DATA", 0xAA), ("S0RELH", "DATA", 0xBA)]
     return result
 
 
 def convert(source, symbols):
-    lines = ["; SAB80C517/537 register definitions from reg517.h"]
+    lines = ["; MCS-51 register definitions from reg517.h"]
+    if any(name == "XPAGE" for name, _, _ in symbols):
+        lines[0] += "; C517A XPAGE/SYSCON profile"
     lines += [f"{name} {kind} 0{value:02X}h" for name, kind, value in symbols]
     lines += ["", "; disasm51 output; ORG gaps contain erased 0FFh bytes"]
     for line in source.splitlines():
@@ -101,17 +108,23 @@ def main():
     original = firmware.read_bytes()
     if not original or len(original) > 65536:
         parser.error("firmware must contain 1..65536 bytes")
+    firmware_hash = sha256(original)
+    firmware_origin = {
+        MA17_SHA256: "Fiat Tipo Bosch Monomotronic MA1.7 27C256",
+        RENAULT_CLIO_SHA256: "Renault Clio Bosch Monomotronic MA1.7 revision",
+    }.get(firmware_hash, "unknown MCS-51 firmware")
     output = args.output_dir or ROOT / "build" / "roundtrip" / firmware.stem
     output.mkdir(parents=True, exist_ok=True)
     mcu = output / "sab80c517.mcu"
     raw = output / (firmware.stem + ".disasm51.asm")
     assembly = output / (firmware.stem + ".asm")
     rebuilt = output / (firmware.stem + ".rebuilt.bin")
-    symbols = definitions((ROOT / "reg517.h").read_text())
+    symbols = definitions((ROOT / "reg517.h").read_text(),
+                          c517a=firmware_hash == MA17_SHA256)
     mcu.write_text("\n".join(f"{n} {k} 0{v:02X}h" for n, k, v in symbols) + "\n")
     disasm = ROOT / ".venv" / "bin" / "disasm51"
     command = [str(disasm), "--include", str(mcu), "--entry", "RESET"]
-    if sha256(original) == MA17_SHA256:
+    if firmware_hash == MA17_SHA256:
         for vector in MA17_VECTORS:
             command += ["--entry", hex(vector)]
     for option, values in (("--entry", args.entry), ("--indirect", args.indirect),
@@ -136,6 +149,7 @@ def main():
     offsets, groups = differences(original, actual)
     code_bytes, data_bytes, unclassified_bytes, owners = classification(result.stdout, original)
     report = {
+        "firmware_origin": firmware_origin,
         "original_size": len(original), "rebuilt_size": len(actual),
         "original_sha256": sha256(original), "rebuilt_sha256": sha256(actual),
         "mismatched_bytes": len(offsets), "sha256_equal": sha256(original) == sha256(actual),

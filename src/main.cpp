@@ -1,5 +1,8 @@
 // emu8051_pty_harness.cpp
 // PTY harness for emu8051 core integration
+// Hardware profile: Fiat Tipo Bosch Monomotronic MA1.7, 27C256 dump.
+// The Renault Clio MA1.7 uses a different hardware revision, clock and ports;
+// this harness does not provide a Renault runtime profile.
 // - Loads raw ROM (e.g., 27C256, 32 KiB) into program memory
 // - Exposes PTY interface at 4800 8N1 baud
 // - Emulates UART via SFR SCON/SBUF with cycle-accurate timing
@@ -16,10 +19,10 @@
 //    - Matches real 8051 UART behavior for K-line protocol testing
 //
 // ============================================================================
-// WORKAROUNDS FOR MISSING SAB80C537 PERIPHERALS (BOSCH ECU)
+// WORKAROUNDS FOR MISSING SAB80C517A PERIPHERALS (BOSCH ECU)
 // ============================================================================
 //
-// This firmware expects SAB80C537-specific hardware (Bosch Motronic MA1.7 ECU).
+// This firmware uses SAB80C517A-compatible XPAGE/SYSCON and CCU behavior.
 // Since jarikomppa/emu8051 only implements basic 8051/8052, we emulate missing
 // peripherals via SFR write callbacks:
 //
@@ -28,15 +31,17 @@
 //              Loop: jbc IRCON.0, next; sjmp loop (code @ 0x0711-0x0714)
 //    Impact:   Timer 0 ISR hangs forever → mInterruptActive=2 stuck
 //    Solution: Callback forces IRCON.0=1 after each write (simulates ADC always
-//    ready) Register: IRCON = 0xC0 (SAB80C537 specific)
+//    ready) Register: IRCON = 0xC0 (SAB80C517A)
 //
 // Without these workarounds, emulator hangs after first Timer 0 interrupt,
 // making K-line communication impossible.
 //
 
 #include <algorithm>
+#include <assert.h>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 extern "C" {
 #include <errno.h>
@@ -60,10 +65,13 @@ extern "C" {
 }
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <queue>
 #include <string>
 #include <vector>
+
+#include "CrankshaftSimulator.hpp"
 
 // =========================
 // Seção de ADAPTAÇÃO de API
@@ -355,24 +363,16 @@ struct UartBridge {
                 rxd_line_state =
                     b == 0xFF; // Physical K-line goes LOW (0V BREAK/SPACE)
 
-                // UNBREAK timer strategy: Each BREAK extends the LOW period,
-                // but not indefinitely In 5-baud init, BREAKs arrive ~200ms
-                // apart (one per bit) We keep line LOW until 250ms after LAST
-                // BREAK received This accumulates multiple BREAKs into one
-                // continuous LOW period CRITICAL: Timer MUST be > 200ms to
-                // avoid premature UNBREAK between consecutive bits!
+                // A MARK releases the prior SPACE immediately. The timeout
+                // only recovers from a sender that never sends the release.
                 long long now = now_ms();
-                long long extend_to = now + 600;
-
-                // Only extend if new time is later (don't reset on each BREAK)
-                if (extend_to > low_until_ms) {
-                    low_until_ms = extend_to;
-                }
+                low_until_ms = rxd_line_state ? 0 : now + 250;
 
                 fprintf(
                     stderr,
                     "[K-LINE] BREAK detected (RXD=%s, hold until +%lld ms)\n",
-                    (rxd_line_state ? "HIGH" : "LOW"), low_until_ms - now);
+                    (rxd_line_state ? "HIGH" : "LOW"),
+                    rxd_line_state ? 0LL : low_until_ms - now);
                 fflush(stderr);
                 // Do NOT echo BREAK, do NOT queue (BREAKs are control signals,
                 // not data)
@@ -400,11 +400,11 @@ static std::atomic<bool> g_inject_5baud{
 // RX: zero-latency (RI=1 immediately, matches K-line transceiver)
 // See: KLINE_TRANSCEIVER.md for hardware behavior reference
 
-// Cristal real do hardware (11.880 MHz)
+// Fiat Tipo profile clock (11.880 MHz); do not reuse for Renault timings.
 static constexpr double FOSC_HZ = 11'880'000.0;
 
-// Global instruction counter (moved from main() local scope)
-// Tracks total emulated instructions for event scheduling
+// Historical name: counts tick() calls, including extra machine cycles of
+// multi-cycle instructions. Timing and trace offsets use emulated ticks.
 static long long g_instr_counter = 0;
 
 // Ponteiro global para a CPU (usado pelos eventos UART)
@@ -612,7 +612,16 @@ static uint8_t cb_xram_trace_read(em8051 *cpu, uint16_t address) {
 
 static void cb_xram_trace_write(em8051 *cpu, uint16_t address, uint8_t value) {
     const uint16_t masked = address & cpu->mExtDataMaxIdx;
-    // const uint8_t prev = read_ext_data(cpu, masked);
+    const uint8_t prev = read_ext_data(cpu, masked);
+
+    static const bool trace_pc = std::getenv("MA17_TRACE_PC") != nullptr;
+    if (trace_pc && masked == 0xF8DD && prev != value) {
+        static int gate_writes = 0;
+        if (gate_writes++ < 32)
+            fprintf(stderr, "[CC3-GATE-WRITE] instr=%lld PC=%04X "
+                            "XRAM_F8DD=%02X->%02X\n",
+                    g_instr_counter, cpu->mPC, prev, value);
+    }
 
     if (cpu->mExtData) {
         cpu->mExtData[masked] = value;
@@ -638,9 +647,9 @@ static void cb_xram_trace_write(em8051 *cpu, uint16_t address, uint8_t value) {
 
 // --- Helpers de timing ---
 
-// Calculate real-time milliseconds from instruction count
+// Convert emulated machine-cycle ticks to milliseconds.
 static double instr_to_ms(long long instr_count) {
-    // 990,000 instructions/second @ 11.880 MHz crystal
+    // 990,000 machine cycles/second @ 11.880 MHz crystal
     double instr_per_sec = FOSC_HZ / 12.0;
     return (static_cast<double>(instr_count) / instr_per_sec) * 1000.0;
 }
@@ -651,12 +660,12 @@ static double uart_current_baud([[maybe_unused]] const em8051 *cpu) {
     return 4800.0;
 }
 
-// Calculate instructions per UART bit
+// Calculate emulated ticks per UART bit.
 static long long uart_instr_per_bit(const em8051 *cpu) {
     double baud = uart_current_baud(cpu);
     if (baud <= 0.0)
         return 0;
-    double instr_per_sec = FOSC_HZ / 12.0;       // 990,000 instr/s
+    double instr_per_sec = FOSC_HZ / 12.0;       // 990,000 ticks/s
     double instr_per_bit = instr_per_sec / baud; // ~206.25 @ 4800 baud
     return static_cast<long long>(llround(instr_per_bit));
 }
@@ -811,9 +820,9 @@ static void uart_on_scanner_byte(uint8_t b) {
 // Timing calculation:
 //   Crystal: 11.880 MHz
 //   8051 instruction cycle: 12 clock cycles
-//   Instruction rate: 11,880,000 / 12 = 990,000 instructions/second
+//   Machine-cycle rate: 11,880,000 / 12 = 990,000 ticks/second
 //   5-baud bit period: 1/5 = 0.2 seconds = 200ms
-//   Instructions per bit: 990,000 × 0.2 = 198,000 instructions
+//   Emulated ticks per bit: 990,000 × 0.2 = 198,000 ticks
 struct FiveBaudInjector {
     bool active = false;
     int current_bit = 0;
@@ -885,6 +894,7 @@ static void sigusr1_handler(int) {
 }
 
 // P4 port handling for K-line RX bit sampling
+[[maybe_unused]] static constexpr int SFR_P1 = 0x90;
 static constexpr int SFR_P4 = 0xE8;
 [[maybe_unused]] static constexpr int SFR_P5 = 0xF8;
 static unsigned char p4_value = 0xEA; // Initial value from ROM @ 0x085E
@@ -940,32 +950,29 @@ static void cb_sfr_write_ie(em8051 *cpu, uint8_t addr) {
     }
 }
 
-// SFR write callback for IP0 register (interrupt priority) - FIX Timer 0
-// priority!
-static void cb_sfr_write_ip0(em8051 *cpu, uint8_t addr) {
-    (void)addr;
-    (void)cpu;
-    // unsigned char ip0_val = cpu->mSFR[addr - 0x80];
-    // static int ip0_write_count = 0;
+// SFR write callback for IEN1 register (0xB8) - SAB80C517 Interrupt Enable 1
+// NOTE: In standard 8051, 0xB8 is IP (priority), but in SAB80C517 it's IEN1!
+// IEN1 bits: EXEN2 | SWDT | EX6 | EX5 | EX4 | EX3 | EX2 | EADC
+//            bit7    bit6   bit5  bit4  bit3  bit2  bit1  bit0
+// EX3 (bit 2) enables the IEX3 interrupt (crankshaft capture)
+static void cb_sfr_write_ien1(em8051 *cpu, uint8_t addr) {
+    static uint8_t last_ien1 = 0xFF;
+    static int ien1_write_count = 0;
+    uint8_t new_ien1 = cpu->mSFR[addr - 0x80];
 
-    // HACK: ALWAYS force Timer 0 to HIGH priority to prevent Timer 2 from
-    // blocking it Original firmware sets: IP0 = 0x39 = 0b00111001 (PT0=0,
-    // PT2=1) We modify to:          IP0 = 0x3B = 0b00111011 (PT0=1, PT2=1) This
-    // allows Timer 0 ISR to run for 5-baud P4.5 sampling
-    /*if ((ip0_val & 0x02) == 0) { // If PT0 (bit 1) is 0
-        ip0_val |= 0x02;         // Set PT0=1 (make Timer 0 high priority)
-        cpu->mSFR[addr - 0x80] = ip0_val;
-        if (ip0_write_count < 10) { // Log first 10 modifications
-            fprintf(
-                stderr,
-                "[IP0 HACK] #%d Timer 0 priority forced to HIGH: IP0=0x%02X "
-                "(PT2=%d PT0=%d)\n",
-                ++ip0_write_count, ip0_val,
-                (ip0_val & 0x20) ? 1 : 0,  // PT2
-                (ip0_val & 0x02) ? 1 : 0); // PT0
-            fflush(stderr);
-        }
-    }*/
+    // Log when IEN1.2 (EX3) changes
+    bool old_ex3 = (last_ien1 & 0x04) != 0;
+    bool new_ex3 = (new_ien1 & 0x04) != 0;
+
+    if (old_ex3 != new_ex3 || ien1_write_count < 20) {
+        fprintf(stderr, "[IEN1] 0x%02X → 0x%02X (EX3: %d→%d) PC=0x%04X\n",
+                last_ien1, new_ien1, old_ex3 ? 1 : 0, new_ex3 ? 1 : 0,
+                cpu->mPC);
+        fflush(stderr);
+        ien1_write_count++;
+    }
+
+    last_ien1 = new_ien1;
 }
 
 // Callback para monitorar modificações no PC (interrupt vectors)
@@ -976,9 +983,10 @@ static bool timer2_active = false;
 static void detect_isr_call(em8051 *cpu) {
     uint16_t pc = cpu->mPC;
 
-    // Detect ISR vectors (0x03, 0x0B, 0x13, 0x1B, 0x23, 0x2B)
+    // Detect ISR vectors (8051 standard + SAB80C517 extended)
+    // SAB80C517 vectors: IEX3=0x53, IEX2=0x4B, IADC=0x43, etc.
     if ((pc == 0x03 || pc == 0x0B || pc == 0x13 || pc == 0x1B || pc == 0x23 ||
-         pc == 0x2B) &&
+         pc == 0x2B || pc == 0x43 || pc == 0x4B || pc == 0x53) &&
         last_pc_for_isr_detection != pc) {
         const char *isr_name = "UNKNOWN";
         switch (pc) {
@@ -1001,6 +1009,26 @@ static void detect_isr_call(em8051 *cpu) {
             isr_name = "TIMER2";
             timer2_active = true;
             timer2_trace_count = 0;
+            break;
+        case 0x43:
+            isr_name = "IADC (SAB80C517)";
+            break;
+        case 0x4B:
+            isr_name = "IEX2 (SAB80C517)";
+            break;
+        case 0x53:
+            isr_name = "IEX3 (SAB80C517)";
+            {
+                static int iex3_count = 0;
+                if (iex3_count < 20) {
+                    fprintf(
+                        stderr,
+                        "[ISR-IEX3] #%d IEX3 called! CRCL=0x%02X CRCH=0x%02X\n",
+                        ++iex3_count, cpu->mSFR[0xCA - 0x80],
+                        cpu->mSFR[0xCB - 0x80]);
+                    fflush(stderr);
+                }
+            }
             break;
         default:
             break;
@@ -1174,19 +1202,29 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
         uint8_t adcon0 = cpu->mSFR[SFR_ADCON0 - 0x80];
         uint8_t channel = adcon0 & 0x07; // Lower 3 bits = channel select
 
-        // Simulated ADC values for different channels (8-bit)
-        // Valid range: 4-247 (firmware validation @ code:0x0732)
-        static const uint8_t adc_values[8] = {
-            120, // Channel 0: Water temp sensor (0x62) - ~60°C
-            130, // Channel 1: Air temp sensor (0x63) - ~25°C
-            100, // Channel 2: TPS/Lambda (0x6C) - mid-range
-            80,  // Channel 3
-            90,  // Channel 4
-            110, // Channel 5
-            95,  // Channel 6
-            105  // Channel 7
-        };
-
+        // Fiat ROM 06E3h..06F1h: channels 0..7 first target IRAM
+        // 60h..67h; channel 3 is redirected to upper IRAM A8h. The scanner
+        // calls 62h air temperature, 63h coolant and 60h/66h TPS tracks.
+        // Those physical identities and the values below are test stimuli.
+        static const std::array<uint8_t, 8> adc_values = [] {
+            std::array<uint8_t, 8> values{120, 130, 100, 80,
+                                          90, 110, 95, 105};
+            for (unsigned ch = 0; ch < values.size(); ++ch) {
+                char name[32];
+                snprintf(name, sizeof(name), "MA17_ADC_CH%u", ch);
+                const char *setting = std::getenv(name);
+                if (!setting)
+                    continue;
+                char *end = nullptr;
+                const long value = std::strtol(setting, &end, 10);
+                if (*setting && *end == '\0' && value >= 4 && value <= 247)
+                    values[ch] = static_cast<uint8_t>(value);
+                else
+                    fprintf(stderr, "[ADC] invalid %s=%s; using %u\n",
+                            name, setting, values[ch]);
+            }
+            return values;
+        }();
         uint8_t adc_value = adc_values[channel];
 
         // Verbose logging disabled to reduce log noise
@@ -1204,6 +1242,16 @@ static uint8_t cb_sfr_read(em8051 *cpu, uint8_t addr) {
         */
 
         return adc_value;
+    }
+
+    // Optional legacy stimulus for Fiat P5 feedback reads at 0D9Eh/0DA1h.
+    // Forcing the input high suppresses the firmware's SETB P5.0/1 paths;
+    // default to the latch until the board-level pin circuit is known.
+    if (addr == SFR_P5) {
+        uint8_t p5 = cpu->mSFR[addr - 0x80];
+        if (std::getenv("MA17_P5_FORCE_HIGH"))
+            p5 |= 0x03; // Legacy external-high hypothesis, opt in only.
+        return p5;
     }
 
     return cpu->mSFR[addr - 0x80];
@@ -1460,114 +1508,101 @@ static bool load_bin_to_code(em8051 *cpu, const char *path,
     return true;
 }
 
-struct CrankshaftSimulator {
-    static constexpr int TEETH_COUNT = 58;
-    static constexpr int POSITIONS_TOTAL = 60;
-    static constexpr double DEGREES_PER_POSITION = 6.0;
-    static constexpr long long PULSE_WIDTH_INSTRS = 100; // ~8.5 µs @ 11.8 MHz
+static bool simulcrank = true;
 
-    int target_rpm = 1000;
-    long long last_pulse_instr = 0;
-    long long pulse_interval_instrs = 0;
-    long long pulse_end_instr = 0; // When to pull signal LOW
-    int current_tooth = 0;
-    bool gap_detected = false;
-    bool pulse_active = false; // Track if pulse is HIGH
-    bool int0_fired_this_pulse =
-        false; // Track if INT0 already fired for this pulse
-
-    void update_pulse_interval(long long cpu_freq_hz) {
-        pulse_interval_instrs =
-            (60LL * cpu_freq_hz) / (target_rpm * TEETH_COUNT);
+static void crank_capture_edge(em8051 *cpu, bool rising) {
+    // External P1.0 pin and port latch are not modeled separately here.
+    // Treat captures and firmware reads of P1.0 as provisional evidence;
+    // the C517 manual requires the input latch to remain at one.
+    if (((EMU_GET_SFR(cpu, 0xC8) & 0x40u) != 0) != rising)
+        return; // T2CON.I3FR selects the active INT3/CC0 edge.
+    if ((EMU_GET_SFR(cpu, 0xC1) & 0x03u) == 0x01u) {
+        EMU_SET_SFR(cpu, 0xCA, EMU_GET_SFR(cpu, 0xCC));
+        EMU_SET_SFR(cpu, 0xCB, EMU_GET_SFR(cpu, 0xCD));
     }
+    EMU_SET_SFR(cpu, 0xC0, EMU_GET_SFR(cpu, 0xC0) | 0x04u);
+}
 
-    bool should_pulse_go_high(long long current_instr) {
-        return (current_instr - last_pulse_instr) >= pulse_interval_instrs &&
-               !pulse_active;
+[[maybe_unused]] static void
+crankshaft_simulator_tick(em8051 *cpu, long long instr_count,
+                          CrankshaftSimulator &sim) {
+    if (!simulcrank) {
+        return;
     }
-
-    bool should_pulse_go_low(long long current_instr) {
-        return pulse_active && (current_instr >= pulse_end_instr);
-    }
-
-    bool is_in_gap() { return (current_tooth >= 58); }
-};
-
-static void crankshaft_simulator_tick(em8051 *cpu, long long instr_count,
-                                      CrankshaftSimulator &sim) {
-    // Handle pulse LOW transition (end of pulse window)
+    // CCEN=01h captures Timer 2 on the falling P1.0/INT3/CC0 edge.
     if (sim.should_pulse_go_low(instr_count)) {
-        // Pull INT0 LOW (P3.2 = 0)
-        unsigned char p3 = EMU_GET_SFR(cpu, 0xB0); // P3 port
-        p3 &= ~0x04;                               // Clear bit 2 (P3.2 = INT0)
-        EMU_SET_SFR(cpu, 0xB0, p3);
+        // Capture only physical teeth, not the two missing positions.
+        if (!sim.gap_detected && !sim.capture_done_this_pulse) {
+            unsigned char p1 = EMU_GET_SFR(cpu, SFR_P1);
+            static int traced_edges = 0;
+            if (getenv("MA17_TRACE_PC") && traced_edges++ < 8) {
+                fprintf(stderr,
+                        "[CRANK-EDGE] instr=%lld tooth=%d PC=%04X EA=%d "
+                        "P1=%02X CCEN=%02X T2CON=%02X IEN1=%02X "
+                        "IRCON=%02X C4=%02X TH2:TL2=%02X:%02X\n",
+                        instr_count, sim.current_tooth, cpu->mPC,
+                        (EMU_GET_SFR(cpu, 0xA8) & 0x80u) != 0, p1,
+                        EMU_GET_SFR(cpu, 0xC1), EMU_GET_SFR(cpu, 0xC8),
+                        EMU_GET_SFR(cpu, 0xB8), EMU_GET_SFR(cpu, 0xC0),
+                        cpu->mUpperData[0xC4 - 0x80],
+                        EMU_GET_SFR(cpu, 0xCD), EMU_GET_SFR(cpu, 0xCC));
+            }
+            EMU_SET_SFR(cpu, SFR_P1, p1 & 0xFEu);
+            crank_capture_edge(cpu, false);
+            sim.capture_done_this_pulse = true;
+        }
 
         sim.pulse_active = false;
-        sim.int0_fired_this_pulse = false; // Reset flag for next pulse
-        /*fprintf(stderr,
-                "[CRANK] %lld: INT0 LOW (end pulse) Tooth=%d Gap=%s\n",
-                instr_count, sim.current_tooth,
-                sim.gap_detected ? "YES" : "NO");
-        fflush(stderr);*/
+        sim.int0_fired_this_pulse = false;
+        sim.capture_done_this_pulse = false; // Reset for next pulse
         return;
     }
 
     // Handle pulse HIGH transition (start new pulse)
     if (sim.should_pulse_go_high(instr_count)) {
-        // Advance to next tooth
+        // Advance to next tooth position (0-59)
         sim.current_tooth = (sim.current_tooth + 1) % sim.POSITIONS_TOTAL;
         sim.gap_detected = sim.is_in_gap();
-
-        // Pull INT0 HIGH (P3.2 = 1)
-        unsigned char p3 = EMU_GET_SFR(cpu, 0xB0); // P3 port
-        p3 |= 0x04;                                // Set bit 2 (P3.2 = INT0)
-        EMU_SET_SFR(cpu, 0xB0, p3);
-
-        // 🔥 CRITICAL FIX: Force IEX3 interrupt (NOT INT0!)
-        // ✅ ONLY ONCE per pulse transition!
-        // INT0 @ 0x0003 is just a debouncer (doesn't read XRAM[0xF8])
-        // IEX3 @ 0x00B0 (Timer Communication Service) reads XRAM[0xF8] → RAM_47
-        // IRCON.2 (0xC0) is the interrupt request flag for IEX3
-        // Setting IRCON.2 = 1 triggers the IEX3 handler
-        if (!sim.int0_fired_this_pulse) {
-            /*unsigned char ircon = EMU_GET_SFR(cpu, 0xC0);  // IRCON (0xC0)
-            ircon |= 0x04;  // Set bit 2 (IEX3 request flag)
-            EMU_SET_SFR(cpu, 0xC0, ircon);*/
-
-            sim.int0_fired_this_pulse = true; // Mark as fired
-
-            /*fprintf(stderr, "[IEX3-FIRED] instr=%lld RPM=%d Tooth=%d (IRCON.2
-            set once)\n", instr_count, sim.target_rpm, sim.current_tooth);
-            fflush(stderr);*/
+        static int teeth_in_revolution = 0;
+        static int gaps_in_revolution = 0;
+        static int revolutions = 0;
+        if (sim.current_tooth == 0) {
+            // The first wrap omits the initial position 0; count full turns after it.
+            if (revolutions++ > 0 && std::getenv("MA17_TRACE_PC") &&
+                revolutions <= 65)
+                fprintf(stderr,
+                        "[CRANK-REV] rpm=%d teeth=%d gaps=%d ticks_per_tooth=%lld\n",
+                        sim.target_rpm, teeth_in_revolution,
+                        gaps_in_revolution, sim.pulse_interval_instrs);
+            teeth_in_revolution = 0;
+            gaps_in_revolution = 0;
         }
 
-        // Update Timer2 capture registers with expected RPM values
-        unsigned short expected_ticks =
-            static_cast<unsigned short>((1018 * sim.target_rpm) / 1000);
-        EMU_SET_SFR(cpu, 0xCF, (expected_ticks >> 8) & 0xFF); // CRCH
-        EMU_SET_SFR(cpu, 0xCE, expected_ticks & 0xFF);        // CRCL
+        // 60-2 RELUCTOR WHEEL SIMULATION:
+        // - Positions 0-57: Generate pulse + capture Timer2 + fire IEX3
+        // - Positions 58-59: GAP - NO pulse, NO capture, NO IEX3
+        // The firmware detects the gap by the longer period between captures.
 
-        // ✅ CORRECTED: Write RPM value to XRAM[0xF8] AND RAM_47
-        // Firmware reads XRAM[0xF8] @ 0x01AD and copies to RAM_47 @ 0x01AE
-        // BUT: Timer 0 handler continuously clears both every ~8 µs!
-        // Solution: Inject into BOTH locations to survive periodic clearing
-        // Formula: RAM_47 × 25 = RPM_real (Bosch ECU standard)
-        // Therefore: XRAM[0xF8] = target_rpm / 25 AND RAM_47 = target_rpm / 25
-        unsigned char rpm_value =
-            static_cast<unsigned char>(sim.target_rpm / 25);
+        if (sim.gap_detected) {
+            ++gaps_in_revolution;
+            // GAP: No physical tooth here - skip pulse generation
+            // Just update timing for next position
+            sim.pulse_active = true; // Still need to track timing
+            sim.pulse_end_instr = instr_count + sim.pulse_width_instrs;
+            sim.last_pulse_instr = instr_count;
+            sim.int0_fired_this_pulse = true; // Prevent firing during gap
+            return;                           // No pulse, no IEX3 during gap
+        }
 
-        // Inject to XRAM[0xF8] (for firmware to read via 0x01AD)
-        cpu->mExtData[0xF8] =
-            rpm_value; // XRAM[0xF8] = ENGINE_RPM (will be copied to RAM_47)
-
-        // ALSO inject directly to RAM_47 (0x47 in internal RAM)
-        // This survives Timer 0 clearing if injected right before firmware
-        // reads
-        // cpu->mLowerData[0x47] = rpm_value; // RAM_47 = ENGINE_RPM (direct)
+        ++teeth_in_revolution;
+        EMU_SET_SFR(cpu, SFR_P1, EMU_GET_SFR(cpu, SFR_P1) | 0x01u);
+        crank_capture_edge(cpu, true);
+        // Capture happens on the falling edge in should_pulse_go_low.
+        sim.int0_fired_this_pulse = true;
 
         // Schedule the LOW transition
         sim.pulse_active = true;
-        sim.pulse_end_instr = instr_count + sim.PULSE_WIDTH_INSTRS;
+        sim.pulse_end_instr = instr_count + sim.pulse_width_instrs;
         sim.last_pulse_instr = instr_count;
 
         /*fprintf(stderr,
@@ -1579,31 +1614,6 @@ static void crankshaft_simulator_tick(em8051 *cpu, long long instr_count,
     }
 }
 
-// 🔥 CONTINUOUS RPM INJECTION: Keeps RPM value in XRAM[0xF8] and RAM_47
-// DISCOVERY: Timer 0 handler is GATED by IEX3 state machine!
-// IEX3 handler (@ 0x00B0) periodically DISABLES TCON.6 (Timer 0 run bit)
-// to prevent Timer 0 interference during critical K-Line communication
-// processing. So Timer 0 doesn't "continuously" clear - it's controlled by IEX3
-// state machine. However, continuous RPM injection ensures that whenever Timer
-// 0 IS allowed to run, the RPM value is immediately restored after any
-// clearing, maintaining K-Line compliance.
-static void inject_rpm_continuously([[maybe_unused]] em8051 *cpu,
-                                    CrankshaftSimulator &sim) {
-    [[maybe_unused]] unsigned char rpm_value =
-        static_cast<unsigned char>(sim.target_rpm / 25);
-
-    // Keep XRAM[0xF8] updated (firmware reads here @ 0x01AD)
-    // IEX3 @ 0x000B0 reads: mov A, XRAM[0xF8]; mov RAM_47, A
-    // cpu->mExtData[0xF8] = rpm_value;
-
-    // Keep RAM_47 updated (firmware uses this for K-Line output)
-    // This is the final RPM value sent to diagnostic tools
-    // cpu->mLowerData[0x47] = rpm_value;
-
-    cpu->mSFR[SFR_P5 - 0x80] = static_cast<uint8_t>(
-        cpu->mSFR[SFR_P5 - 0x80] | 1 | 2); // Set P5.0 P5.1 (DATA_COMM) HIGH
-}
-
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Uso: %s <rom.bin> [--8052]\n", argv[0]);
@@ -1611,9 +1621,42 @@ int main(int argc, char **argv) {
     }
     const char *rompath = argv[1];
     bool want8052 = (argc >= 3 && strcmp(argv[2], "--8052") == 0);
+    // Size rejects the known 64 KiB Renault dump; it cannot identify another
+    // 32 KiB image. The override still runs the Fiat clock and port model.
+    fprintf(stderr,
+            "[PROFILE] Fiat MA1.7/C517A harness: 11.88 MHz, P4 K-line, "
+            "P1.0 crank input; verify hardware before using another ROM\n");
+    std::error_code rom_size_error;
+    const auto rom_size = std::filesystem::file_size(rompath, rom_size_error);
+    if (!rom_size_error && rom_size != 32768) {
+        fprintf(stderr,
+                "[PROFILE] ROM has %llu bytes (Fiat reference: 32768); "
+                "clock and port stimuli are unverified for this image\n",
+                static_cast<unsigned long long>(rom_size));
+        const char *foreign_override = std::getenv("MA17_ALLOW_FOREIGN_ROM");
+        if (!foreign_override || strcmp(foreign_override, "1") != 0) {
+            fprintf(stderr,
+                    "[PROFILE] Refusing Fiat hardware emulation for this ROM; "
+                    "set MA17_ALLOW_FOREIGN_ROM=1 for experimental use\n");
+            return 2;
+        }
+        fprintf(stderr, "[PROFILE] Experimental Fiat hardware profile override enabled\n");
+    }
 
     start = std::chrono::steady_clock::now();
     CrankshaftSimulator sim;
+    if (const char *setting = std::getenv("MA17_CRANK_RPM")) {
+        char *end = nullptr;
+        const long rpm = std::strtol(setting, &end, 10);
+        if (*setting && *end == '\0' && rpm >= 300 && rpm <= 6000)
+            sim.target_rpm = static_cast<int>(rpm);
+        else
+            fprintf(stderr, "[CRANKSHAFT] invalid MA17_CRANK_RPM=%s; using 1000\n",
+                    setting);
+    }
+    sim.update_pulse_interval(990000); // 11.88 MHz / 12 = 990k ticks/sec
+    if (getenv("MA17_CRANK_IMMEDIATE"))
+        sim.startup_delay_instrs = 0;
 
     // Inicializa PTY
     fprintf(stderr, "[DEBUG] Iniciando abertura de PTY...\n");
@@ -1632,26 +1675,31 @@ int main(int argc, char **argv) {
 
     // Instancia CPU
     em8051 cpu{};
+    std::fill(std::begin(cpu.mSFR), std::end(cpu.mSFR), 0);
+    std::fill(std::begin(cpu.mLowerData), std::end(cpu.mLowerData), 0);
 
     // Aloca memórias antes de chamar reset()
     // Code memory: 64KB (0x10000 bytes) - ROM, read-only
-    static unsigned char code_memory[0x10000];
+    static unsigned char code_memory[0x10000]{};
+    std::fill(std::begin(code_memory), std::end(code_memory), 0);
     cpu.mCodeMem = code_memory;
     cpu.mCodeMemMaxIdx = 0xFFFF;
 
     // External data memory: 64KB - RAM separada da ROM!
     // CRITICAL FIX: ROM deve ser read-only. Firmware que faz MOVX write
     // não deve sobrescrever a ROM!
-    static unsigned char ext_data_memory[0x10000];
+    static unsigned char ext_data_memory[0x10000]{};
+    std::fill(std::begin(ext_data_memory), std::end(ext_data_memory), 0);
     cpu.mExtData = ext_data_memory;
     cpu.mExtDataMaxIdx = 0xFFFF;
 
     // Upper data RAM: 128 bytes adicionais para 8052
-    // NOTA: A firmware Bosch MA1.7 usa RAM superior mesmo não sendo 8052
+    // O dump Fiat Tipo MA1.7 usa RAM superior mesmo não sendo 8052
     // completo! Portanto, SEMPRE alocamos (o firmware acessa RAM[0x80-0xFF] via
     // @R0/@R1)
-    static unsigned char upper_data[128];
-    cpu.mUpperData = upper_data; // ALWAYS allocate for Bosch MA1.7
+    static unsigned char upper_data[128]{};
+    std::fill(std::begin(upper_data), std::end(upper_data), 0);
+    cpu.mUpperData = upper_data; // Required by the Fiat Tipo firmware.
     (void)want8052;              // Suppress unused variable warning
 
     // Register UART callbacks for SBUF (immediate TX/RX via SFR hooks)
@@ -1677,15 +1725,14 @@ int main(int argc, char **argv) {
     fflush(stderr);
     reset(&cpu, true);
 
-    // EEPROM/NVM simulation: initialize calibration/config data
-    // MUST be done AFTER reset() since reset() clears mExtData
-    // The firmware reads XRAM[0xF8] → RAM_47 (watchdog counter)
-    // If RAM_47 = 0, it triggers a system reset @ 0x4B67
-    // Set to 0xFF to prevent continuous reset loop
-    cpu.mExtData[0xF8] = 0xFF;   // EEPROM watchdog value
+    // Legacy startup marker; reset() clears XRAM before this initialization.
+    // MOVX @R1 with P2=F8h addresses page F8h, not page 00h.
+    // The firmware clears RAM[47h] during boot, so this does not prevent
+    // its control-loop restart while RPM remains zero.
+    cpu.mExtData[0xF8F8] = 0xFF; // Existing startup marker on the correct page
     cpu.mLowerData[0x47] = 0xFF; // Initialize RAM_47 directly
-    fprintf(stderr, "[EEPROM] Initialized XRAM[0xF8]=0xFF, RAM_47=0xFF "
-                    "(prevents reset loop)\n");
+    fprintf(stderr, "[XRAM] Initialized XRAM[0xF8F8]=0xFF, RAM_47=0xFF "
+                    "(legacy startup marker)\n");
     fflush(stderr);
 
     // Timer 2 support now fully implemented via PR #40
@@ -1721,16 +1768,24 @@ int main(int argc, char **argv) {
             static_cast<unsigned int>(SFR_P4));
     fflush(stderr);
 
+    // P5 pin reads match the latch by default; external-high is opt in.
+    cpu.sfrread[SFR_P5 - 0x80] = cb_sfr_read;
+    fprintf(stderr,
+            "[DEBUG] Callback registrado: P5 (0x%02X) -> cb_sfr_read "
+            "(external-high=%s)\n",
+            static_cast<unsigned int>(SFR_P5),
+            std::getenv("MA17_P5_FORCE_HIGH") ? "on" : "off");
+    fflush(stderr);
+
     // Register SFR write callback for IE register monitoring
     cpu.sfrwrite[0xA8 - 0x80] = cb_sfr_write_ie; // IE = 0xA8
     fprintf(stderr, "[DEBUG] Callback registrado: IE write monitor\n");
     fflush(stderr);
 
-    // Register SFR write callback for IP0 register (interrupt priority
-    // override)
-    cpu.sfrwrite[0xB8 - 0x80] = cb_sfr_write_ip0; // IP0 = 0xB8
-    fprintf(stderr,
-            "[DEBUG] Callback registrado: IP0 write monitor (priority fix)\n");
+    // Register SFR write callback for IEN1 register (SAB80C517)
+    // NOTE: 0xB8 is IEN1 in SAB80C517, not IP0 as in standard 8051!
+    cpu.sfrwrite[0xB8 - 0x80] = cb_sfr_write_ien1; // IEN1 = 0xB8
+    fprintf(stderr, "[DEBUG] Callback registrado: IEN1 (0xB8) write monitor\n");
     fflush(stderr);
 
     // Register exception callback to catch emulator errors
@@ -1762,7 +1817,7 @@ int main(int argc, char **argv) {
 
     // SCON modo 1 (8-bit UART, variável): SM0=0, SM1=1 por padrão de muitas
     // ROMs Forçar estado limpo: Mode 1, REN=1, flags TI/RI limpos Isso evita
-    // que a ROM fique presa aguardando um byte esp��rio lido durante reset
+    // que a ROM fique presa aguardando um byte lido durante reset
     EMU_SET_SFR(&cpu, SFR_SCON, 0x50); // 01010000 = SM1=1, REN=1, TI=0, RI=0
 
     // Initialize dual SBUF registers (TX and RX separate!)
@@ -1791,26 +1846,42 @@ int main(int argc, char **argv) {
             "[DEBUG] Send SIGUSR1 to inject 5-baud init: kill -USR1 %d\n",
             getpid());
     fprintf(stderr, "[DEBUG] PC inicial: 0x%04X\n", cpu.mPC);
+    fprintf(stderr,
+            "[CRANKSHAFT] Waiting %lld ticks before pulse injection "
+            "(RPM=%d)...\n",
+            sim.startup_delay_instrs, sim.target_rpm);
     fflush(stderr);
 
     // Debug: Mostra estado da UART periodicamente
     // int debug_counter = 0;  // DISABLED: not needed when verbose logging is
     // off
 
-    // temporização: 1 MIPS (8051 real com cristal 12 MHz)
-    // 8051: 12 MHz crystal / 12 cycles per instruction = 1 MIPS
-    const int steps_per_tick =
-        500; // quantum (1 MIPS) - DO NOT CHANGE (breaks 5-baud timing!)
-    struct timespec ts{0, 500000}; // 0.5 ms
+    // Fiat clock model: 11.88 MHz / 12 = 990,000 machine-cycle ticks/s.
+    constexpr int64_t MIPS = 990000;
+    const int steps_per_tick = 500;
+    struct timespec ts{0, 407000};
+
+    constexpr std::chrono::nanoseconds tick_duration_ns =
+        std::chrono::nanoseconds(std::chrono::seconds(1)) /
+        (MIPS / steps_per_tick);
+
+    fprintf(stderr, "[DEBUG] Emulation timing: %d steps/tick, ~%lld ns/step\n",
+            steps_per_tick,
+            static_cast<long long>(tick_duration_ns.count() /
+                                   static_cast<long long>(steps_per_tick)));
 
     // Track last valid PC to detect jumps to invalid regions
     uint16_t last_pc = cpu.mPC;
+    const bool trace_pc = getenv("MA17_TRACE_PC") != nullptr;
+    std::array<uint8_t, 0x8000> pc_seen{};
 
     // Set global CPU pointer for UART timing events
     g_uart_cpu = &cpu;
 
     while (g_running.load()) {
         // Check if SIGUSR1 was received - start 5-baud injector
+        std::chrono::steady_clock::time_point loop_start =
+            std::chrono::steady_clock::now();
         if (g_inject_5baud.load()) {
             g_inject_5baud = false; // Reset flag
             fprintf(stderr, "\n[SIGUSR1] Received - starting 5-baud injection "
@@ -1822,9 +1893,149 @@ int main(int argc, char **argv) {
         // Process 5-baud state machine (non-blocking, instruction-synchronized)
         g_5baud_injector.tick(g_instr_counter);
 
+        // Check if startup delay has elapsed (5 seconds)
+        if (sim.check_and_enable(g_instr_counter)) {
+            fprintf(stderr,
+                    "\n[CRANKSHAFT] *** Startup delay complete - "
+                    "Beginning pulse injection @ %d RPM ***\n\n",
+                    sim.target_rpm);
+            fflush(stderr);
+
+        }
+
         for (int i = 0; i < steps_per_tick; ++i) {
-            g_instr_counter++; // Increment BEFORE tick() to match
-                               // actual instruction count
+            g_instr_counter++; // One count per emulated machine-cycle tick.
+            crankshaft_simulator_tick(&cpu, g_instr_counter, sim);
+            if (trace_pc && cpu.mPC < pc_seen.size()) {
+                pc_seen[cpu.mPC] = 1;
+            }
+            if (trace_pc && cpu.mPC == 0x4BDE) {
+                static int page_checks = 0;
+                if (page_checks++ < 8)
+                    fprintf(stderr, "[KLINE-PAGE] instr=%lld P2=%02X XPAGE=%02X\n",
+                            g_instr_counter, cpu.mSFR[0xA0 - 0x80],
+                            cpu.mSFR[0x91 - 0x80]);
+            }
+            if (trace_pc && (cpu.mPC == 0x0AAB || cpu.mPC == 0x4A36)) {
+                static int copy_checks = 0;
+                static int compare_checks = 0;
+                int &checks = cpu.mPC == 0x0AAB ? copy_checks : compare_checks;
+                if (checks++ < 32) {
+                    const uint8_t psw = cpu.mSFR[0xD0 - 0x80];
+                    const uint8_t r0 = cpu.mLowerData[((psw >> 3) & 3u) * 8u];
+                    const uint16_t xaddr = static_cast<uint16_t>(
+                        (uint16_t(cpu.mSFR[0xA0 - 0x80]) << 8) | r0);
+                    const uint16_t dptr = static_cast<uint16_t>(
+                        (uint16_t(cpu.mSFR[0x83 - 0x80]) << 8) |
+                        cpu.mSFR[0x82 - 0x80]);
+                    fprintf(stderr,
+                            "[BOOT-%s] instr=%lld P2=%02X R0=%02X "
+                            "XRAM[%04X]=%02X F81E=%02X ROM[%04X]=%02X "
+                            "ACC=%02X\n",
+                            cpu.mPC == 0x0AAB ? "COPY" : "COMPARE",
+                            g_instr_counter, cpu.mSFR[0xA0 - 0x80], r0,
+                            xaddr, cpu.mExtData[xaddr],
+                            cpu.mExtData[0xF81E], dptr, cpu.mCodeMem[dptr],
+                            cpu.mSFR[0xE0 - 0x80]);
+                }
+            }
+            if (trace_pc && sim.enabled && cpu.mPC == 0x07CE) {
+                static int checks = 0;
+                if (checks++ < 12)
+                    fprintf(stderr,
+                            "[CRANK-POLL] instr=%lld IRCON=%02X C4=%02X "
+                            "RAM51=%02X IEN1=%02X\n",
+                            g_instr_counter, cpu.mSFR[0xC0 - 0x80],
+                            cpu.mUpperData[0xC4 - 0x80], cpu.mLowerData[0x51],
+                            cpu.mSFR[0xB8 - 0x80]);
+            }
+            if (trace_pc && sim.enabled && cpu.mPC == 0x4AB7) {
+                static int restarts = 0;
+                if (restarts++ < 12)
+                    fprintf(stderr,
+                            "[CRANK-LOOP-RESTART] instr=%lld RAM47=%02X "
+                            "C4=%02X RAM51=%02X IRCON=%02X IEN1=%02X "
+                            "ACC=%02X SP=%02X\n",
+                            g_instr_counter, cpu.mLowerData[0x47],
+                            cpu.mUpperData[0xC4 - 0x80], cpu.mLowerData[0x51],
+                            cpu.mSFR[0xC0 - 0x80], cpu.mSFR[0xB8 - 0x80],
+                            cpu.mSFR[0xE0 - 0x80], cpu.mSFR[0x81 - 0x80]);
+            }
+            if (trace_pc && (cpu.mPC == 0x3291 || cpu.mPC == 0x32B8)) {
+                static int table_checks = 0;
+                if (table_checks++ < 200) {
+                    const uint8_t bank = (cpu.mSFR[0xD0 - 0x80] >> 3 & 3u) * 8u;
+                    fprintf(stderr,
+                            "[ENGINE-TABLE] tick=%lld PC=%04X R3=%02X "
+                            "R4=%02X R5=%02X R6=%02X B=%02X A=%02X "
+                            "RAM31=%02X RAM7D=%02X RAM7F=%02X\n",
+                            g_instr_counter, cpu.mPC, cpu.mLowerData[bank + 3],
+                            cpu.mLowerData[bank + 4], cpu.mLowerData[bank + 5],
+                            cpu.mLowerData[bank + 6], cpu.mSFR[0xF0 - 0x80],
+                            cpu.mSFR[0xE0 - 0x80], cpu.mLowerData[0x31],
+                            cpu.mLowerData[0x7D], cpu.mLowerData[0x7F]);
+                }
+            }
+            if (trace_pc && cpu.mPC == 0x4329) {
+                static int fault_triplet_checks = 0;
+                if (fault_triplet_checks++ < 64) {
+                    const uint8_t bank = (cpu.mSFR[0xD0 - 0x80] >> 3 & 3u) * 8u;
+                    fprintf(stderr,
+                            "[FAULT-TRIPLET] tick=%lld R3=%02X R7=%02X "
+                            "XRAM4E=%02X XRAM4F=%02X XRAM50=%02X\n",
+                            g_instr_counter, cpu.mLowerData[bank + 3],
+                            cpu.mLowerData[bank + 7], cpu.mExtData[0xF84E],
+                            cpu.mExtData[0xF84F], cpu.mExtData[0xF850]);
+                }
+            }
+            if (trace_pc && (cpu.mPC == 0x1047 || cpu.mPC == 0x115F ||
+                             cpu.mPC == 0x1175 || cpu.mPC == 0x11C4 ||
+                             cpu.mPC == 0x11CC || cpu.mPC == 0x11D1)) {
+                static int tps_checks = 0;
+                if (tps_checks++ < 120) {
+                    const uint8_t bank = (cpu.mSFR[0xD0 - 0x80] >> 3 & 3u) * 8u;
+                    fprintf(stderr,
+                            "[TPS-FLOW] tick=%lld PC=%04X R2=%02X R3=%02X "
+                            "R4=%02X B=%02X A=%02X PSW=%02X RAM28=%02X "
+                            "RAM2E=%02X RAM6D=%02X DPTR=%02X%02X\n",
+                            g_instr_counter, cpu.mPC, cpu.mLowerData[bank + 2],
+                            cpu.mLowerData[bank + 3], cpu.mLowerData[bank + 4],
+                            cpu.mSFR[0xF0 - 0x80], cpu.mSFR[0xE0 - 0x80],
+                            cpu.mSFR[0xD0 - 0x80], cpu.mLowerData[0x28],
+                            cpu.mLowerData[0x2E], cpu.mLowerData[0x6D],
+                            cpu.mSFR[0x83 - 0x80], cpu.mSFR[0x82 - 0x80]);
+                }
+            }
+            if (trace_pc && (cpu.mPC == 0x058E || cpu.mPC == 0x5469)) {
+                static int cc3_checks = 0;
+                if (cc3_checks++ < 200) {
+                    const uint8_t psw = cpu.mSFR[0xD0 - 0x80];
+                    const uint8_t bank = ((psw >> 3) & 3u) * 8u;
+                    fprintf(stderr,
+                            "[CC3-ENTRY] instr=%lld PC=%04X flags2B=%02X "
+                            "flags26=%02X IRAM14_15=%02X%02X R2_R3=%02X%02X "
+                            "P1=%02X CCEN=%02X\n",
+                            g_instr_counter, cpu.mPC, cpu.mLowerData[0x2B],
+                            cpu.mLowerData[0x26], cpu.mLowerData[0x14],
+                            cpu.mLowerData[0x15], cpu.mLowerData[bank + 2],
+                            cpu.mLowerData[bank + 3], cpu.mSFR[SFR_P1 - 0x80],
+                            cpu.mSFR[0xC1 - 0x80]);
+                }
+            }
+            if (trace_pc && cpu.mPC == 0x3B0B) {
+                static int gate_checks = 0;
+                if (gate_checks++ < 32) {
+                    const uint8_t p2 = cpu.mSFR[0xA0 - 0x80];
+                    const uint8_t xpage = cpu.mSFR[0x91 - 0x80];
+                    fprintf(stderr,
+                            "[CC3-GATE] instr=%lld P2=%02X XPAGE=%02X "
+                            "ACC=%02X XRAM_F8DD=%02X XRAM_F9DD=%02X "
+                            "flags2B=%02X RAM67=%02X\n",
+                            g_instr_counter, p2, xpage, cpu.mSFR[0xE0 - 0x80],
+                            cpu.mExtData[0xF8DD], cpu.mExtData[0xF9DD],
+                            cpu.mLowerData[0x2B], cpu.mLowerData[0x67]);
+                }
+            }
 
             // Stack corruption bug @ PC=0x36DF was FIXED in emu8051/opcodes.c
             // (mov_mem_indir_rx now uses correct read_mem/write_mem_indir
@@ -1866,15 +2077,167 @@ int main(int argc, char **argv) {
                 // Continue execution for now to see the pattern
             }
 
-            crankshaft_simulator_tick(&cpu, g_instr_counter, sim);
-
-            // 🔥 CONTINUOUSLY inject RPM into both XRAM[0xF8] and RAM_47
-            // This ensures firmware always has valid RPM even when Timer 0
-            // handler clears it every ~8 µs
-            inject_rpm_continuously(&cpu, sim);
-
             last_pc = cpu.mPC;
+            const uint16_t timer2_before = static_cast<uint16_t>(
+                (uint16_t(cpu.mSFR[0xCD - 0x80]) << 8) |
+                cpu.mSFR[0xCC - 0x80]);
             tick(&cpu);
+
+            if (trace_pc) {
+                static uint8_t previous_cc3_pin = 1;
+                if (cpu.cc3_output_pin != previous_cc3_pin) {
+                    fprintf(stderr,
+                            "[CC3-PIN] tick=%lld PC=%04X value=%u "
+                            "shadow=%u CCEN=%02X T2CON=%02X source_PC=%04X\n",
+                            g_instr_counter, cpu.mPC, cpu.cc3_output_pin,
+                            (cpu.mSFR[SFR_P1 - 0x80] >> 3) & 1u,
+                            cpu.mSFR[REG_CCEN], cpu.mSFR[REG_T2CON], last_pc);
+                    previous_cc3_pin = cpu.cc3_output_pin;
+                }
+                const uint16_t timer2_after = static_cast<uint16_t>(
+                    (uint16_t(cpu.mSFR[0xCD - 0x80]) << 8) |
+                    cpu.mSFR[0xCC - 0x80]);
+                const uint16_t cc3 = static_cast<uint16_t>(
+                    (uint16_t(cpu.mSFR[0xC7 - 0x80]) << 8) |
+                    cpu.mSFR[0xC6 - 0x80]);
+                if (timer2_after != timer2_before && timer2_after == cc3 &&
+                    (cpu.mSFR[0xC1 - 0x80] & 0xC0u) == 0x80u &&
+                    (cpu.mSFR[0xC8 - 0x80] & 0x04u)) {
+                    static int cc3_matches = 0;
+                    if (cc3_matches++ < 256)
+                        fprintf(stderr,
+                                "[CC3-MATCH-CANDIDATE] tick=%lld PC=%04X "
+                                "T2=%04X shadow_P1_3=%u\n",
+                                g_instr_counter, cpu.mPC, timer2_after,
+                                (cpu.mSFR[SFR_P1 - 0x80] >> 3) & 1u);
+                }
+                static uint8_t previous_ram67 = 0;
+                const uint8_t ram67 = cpu.mLowerData[0x67];
+                if (ram67 != previous_ram67)
+                    fprintf(stderr,
+                            "[RAM67-WRITE] instr=%lld PC=%04X next_PC=%04X "
+                            "value=%02X->%02X\n",
+                            g_instr_counter, last_pc, cpu.mPC,
+                            previous_ram67, ram67);
+                previous_ram67 = ram67;
+                // Fiat scanner candidates: TPS2, battery, air, coolant, TPS1,
+                // and derived throttle bytes 6Fh/70h. Coolant first reaches A8h.
+                static constexpr std::array<uint8_t, 8> sensor_addresses{
+                    0x60, 0x61, 0x62, 0x63, 0x66, 0x6F, 0x70, 0xA8};
+                static std::array<uint8_t, 8> previous_sensor_values{};
+                for (size_t index = 0; index < sensor_addresses.size(); ++index) {
+                    const uint8_t address = sensor_addresses[index];
+                    const uint8_t value = address < 0x80
+                                              ? cpu.mLowerData[address]
+                                              : cpu.mUpperData[address - 0x80];
+                    if (value != previous_sensor_values[index])
+                        fprintf(stderr,
+                                "[SENSOR-RAM] tick=%lld addr=%02X "
+                                "value=%02X->%02X source_PC=%04X next_PC=%04X\n",
+                                g_instr_counter, address,
+                                previous_sensor_values[index], value,
+                                last_pc, cpu.mPC);
+                    previous_sensor_values[index] = value;
+                }
+                // Trace intermediate values between the ADC-derived battery
+                // byte, table interpolation, and Timer 1 output scheduling.
+                static constexpr std::array<uint8_t, 6> engine_addresses{
+                    0x31, 0x34, 0x35, 0x7D, 0x7F, 0xC7};
+                static std::array<uint8_t, 6> previous_engine_values{};
+                for (size_t index = 0; index < engine_addresses.size(); ++index) {
+                    const uint8_t address = engine_addresses[index];
+                    const uint8_t value = address < 0x80
+                                              ? cpu.mLowerData[address]
+                                              : cpu.mUpperData[address - 0x80];
+                    if (value != previous_engine_values[index])
+                        fprintf(stderr,
+                                "[ENGINE-RAM] tick=%lld addr=%02X "
+                                "value=%02X->%02X source_PC=%04X\n",
+                                g_instr_counter, address,
+                                previous_engine_values[index], value, last_pc);
+                    previous_engine_values[index] = value;
+                }
+                static constexpr std::array<uint16_t, 5> fault_addresses{
+                    0xF885, 0xF84F, 0xF8CD, 0xF8CE, 0xF8CF};
+                static std::array<uint8_t, 5> previous_fault_values{};
+                for (size_t index = 0; index < fault_addresses.size(); ++index) {
+                    const uint16_t address = fault_addresses[index];
+                    const uint8_t value = cpu.mExtData[address];
+                    if (value != previous_fault_values[index])
+                        fprintf(stderr,
+                                "[FAULT-XRAM] tick=%lld addr=%04X "
+                                "value=%02X->%02X source_PC=%04X\n",
+                                g_instr_counter, address,
+                                previous_fault_values[index], value, last_pc);
+                    previous_fault_values[index] = value;
+                }
+            }
+
+            {
+                //  P1.3
+                static uint8_t last_p13_value =
+                    (cpu.mSFR[SFR_P1 - 0x80] >> 3) & 1;
+                static std::chrono::high_resolution_clock::time_point
+                    last_p13_time = std::chrono::high_resolution_clock::now();
+                uint8_t current_p13_value = (cpu.mSFR[SFR_P1 - 0x80] >> 3) & 1;
+                if (current_p13_value != last_p13_value) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto dur =
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            now - last_p13_time)
+                            .count();
+                    fprintf(stderr,
+                            "[P1.3-SHADOW] tick=%lld 0x%02X → 0x%02X "
+                            "(PC=0x%04X) [dur=%ldµs] source_PC=%04X\n",
+                            g_instr_counter, last_p13_value,
+                            current_p13_value, cpu.mPC, dur, last_pc);
+                    fflush(stderr);
+                    last_p13_value = current_p13_value;
+                    last_p13_time = now;
+                }
+            }
+
+            if (trace_pc) {
+                static uint8_t previous_p1 = 0xFF;
+                static uint8_t previous_p5 = 0xFF;
+                static uint8_t previous_p2 = 0xFF;
+                static int port_events = 0;
+                static int p2_events = 0;
+                uint8_t p1 = cpu.mSFR[SFR_P1 - 0x80] & 0x0Au;
+                uint8_t p5 = cpu.mSFR[SFR_P5 - 0x80] & 0x03u;
+                uint8_t p2 = cpu.mSFR[0xA0 - 0x80];
+                if (p2 != previous_p2 && p2_events++ < 30)
+                    fprintf(stderr, "[P2-EDGE] instr=%lld PC=%04X P2=%02X\n",
+                            g_instr_counter, cpu.mPC, p2);
+                if (p5 != previous_p5)
+                    fprintf(stderr,
+                            "[P5-LATCH] instr=%lld PC=%04X value=%02X "
+                            "RAM47=%02X source_PC=%04X RAM69=%02X "
+                            "RAM36_37=%02X%02X RAM32_33=%02X%02X "
+                            "RAM34_35=%02X%02X\n",
+                            g_instr_counter, cpu.mPC, p5, cpu.mLowerData[0x47],
+                            last_pc, cpu.mLowerData[0x69],
+                            cpu.mLowerData[0x36], cpu.mLowerData[0x37],
+                            cpu.mLowerData[0x32], cpu.mLowerData[0x33],
+                            cpu.mLowerData[0x34], cpu.mLowerData[0x35]);
+                if ((p1 ^ previous_p1) & 0x02u)
+                    fprintf(stderr,
+                            "[P1.1-LATCH] instr=%lld source_PC=%04X value=%u "
+                            "RAM47=%02X\n",
+                            g_instr_counter, last_pc, (p1 >> 1) & 1u,
+                            cpu.mLowerData[0x47]);
+                if ((p1 != previous_p1 || p5 != previous_p5) &&
+                    port_events++ < 40) {
+                    fprintf(stderr,
+                            "[PORT-EDGE] instr=%lld PC=%04X P1.1/3=%02X "
+                            "P5.0/1=%02X RAM47=%02X\n",
+                            g_instr_counter, cpu.mPC, p1, p5,
+                            cpu.mLowerData[0x47]);
+                }
+                previous_p1 = p1;
+                previous_p5 = p5;
+                previous_p2 = p2;
+            }
 
             /*{
                 static uint8_t last_F8_value = cpu.mExtData[0xF8];
@@ -1999,23 +2362,41 @@ int main(int argc, char **argv) {
                 fflush(stderr);
             }
 
-            // RAM_47 (watchdog counter - triggers reset if 0!)
-            /*static unsigned char last_ram_47 = 0xFF;
+            // RAM_47 (ENGINE_RPM) and RAM_C4 (state machine) monitoring
+            static unsigned char last_ram_47 = 0xFF;
+            static unsigned char last_ram_c4 = 0xFF;
+            static int ram47_change_count = 0;
+            static int ram_c4_change_count = 0;
             unsigned char current_ram_47 = cpu.mLowerData[0x47];
-            if (current_ram_47 != last_ram_47) {
+            // 0xC4 is in upper RAM (accessed via @R1), offset from 0x80
+            unsigned char current_ram_c4 =
+                cpu.mUpperData ? cpu.mUpperData[0xC4 - 0x80] : 0;
+            if (current_ram_47 != last_ram_47 && ram47_change_count < 20) {
                 fprintf(stderr, "[RAM_47] 0x%02X → 0x%02X (PC=0x%04X) %s\n",
                         last_ram_47, current_ram_47, cpu.mPC,
-                        (current_ram_47 == 0) ? "**TRIGGERS RESET!**" : "");
+                        (current_ram_47 == 0) ? "**RPM ZEROED!**" : "");
                 fflush(stderr);
                 last_ram_47 = current_ram_47;
-            }*/
+                ram47_change_count++;
+            }
+            // Full state history is needed to compare crank speeds in trace runs.
+            if (current_ram_c4 != last_ram_c4 &&
+                (trace_pc || ram_c4_change_count < 30)) {
+                fprintf(stderr, "[RAM_C4] State: 0x%02X → 0x%02X (PC=0x%04X)\n",
+                        last_ram_c4, current_ram_c4, cpu.mPC);
+                fflush(stderr);
+                last_ram_c4 = current_ram_c4;
+                ram_c4_change_count++;
+            }
 
-            // Track PC @ 0x01AB (loads XRAM[0xF8] → RAM_47)
+            // Track PC @ 0x01AB (MOVX reads P2:F8h into RAM[47h]).
             static bool seen_01ab = false;
             if (cpu.mPC == 0x01AB && !seen_01ab) {
+                unsigned int address =
+                    (static_cast<unsigned int>(cpu.mSFR[REG_P2]) << 8) | 0xF8u;
                 fprintf(stderr,
-                        "[PC=0x01AB] Loading XRAM[0xF8]=%02X → RAM_47\n",
-                        cpu.mExtData[0xF8]);
+                        "[PC=0x01AB] Loading XRAM[%04X]=%02X → RAM_47\n",
+                        address, cpu.mExtData[address]);
                 fflush(stderr);
                 seen_01ab = true;
             }
@@ -2138,10 +2519,78 @@ int main(int argc, char **argv) {
         // UART RX
         g_uart.read_and_process();
 
-        // Sleep to maintain ~1-2 MIPS logical speed
-        nanosleep(&ts, nullptr);
+        // =================================================================
+        // PERFORMANCE INSTRUMENTATION: Measure emulated ticks/second
+        // =================================================================
+        // Hardware target: 11.88 MHz crystal / 12 = ~990,000 ticks/sec
+        // If emulator runs significantly below this, IEX3 handler "appears"
+        // longer relative to wall-clock time, starving the main loop and
+        // causing UART OVERRUN errors (RI=1 not cleared in time).
+        {
+            static long long last_report_time_ms = 0;
+            static long long last_instr_count = 0;
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                      start)
+                    .count();
+
+            // Report every 5 seconds
+            if (elapsed_ms - last_report_time_ms >= 5000) {
+                unsigned char current_ram_47 = cpu.mLowerData[0x47];
+                uint16_t current_ram_1415 = static_cast<uint16_t>(
+                    (cpu.mLowerData[0x14] << 8) | cpu.mLowerData[0x15]);
+
+                long long delta_instr = g_instr_counter - last_instr_count;
+                double delta_sec =
+                    static_cast<double>(elapsed_ms - last_report_time_ms) /
+                    1000.0;
+                double instr_per_sec =
+                    static_cast<double>(delta_instr) / delta_sec;
+
+                fprintf(stderr,
+                        "[PERF] %.0f ticks/sec (expected: ~990,000) "
+                        "delta_ticks=%lld delta_sec=%.2f RPM=%d inj_time=%d\n",
+                        instr_per_sec, delta_instr, delta_sec, current_ram_47,
+                        current_ram_1415);
+                fflush(stderr);
+
+                last_report_time_ms = elapsed_ms;
+                last_instr_count = g_instr_counter;
+            }
+        }
+
+        std::chrono::steady_clock::time_point loop_end =
+            std::chrono::steady_clock::now();
+
+        std::chrono::nanoseconds elapsed_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(loop_end -
+                                                                 loop_start);
+
+        std::chrono::nanoseconds sleep_ns =
+            (tick_duration_ns - elapsed_ns) - std::chrono::nanoseconds(41200);
+        if (sleep_ns.count() > 0) {
+            ts.tv_sec = 0;
+            ts.tv_nsec = sleep_ns.count();
+            nanosleep(&ts, nullptr);
+        }
     }
 
+    if (trace_pc) {
+        for (size_t pc = 0; pc < pc_seen.size(); ++pc) {
+            if (pc_seen[pc]) {
+                fprintf(stderr, "[PC-HIT] %04zX\n", pc);
+            }
+        }
+        fprintf(stderr, "[PC-COVERAGE] unique=%zu reset=%u timer0=%u "
+                        "kline=%u collection=%u table_copy=%u serial=%u adc=%u\n",
+                static_cast<size_t>(
+                    std::count(pc_seen.begin(), pc_seen.end(), uint8_t{1})),
+                pc_seen[0x0850], pc_seen[0x000B], pc_seen[0x4AD1],
+                pc_seen[0x4E67], pc_seen[0x4EAF], pc_seen[0x61D8],
+                pc_seen[0x6441]);
+    }
     printf("\n[emu8051-pty] Encerrando.\n");
     return 0;
 }
