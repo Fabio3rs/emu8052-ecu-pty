@@ -7,6 +7,7 @@ extern "C" {
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 
 namespace ma17 {
 
@@ -397,9 +398,65 @@ void trace_p13_shadow(const em8051 &cpu, long long tick, uint16_t source_pc) {
 
 void trace_memory_changes(const em8051 &cpu, long long tick,
                           uint16_t source_pc) {
-    static constexpr std::array<uint8_t, 8> sensor_addresses{
-        0x60, 0x61, 0x62, 0x63, 0x66, 0x6F, 0x70, 0xA8};
-    static std::array<uint8_t, 8> previous_sensor_values{};
+    static const bool trace_idle_position_gate =
+        std::getenv("MA17_TRACE_IDLE_POSITION_GATE") != nullptr;
+    if (trace_idle_position_gate) {
+        // SAB80C517 User's Manual, On-Chip RAM: these bit-addressable
+        // lower-IRAM bytes supply the carry guards at Fiat PC 23AFh.
+        static std::array<uint8_t, 3> previous{};
+        static int observations = 0;
+        constexpr std::array<uint8_t, 3> addresses{0x20, 0x24, 0x2D};
+        constexpr std::array<uint8_t, 3> masks{0x08, 0x10, 0x70};
+        for (size_t index = 0; index < addresses.size(); ++index) {
+            const uint8_t current = cpu.mLowerData[addresses[index]];
+            if (((current ^ previous[index]) & masks[index]) &&
+                observations++ < 512)
+                std::fprintf(stderr,
+                             "[IDLE-POSITION-FLAG] tick=%lld PC=%04X "
+                             "RAM%02X=%02X->%02X\n",
+                             tick, source_pc, addresses[index],
+                             previous[index], current);
+            previous[index] = current;
+        }
+    }
+    static const bool trace_idle_fault =
+        std::getenv("MA17_TRACE_IDLE_FAULT") != nullptr;
+    if (trace_idle_fault) {
+        // SAB80C517 User's Manual, On-Chip RAM and Instruction Set:
+        // 27h is lower IRAM; MOVX addresses F8:4Eh in external data.
+        static uint8_t previous_ram27 = 0;
+        static uint8_t previous_xram4e = 0;
+        const uint8_t ram27 = cpu.mLowerData[0x27];
+        const uint8_t xram4e = cpu.mExtData[0xF84E];
+        if ((ram27 ^ previous_ram27) & 0x0F)
+            std::fprintf(stderr,
+                         "[IDLE-FAULT-SOURCE] tick=%lld PC=%04X "
+                         "RAM27=%02X->%02X XRAM4E=%02X\n",
+                         tick, source_pc, previous_ram27, ram27, xram4e);
+        if ((xram4e ^ previous_xram4e) & 0x0F)
+            std::fprintf(stderr,
+                         "[IDLE-FAULT-LATCH] tick=%lld PC=%04X "
+                         "XRAM4E=%02X->%02X RAM27=%02X\n",
+                         tick, source_pc, previous_xram4e, xram4e, ram27);
+        previous_ram27 = ram27;
+        previous_xram4e = xram4e;
+    }
+    static const bool trace_coolant_gate =
+        std::getenv("MA17_TRACE_COOLANT_GATE") != nullptr;
+    if (trace_coolant_gate && (source_pc == 0x3286 || source_pc == 0x3290)) {
+        // SAB80C517 Instruction Set: MOVX @R0,A writes through the P2 page.
+        const uint8_t low = source_pc == 0x3286 ? 0xD7 : 0xD9;
+        const uint16_t address = static_cast<uint16_t>(
+            (uint16_t(cpu.mSFR[0xA0 - 0x80]) << 8) | low);
+        fprintf(stderr,
+                "[COOLANT-DECAY] tick=%lld PC=%04X addr=%04X value=%02X "
+                "F2D=%02X T2CON=%02X\n",
+                tick, source_pc, address, cpu.mExtData[address],
+                cpu.mLowerData[0x2D], cpu.mSFR[0xC8 - 0x80]);
+    }
+    static constexpr std::array<uint8_t, 9> sensor_addresses{
+        0x60, 0x61, 0x62, 0x63, 0x65, 0x66, 0x6F, 0x70, 0xA8};
+    static std::array<uint8_t, 9> previous_sensor_values{};
     for (size_t index = 0; index < sensor_addresses.size(); ++index) {
         const uint8_t address = sensor_addresses[index];
         const uint8_t value = address < 0x80 ? cpu.mLowerData[address]
@@ -413,10 +470,18 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
         previous_sensor_values[index] = value;
     }
 
-    // ADC-derived battery byte, table interpolation and Timer 1 scheduling.
-    static constexpr std::array<uint8_t, 6> engine_addresses{0x31, 0x34, 0x35,
-                                                             0x7D, 0x7F, 0xC7};
-    static std::array<uint8_t, 6> previous_engine_values{};
+    // ADC-derived intermediates, table indices and Timer 1 scheduling.
+    // SAB80C517 User's Manual, On-Chip RAM: 57h/59h/5Ah are lower IRAM.
+    // Fiat writes 59h:5Ah at 1644h and reads them at 1D60h. The 1562h
+    // calculation also reads upper IRAM 87h through @R0 and lower 4Fh.
+    // Fiat 47BEh/47CCh write lower IRAM 79h/7Bh; SAB80C517 User's Manual,
+    // On-Chip RAM, distinguishes these direct bytes from upper IRAM.
+    // Fiat 49ADh can write lower IRAM 4Dh after the 744Eh curve lookup.
+    static constexpr std::array<uint8_t, 24> engine_addresses{
+        0x31, 0x34, 0x35, 0x48, 0x49, 0x4D, 0x4E, 0x4F, 0x57, 0x59, 0x5A,
+        0x68, 0x69, 0x6A, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7F,
+        0x87, 0xA4, 0xC7};
+    static std::array<uint8_t, engine_addresses.size()> previous_engine_values{};
     for (size_t index = 0; index < engine_addresses.size(); ++index) {
         const uint8_t address = engine_addresses[index];
         const uint8_t value = address < 0x80 ? cpu.mLowerData[address]
@@ -443,6 +508,44 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
                     tick, address, previous_fault_values[index], value,
                     source_pc);
         previous_fault_values[index] = value;
+    }
+
+    // Raw XRAM locations named as fuel adaptations by the scanner. Their
+    // physical role and closed-loop gate still require firmware evidence.
+    static constexpr std::array<uint16_t, 4> adaptation_addresses{
+        0xF80C, 0xF86C, 0xF86F, 0xF872};
+    static std::array<uint8_t, 4> previous_adaptation_values{};
+    for (size_t index = 0; index < adaptation_addresses.size(); ++index) {
+        const uint16_t address = adaptation_addresses[index];
+        const uint8_t value = cpu.mExtData[address];
+        if (value != previous_adaptation_values[index])
+            fprintf(stderr,
+                    "[ADAPT-XRAM] tick=%lld addr=%04X "
+                    "value=%02X->%02X source_PC=%04X\n",
+                    tick, address, previous_adaptation_values[index], value,
+                    source_pc);
+        previous_adaptation_values[index] = value;
+    }
+
+    static const bool trace_lambda_bounds =
+        std::getenv("MA17_TRACE_LAMBDA_BOUNDS") != nullptr;
+    if (trace_lambda_bounds) {
+        static constexpr std::array<uint16_t, 4> addresses{
+            0xF8E8, 0xF8E9, 0xF8EA, 0xF8EB};
+        static std::array<uint8_t, 4> previous{};
+        for (size_t index = 0; index < addresses.size(); ++index) {
+            const uint16_t address = addresses[index];
+            const uint8_t value = cpu.mExtData[address];
+            if (value != previous[index]) {
+                // SAB80C517 Instruction Set, p. 224: MOVX @Ri writes
+                // external data on the P2/XPAGE-selected page.
+                fprintf(stderr,
+                        "[LAMBDA-BOUND-XRAM] tick=%lld addr=%04X "
+                        "value=%02X->%02X source_PC=%04X\n",
+                        tick, address, previous[index], value, source_pc);
+            }
+            previous[index] = value;
+        }
     }
 }
 

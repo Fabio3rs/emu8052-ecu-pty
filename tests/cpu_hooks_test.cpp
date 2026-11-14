@@ -31,6 +31,8 @@ TEST(CpuHooks, WiresUartPortsAdcAndXramCallbacks) {
 
     hooks.install_fiat_peripherals(cpu);
     cpu.mSFR[0xD8 - 0x80] = 7;
+    ASSERT_NE(cpu.sfrwrite[0xDA - 0x80], nullptr);
+    cpu.sfrwrite[0xDA - 0x80](&cpu, 0xDA);
     EXPECT_EQ(cpu.sfrread[0xD9 - 0x80](&cpu, 0xD9), ma17::read_adc_channel(7));
     cpu.mSFR[0xE8 - 0x80] = 0xEA;
     EXPECT_EQ(cpu.sfrread[0xE8 - 0x80](&cpu, 0xE8), 0xCA);

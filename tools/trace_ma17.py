@@ -31,9 +31,21 @@ SENSOR_RAM = re.compile(r"^\[SENSOR-RAM\] tick=(\d+) addr=([0-9A-Fa-f]{2}) "
 ENGINE_RAM = re.compile(r"^\[ENGINE-RAM\] tick=(\d+) addr=([0-9A-Fa-f]{2}) "
                         r"value=([0-9A-Fa-f]{2})->([0-9A-Fa-f]{2}) "
                         r"source_PC=([0-9A-Fa-f]{4})")
+INJECTION_FLOW = re.compile(
+    r"^\[INJECTION-FLOW\] tick=(\d+) PC=([0-9A-F]{4}) "
+    r"R2=([0-9A-F]{2}) R3=([0-9A-F]{2}) RAM63=([0-9A-F]{2}) "
+    r"RAM78=([0-9A-F]{2}) RAM48=([0-9A-F]{2}) DPTR=([0-9A-F]{4}) "
+    r"PSW=([0-9A-F]{2}) FLAGS25=([0-9A-F]{2}) FLAGS2E=([0-9A-F]{2})$")
 FAULT_XRAM = re.compile(r"^\[FAULT-XRAM\] tick=(\d+) addr=([0-9A-Fa-f]{4}) "
                          r"value=([0-9A-Fa-f]{2})->([0-9A-Fa-f]{2}) "
                          r"source_PC=([0-9A-Fa-f]{4})")
+ADAPT_XRAM = re.compile(r"^\[ADAPT-XRAM\] tick=(\d+) addr=([0-9A-Fa-f]{4}) "
+                         r"value=([0-9A-Fa-f]{2})->([0-9A-Fa-f]{2}) "
+                         r"source_PC=([0-9A-Fa-f]{4})")
+LAMBDA_BOUND_XRAM = re.compile(r"^\[LAMBDA-BOUND-XRAM\] tick=(\d+) "
+                               r"addr=(F8E[89AB]) "
+                               r"value=([0-9A-F]{2})->([0-9A-F]{2}) "
+                               r"source_PC=([0-9A-F]{4})$")
 P5_LATCH = re.compile(r"^\[P5-LATCH\] instr=(\d+) PC=([0-9A-Fa-f]{4}) "
                       r"value=([0-9A-Fa-f]{2}) RAM47=([0-9A-Fa-f]{2}) "
                       r"source_PC=([0-9A-Fa-f]{4})")
@@ -56,6 +68,16 @@ CC3_PIN = re.compile(r"^\[CC3-PIN\] tick=(\d+) PC=([0-9A-Fa-f]{4}) "
                      r"value=([01]) shadow=([01])")
 CRANK_REV = re.compile(r"^\[CRANK-REV\] rpm=(\d+) teeth=(\d+) gaps=(\d+) "
                        r"ticks_per_tooth=(\d+)")
+MOVC = re.compile(r"^\[MOVC-SUMMARY\] pc=([0-9A-F]{4}) opcode=(83|93) "
+                  r"dptr=([0-9A-F]{4}) acc=([0-9A-F]{2}) "
+                  r"address=([0-9A-F]{4}) mapped=([0-9A-F]{4}) "
+                  r"value=([0-9A-F]{2}) count=(\d+)$")
+TRACE_STOP = re.compile(r"^\[TRACE-STOP\] ticks=(\d+)$")
+LOOKUP = re.compile(r"^\[LOOKUP-SUMMARY\] rpm=([0-9A-F]{2}) load=([0-9A-F]{2}) "
+                    r"selector=([0-9A-F]{2}) flags=([0-9A-F]{2}) "
+                    r"r0=([0-9A-F]{2}) r4=([0-9A-F]{2}) r5=([0-9A-F]{2}) "
+                    r"r6=([0-9A-F]{2}) result_a=([0-9A-F]{2}) "
+                    r"result_b=([0-9A-F]{2}) count=(\d+)$")
 EVENTS = ("[RESET_0 ENTRY", "[ISR-TF0]", "[SIGUSR1]", "[K-LINE]",
           "[5-BAUD", "[UART", "[S0CON-WRITE]", "[CRANK-EDGE]",
           "[CRANK-POLL]", "[CRANK-LOOP-RESTART]", "[ISR-IEX3]",
@@ -63,6 +85,35 @@ EVENTS = ("[RESET_0 ENTRY", "[ISR-TF0]", "[SIGUSR1]", "[K-LINE]",
           "[CC3-GATE-WRITE]", "[P1.3-SHADOW]", "[CC3-MATCH-CANDIDATE]",
           "[CC3-PIN]", "[CRANK-REV]", "[KLINE-PAGE]")
 RPM_PCS = (0x01AB, 0x01AE, 0x0DEE, 0x0EA5, 0x565A, 0x566C)
+
+
+def summarize_injection_flow(events):
+    unique = []
+    for event in events:
+        if (unique and event["pc"] == unique[-1]["pc"] and
+                event["tick"] - unique[-1]["tick"] <= 2):
+            continue  # A delayed instruction can appear on adjacent pre-tick probes.
+        unique.append(event)
+    stages = collections.Counter(event["pc"] for event in unique)
+    pairs = []
+    pending = None
+    for event in unique:
+        if event["pc"] == "1DD8":
+            pending = event
+        elif event["pc"] == "1E02" and pending is not None:
+            if 0 <= event["tick"] - pending["tick"] <= 100:
+                pairs.append({"entry_tick": pending["tick"],
+                              "entry_r2r3": pending["r2r3"],
+                              "exit_r2r3": event["r2r3"],
+                              "ram63": pending["ram63"],
+                              "ram78": pending["ram78"]})
+            pending = None
+    return {"stage_samples": dict(stages), "paired_checks": len(pairs),
+            "unchanged_r2r3_pairs": sum(p["entry_r2r3"] == p["exit_r2r3"]
+                                        for p in pairs),
+            "changed_r2r3_pairs": sum(p["entry_r2r3"] != p["exit_r2r3"]
+                                      for p in pairs),
+            "first_pairs": pairs[:3], "last_pairs": pairs[-3:]}
 
 
 def main():
@@ -77,29 +128,161 @@ def main():
                         help="60-2 crankshaft target RPM (300-6000)")
     parser.add_argument("--output-dir", type=Path, default=OUTPUT,
                         help="directory for the trace log and execution report")
+    parser.add_argument("--firmware", type=Path,
+                        default=ROOT / "FiatTipo_MA17_dump_27c256.bin",
+                        help="Fiat gasoline ROM or a byte-identical-code calibration variant")
+    parser.add_argument("--trace-movc", action="store_true",
+                        help="aggregate executed MOVC reads by PC, input and ROM address")
+    parser.add_argument("--trace-lookup", action="store_true",
+                        help="aggregate 137Bh matrix lookup inputs and A/B results")
+    parser.add_argument("--stop-ticks", type=int,
+                        help="stop after this many emulated ticks; --seconds is a wall timeout")
     args = parser.parse_args()
+    if ("MA17_OVERRIDE_MOVC_7B45" in os.environ or
+            "MA17_OVERRIDE_MOVC_7580" in os.environ or
+            "MA17_OVERRIDE_MOVC_7581_DELTA" in os.environ or
+            "MA17_OVERRIDE_MOVC_7100_DELTA" in os.environ or
+            "MA17_OVERRIDE_MOVC_AT" in os.environ or
+            "MA17_OVERRIDE_MOVC_MATRIX_ROM" in os.environ or
+            "MA17_OVERRIDE_MOVC_MATRIX_BASE" in os.environ) and not args.trace_movc:
+        parser.error("MOVC override requires --trace-movc")
+    firmware = args.firmware.resolve()
+    reference = (ROOT / "FiatTipo_MA17_dump_27c256.bin").read_bytes()
+    candidate = firmware.read_bytes()
+    if len(candidate) != len(reference) or candidate[:0x7580] != reference[:0x7580]:
+        parser.error("--firmware requires 32768 bytes and identical code prefix "
+                     "through 0x757F; other revisions need a validated hardware profile")
+    firmware_hash = hashlib.sha256(candidate).hexdigest()
+    point_override = os.environ.get("MA17_OVERRIDE_MOVC_AT")
+    if point_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}"
+            r"(?:,[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}:[0-9A-Fa-f]{2})*",
+            point_override):
+        parser.error("MA17_OVERRIDE_MOVC_AT must be "
+                     "PC:ADDRESS:VALUE[,PC:ADDRESS:VALUE...] in hex")
+    matrix_source = os.environ.get("MA17_OVERRIDE_MOVC_MATRIX_ROM")
+    matrix_base = os.environ.get("MA17_OVERRIDE_MOVC_MATRIX_BASE")
+    if (matrix_source is None) != (matrix_base is None):
+        parser.error("matrix donor requires both ROM and BASE")
+    matrix_donor_hash = None
+    matrix_slot = None
+    matrix_size = None
+    if matrix_source is not None:
+        layouts = {"743A": (0x7020, 10), "7444": (0x7022, 10),
+                   "744E": (0x7018, 10), "7462": (0x701C, 10),
+                   "746C": (0x702A, 10), "753E": (0x703C, 10),
+                   "7581": (0x7048, 225), "7662": (0x704A, 225),
+                   "7743": (0x704C, 225), "7B46": (0x709C, 120),
+                   "7CAE": (0x70B6, 120),
+                   "7D26": (0x70B8, 120), "7D9E": (0x70BA, 120),
+                   "7895": (0x7080, 20), "78BD": (0x7084, 20),
+                   "7925": (0x7064, 20), "7939": (0x7066, 20),
+                   "7ED9": (0x70A2, 60),
+                   "7F15": (0x70A4, 60), "7F51": (0x70A6, 60)}
+        matrix_base = matrix_base.upper()
+        if matrix_base not in layouts:
+            parser.error("matrix donor BASE must name a verified ROM table")
+        matrix_slot, matrix_size = layouts[matrix_base]
+        donor = Path(matrix_source).resolve().read_bytes()
+        if len(donor) != len(candidate):
+            parser.error("matrix donor requires a 32768-byte ROM")
+        matrix_donor_hash = hashlib.sha256(donor).hexdigest()
+        known_images = [ROOT / "FiatTipo_MA17_dump_27c256.bin",
+                        *(ROOT / "firmwares_modificados_ma17_tipo").glob("*.bin")]
+        known_hashes = {hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in known_images if path.stat().st_size == 32768}
+        if matrix_donor_hash not in known_hashes:
+            parser.error("matrix donor must match an inventoried original ROM")
+        for image in (candidate, donor):
+            if int.from_bytes(image[matrix_slot:matrix_slot + 2], "big") != int(
+                    matrix_base, 16):
+                parser.error("matrix donor pointer differs from selected matrix")
     if not 300 <= args.rpm <= 6000:
         parser.error("--rpm must be between 300 and 6000")
     if args.seconds <= 0 or (not args.no_kline_inject and
                              not 0 < args.inject_after < args.seconds):
         parser.error("require positive --seconds and 0 < --inject-after < --seconds")
+    if args.stop_ticks is not None and (args.stop_ticks <= 0 or
+                                        not args.no_kline_inject):
+        parser.error("--stop-ticks requires a positive value and --no-kline-inject")
+    ram57_override = os.environ.get("MA17_OVERRIDE_RAM57")
+    if ram57_override is not None and not re.fullmatch(r"[012]", ram57_override):
+        parser.error("MA17_OVERRIDE_RAM57 must be hexadecimal 0, 1 or 2")
+    ram78_override = os.environ.get("MA17_OVERRIDE_RAM78")
+    if ram78_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{1,2}", ram78_override):
+        parser.error("MA17_OVERRIDE_RAM78 must be one or two hex digits")
+    ram4f_override = os.environ.get("MA17_OVERRIDE_RAM4F")
+    if ram4f_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{1,2}", ram4f_override):
+        parser.error("MA17_OVERRIDE_RAM4F must be one or two hex digits")
+    idle_r4_override = os.environ.get("MA17_OVERRIDE_IDLE_POSITION_R4")
+    if idle_r4_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{2}", idle_r4_override):
+        parser.error("MA17_OVERRIDE_IDLE_POSITION_R4 must be two hex digits")
+    p4_6_force_low = os.environ.get("MA17_P4_6_FORCE_LOW")
+    if p4_6_force_low not in (None, "1"):
+        parser.error("MA17_P4_6_FORCE_LOW must be 1 when set")
+    p4_6_low_from_tick = os.environ.get("MA17_P4_6_LOW_FROM_TICK")
+    if p4_6_low_from_tick is not None and not re.fullmatch(
+            r"[0-9]+", p4_6_low_from_tick):
+        parser.error("MA17_P4_6_LOW_FROM_TICK must be a nonnegative integer")
+    if p4_6_force_low and p4_6_low_from_tick is not None:
+        parser.error("choose one P4.6 low stimulus")
+    p4_7_force_low = os.environ.get("MA17_P4_7_FORCE_LOW")
+    if p4_7_force_low not in (None, "1"):
+        parser.error("MA17_P4_7_FORCE_LOW must be 1 when set")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     log = output / "emulator-trace.log"
-    command = [str(ROOT / "build" / "emu8051-tty"),
-               str(ROOT / "FiatTipo_MA17_dump_27c256.bin"), "--8052"]
+    command = [str(ROOT / "build" / "emu8051-tty"), str(firmware), "--8052"]
+    emulator_sha256 = hashlib.sha256(Path(command[0]).read_bytes()).hexdigest()
     environment = os.environ.copy()
     environment["MA17_TRACE_PC"] = "1"
     environment["MA17_CRANK_RPM"] = str(args.rpm)
-    adc_input_values = [120, 130, 100, 80, 90, 110, 95, 105]
+    environment.pop("MA17_TRACE_MOVC", None)
+    environment.pop("MA17_TRACE_LOOKUP", None)
+    environment.pop("MA17_STOP_TICKS", None)
+    if args.trace_movc:
+        environment["MA17_TRACE_MOVC"] = "1"
+    if args.trace_lookup:
+        environment["MA17_TRACE_LOOKUP"] = "1"
+    if args.stop_ticks is not None:
+        environment["MA17_STOP_TICKS"] = str(args.stop_ticks)
+    adc_10bit_input_values = [value * 4 for value in
+                              (120, 130, 100, 80, 90, 110, 95, 105)]
+    adc_10bit_step_values = [None] * 8
+    adc_10bit_step_sequences = [[] for _ in range(8)]
     for channel in range(8):
         key = f"MA17_ADC_CH{channel}"
-        if key not in environment:
-            continue
-        setting = environment[key]
-        if not re.fullmatch(r"[0-9]+", setting) or not 4 <= int(setting) <= 247:
-            parser.error(f"{key} must be a decimal value from 4 to 247")
-        adc_input_values[channel] = int(setting)
+        if key in environment:
+            setting = environment[key]
+            if not re.fullmatch(r"[0-9]+", setting) or not 4 <= int(setting) <= 247:
+                parser.error(f"{key} must be a decimal value from 4 to 247")
+            adc_10bit_input_values[channel] = int(setting) * 4
+        key = f"MA17_ADC10_CH{channel}"
+        if key in environment:
+            setting = environment[key]
+            if not re.fullmatch(r"[0-9]+", setting) or not 0 <= int(setting) <= 1023:
+                parser.error(f"{key} must be a decimal value from 0 to 1023")
+            adc_10bit_input_values[channel] = int(setting)
+        key = f"MA17_ADC10_STEP_CH{channel}"
+        if key in environment:
+            items = environment[key].split(",")
+            if len(items) > 8:
+                parser.error(f"{key} supports at most 8 steps")
+            previous_tick = 0
+            for item in items:
+                match = re.fullmatch(r"([0-9]+):([0-9]+)", item)
+                if not match or not previous_tick < int(match[1]) <= \
+                        (1 << 64) - 1 or not 0 <= int(match[2]) <= 1023:
+                    parser.error(f"{key} must contain ascending tick:value "
+                                 "steps with 10-bit values")
+                step = {"tick": int(match[1]), "value": int(match[2])}
+                adc_10bit_step_sequences[channel].append(step)
+                previous_tick = step["tick"]
+            adc_10bit_step_values[channel] = adc_10bit_step_sequences[channel][0]
+    adc_input_values = [value >> 2 for value in adc_10bit_input_values]
     adc7_input_value = adc_input_values[7]
     if args.crank_immediate:
         environment["MA17_CRANK_IMMEDIATE"] = "1"
@@ -107,7 +290,9 @@ def main():
         process = subprocess.Popen(command, cwd=ROOT, stdout=stream,
                                    stderr=subprocess.STDOUT, env=environment)
         try:
-            if args.no_kline_inject:
+            if args.stop_ticks is not None:
+                process.wait(timeout=args.seconds)
+            elif args.no_kline_inject:
                 time.sleep(args.seconds)
             else:
                 time.sleep(args.inject_after)
@@ -133,6 +318,8 @@ def main():
     sensor_ram_changes = collections.defaultdict(list)
     engine_ram_changes = collections.defaultdict(list)
     fault_xram_changes = collections.defaultdict(list)
+    adaptation_xram_changes = collections.defaultdict(list)
+    lambda_bound_xram_changes = collections.defaultdict(list)
     capture_state_changes = collections.Counter()
     first_capture_state_changes = []
     p5_starts = {0: [], 1: []}
@@ -157,7 +344,60 @@ def main():
     cc3_matches = []
     cc3_pin_edges = []
     crank_revolutions = []
+    movc_reads = []
+    lookup_rows = []
+    injection_flow_events = []
+    air_gate_pcs = collections.Counter()
+    air_gate_counts = collections.Counter()
+    observed_stop_ticks = None
     for number, line in enumerate(log.read_text(errors="replace").splitlines(), 1):
+        stopped = TRACE_STOP.fullmatch(line)
+        if stopped:
+            observed_stop_ticks = int(stopped.group(1))
+        if line.startswith("[AIR-716C-GATE]"):
+            try:
+                fields = dict(part.split("=", 1) for part in line.split()[1:])
+                pc = fields["PC"]
+                psw = int(fields["PSW"], 16)
+                flags2e = int(fields["F2E"], 16)
+                ram6f = int(fields["RAM6F"], 16)
+                r2 = int(fields["R2"], 16)
+            except (KeyError, ValueError) as error:
+                raise RuntimeError(f"invalid air gate at log line {number}") from error
+            air_gate_pcs[pc] += 1
+            if pc == "3CB7":
+                air_gate_counts["2e6_set_at_3cb7"] += bool(flags2e & 0x40)
+                air_gate_counts["r2_below_6f_at_3cb7"] += r2 < ram6f
+            elif pc == "3D0C":
+                air_gate_counts["carry_set_at_3d0c"] += bool(psw & 0x80)
+        if line.startswith("[INJECTION-FLOW]"):
+            match = INJECTION_FLOW.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid injection flow at log line {number}")
+            tick, pc, r2, r3, ram63, ram78, ram48, dptr, psw, flags25, flags2e = match.groups()
+            injection_flow_events.append({"tick": int(tick), "pc": pc,
+                                          "r2r3": r2 + r3, "ram63": ram63,
+                                          "ram78": ram78, "ram48": ram48,
+                                          "dptr": dptr, "psw": psw,
+                                          "flags25": flags25, "flags2e": flags2e})
+        if line.startswith("[LOOKUP-SUMMARY]"):
+            match = LOOKUP.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid lookup summary at log line {number}")
+            fields = ("rpm", "load", "selector", "flags", "r0", "r4", "r5",
+                      "r6", "result_a", "result_b")
+            lookup_rows.append({**dict(zip(fields, match.groups()[:-1])),
+                                "count": int(match.group(11))})
+        if line.startswith("[MOVC-SUMMARY]"):
+            match = MOVC.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid MOVC summary at log line {number}")
+            pc, opcode, dptr, acc, address, mapped, value, count = match.groups()
+            if int(mapped, 16) >= len(candidate) or candidate[int(mapped, 16)] != int(value, 16):
+                raise RuntimeError(f"MOVC read differs from ROM at log line {number}")
+            movc_reads.append({"pc": pc, "opcode": opcode, "dptr": dptr,
+                               "acc": acc, "address": address, "mapped": mapped,
+                               "value": value, "count": int(count)})
         if "Startup delay complete - Beginning pulse injection" in line:
             crank_started = True
         ram47 = RAM47.match(line)
@@ -179,6 +419,20 @@ def main():
             fault_xram_changes[address].append({"tick": int(tick),
                                                 "before": before, "after": after,
                                                 "source_pc": source_pc})
+        adapt_xram = ADAPT_XRAM.match(line)
+        if adapt_xram:
+            tick, address, before, after, source_pc = adapt_xram.groups()
+            adaptation_xram_changes[address].append({
+                "tick": int(tick), "before": before, "after": after,
+                "source_pc": source_pc})
+        if line.startswith("[LAMBDA-BOUND-XRAM]"):
+            match = LAMBDA_BOUND_XRAM.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid lambda bound XRAM at log line {number}")
+            tick, address, before, after, source_pc = match.groups()
+            lambda_bound_xram_changes[address].append({
+                "tick": int(tick), "before": before, "after": after,
+                "source_pc": source_pc})
         if ram47:
             before, after, pc = ram47.groups()
             ram47_changes.append({"before": before, "after": after,
@@ -281,6 +535,8 @@ def main():
                 examples.setdefault(event, {"line": number, "text": line[:200]})
     if pc_coverage.get("unique") != len(pc_hits):
         raise RuntimeError("PC summary and hit list disagree")
+    if args.trace_movc and not movc_reads:
+        raise RuntimeError("MOVC tracing was enabled but no reads were recorded")
     output_latches = {}
     for channel in (0, 1):
         periods = [b - a for a, b in zip(p5_starts[channel], p5_starts[channel][1:])]
@@ -288,7 +544,11 @@ def main():
             "low_starts": len(p5_starts[channel]),
             "median_period_ticks": statistics.median(periods) if periods else None,
             "median_low_width_ticks": (statistics.median(p5_widths[channel])
-                                       if p5_widths[channel] else None)}
+                                       if p5_widths[channel] else None),
+            "low_width_histogram": [
+                {"width_ticks": width, "count": count}
+                for width, count in sorted(collections.Counter(
+                    p5_widths[channel]).items())]}
     half_periods = [later[0] - earlier[0] for earlier, later in
                     zip(p5_sequence, p5_sequence[1:])]
     output_latches["sequence"] = {
@@ -329,24 +589,86 @@ def main():
     observed_functions = []
     if inventory_file.exists():
         inventory = json.loads(inventory_file.read_text())
-        firmware_hash = hashlib.sha256(
-            (ROOT / "FiatTipo_MA17_dump_27c256.bin").read_bytes()).hexdigest()
-        if inventory["rom_sha256"] != firmware_hash:
+        if inventory["rom_sha256"] != hashlib.sha256(reference).hexdigest():
             raise RuntimeError("inventory hash does not match firmware")
         observed_functions = [
             {"address": item["address"], "ida_name": item["name"],
              "semantic_alias": item.get("semantic_alias")}
             for item in inventory["functions"] if int(item["address"], 16) in pc_hits]
-    report = {"firmware_origin": "Fiat Tipo Bosch Monomotronic MA1.7",
+    if args.stop_ticks is not None and observed_stop_ticks != args.stop_ticks:
+        raise RuntimeError(f"emulator stopped at {observed_stop_ticks} ticks; "
+                           f"expected {args.stop_ticks}")
+    report = {"firmware_origin": ("Fiat Tipo Bosch Monomotronic MA1.7" if
+                                  candidate == reference else
+                                  "experimental Fiat code-prefix variant"),
+              "firmware_path": str(firmware),
+              "firmware_sha256": firmware_hash,
+              "emulator_sha256": emulator_sha256,
               "hardware_profile": "Fiat Tipo 11.88 MHz; P4 K-line; P1.0 crank",
+              "p4_6_force_low_experimental": p4_6_force_low == "1",
+              "p4_6_low_from_tick_experimental": (
+                  None if p4_6_low_from_tick is None else int(p4_6_low_from_tick)),
+              "p4_7_force_low_experimental": p4_7_force_low == "1",
               "emulator_exit": process.returncode,
-              "duration_seconds": args.seconds,
+              "duration_seconds": None if args.stop_ticks is not None else args.seconds,
+              "wall_timeout_seconds": args.seconds if args.stop_ticks is not None else None,
+              "stop_ticks_target": args.stop_ticks,
+              "stop_ticks_observed": observed_stop_ticks,
               "crank_target_rpm": args.rpm,
               "timebase": "emulated machine-cycle ticks",
+              "rpm_selector_override_hex": environment.get(
+                  "MA17_OVERRIDE_RPM_SELECTOR"),
+              "ram69_override_hex": environment.get("MA17_OVERRIDE_RAM69"),
+              "ram31_override_hex": environment.get("MA17_OVERRIDE_RAM31"),
+              "ram57_override_hex": ram57_override,
+              "ram78_override_hex": ram78_override.upper()
+              if ram78_override is not None else None,
+              "ram4f_override_hex": ram4f_override.upper()
+              if ram4f_override is not None else None,
+              "idle_position_r4_override_hex": idle_r4_override.upper()
+              if idle_r4_override is not None else None,
+              "movc_7b45_override_hex": environment.get("MA17_OVERRIDE_MOVC_7B45"),
+              "movc_7580_override_hex": environment.get("MA17_OVERRIDE_MOVC_7580"),
+              "movc_7581_delta_hex": environment.get("MA17_OVERRIDE_MOVC_7581_DELTA"),
+              "movc_7100_delta_hex": environment.get("MA17_OVERRIDE_MOVC_7100_DELTA"),
+              "movc_override_at_hex": point_override.upper()
+              if point_override is not None else None,
+              "movc_matrix_base_hex": matrix_base,
+              "movc_matrix_pointer_slot_hex": (f"{matrix_slot:04X}"
+                                               if matrix_slot is not None else None),
+              "movc_matrix_size": matrix_size,
+              "movc_matrix_donor_sha256": matrix_donor_hash,
+              "matrix_path_trace_enabled": "MA17_TRACE_MATRIX_PATH" in environment,
+              "xram_f80c_override_hex": environment.get("MA17_OVERRIDE_XRAM_F80C"),
+              "xram_f80c_trace_enabled": "MA17_TRACE_XRAM_F80C" in environment,
+              "lambda_bound_trace_enabled": "MA17_TRACE_LAMBDA_BOUNDS" in environment,
+              "coolant_gate_trace_enabled": "MA17_TRACE_COOLANT_GATE" in environment,
+              "ram78_gate_trace_enabled": "MA17_TRACE_RAM78_GATE" in environment,
+              "terminal_segment_trace_enabled":
+              "MA17_TRACE_TERMINAL_SEGMENT" in environment,
+              "ram31_gate_trace_enabled": "MA17_TRACE_RAM31_GATE" in environment,
+              "ram5b_gate_trace_enabled": "MA17_TRACE_RAM5B_GATE" in environment,
+              "matrix_7939_index_trace_enabled": "MA17_TRACE_7939_INDEX" in environment,
+              "ram5b_read_override_hex": environment.get("MA17_OVERRIDE_RAM5B_READ"),
+              "tps_trace_after_tick": environment.get("MA17_TRACE_TPS_AFTER_TICK"),
+              "ram4d_path_trace_enabled": "MA17_TRACE_RAM4D_PATH" in environment,
+              "cc3_trace_after_tick": environment.get("MA17_TRACE_CC3_AFTER_TICK"),
+              "adc_10bit_input_values": adc_10bit_input_values,
+              "adc_10bit_step_values": adc_10bit_step_values,
+              "adc_10bit_step_sequences": adc_10bit_step_sequences,
               "adc_input_values": adc_input_values,
               "adc7_input_value": adc7_input_value,
               "injection_signal_sent": not args.no_kline_inject,
               "crank_immediate": args.crank_immediate,
+              "movc_observation": {
+                  "enabled": args.trace_movc,
+                  "distinct_read_states": len(movc_reads),
+                  "total_reads": sum(row["count"] for row in movc_reads),
+                  "reads": movc_reads},
+              "lookup_observation": {
+                  "enabled": args.trace_lookup,
+                  "total_calls": sum(row["count"] for row in lookup_rows),
+                  "states": lookup_rows},
               "event_counts": dict(counts), "first_examples": examples,
               "distinct_pc_values_in_log": len(pcs),
               "observed_reset_entry": counts["[RESET_0 ENTRY"] > 0,
@@ -359,7 +681,20 @@ def main():
                               for address in RPM_PCS}},
               "sensor_ram_observation": dict(sensor_ram_changes),
               "engine_ram_observation": dict(engine_ram_changes),
+              "injection_flow_observation": summarize_injection_flow(
+                  injection_flow_events),
+              "air_gate_observation": {
+                  "enabled": "MA17_TRACE_AIR_716C_GATE" in environment,
+                  "observed_events": sum(air_gate_pcs.values()),
+                  "sample_limit": 3000,
+                  "sample_limit_reached": sum(air_gate_pcs.values()) >= 3000,
+                  "pc_counts": dict(air_gate_pcs),
+                  **{key: air_gate_counts[key] for key in
+                     ("2e6_set_at_3cb7", "r2_below_6f_at_3cb7",
+                      "carry_set_at_3d0c")}},
               "fault_xram_observation": dict(fault_xram_changes),
+              "adaptation_xram_observation": dict(adaptation_xram_changes),
+              "lambda_bound_xram_observation": dict(lambda_bound_xram_changes),
               "capture_state_observation": {
                   "ram_c4_transition_count": sum(capture_state_changes.values()),
                   "transitions": [
@@ -443,8 +778,9 @@ def main():
                        "sensor_ram_observation",
                        "wheel_observation", "output_latches", "p1_1_observation",
                        "cc3_p5_phase_observation",
+                       "injection_flow_observation",
                        "cc3_observation", "kline_page_observation",
-                       "pc_hits_file",
+                       "pc_hits_file", "firmware_sha256",
                        "log_file")}, indent=2))
 
 

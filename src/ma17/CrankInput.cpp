@@ -63,7 +63,7 @@ static void process_crank_rising_edge(em8051 *cpu, long long tick,
     if (sim.current_tooth == 0) {
         // The first wrap omits the initial position 0.
         if (revolutions++ > 0 && std::getenv("MA17_TRACE_PC") &&
-            revolutions <= 65)
+            revolutions <= 129)
             fprintf(
                 stderr,
                 "[CRANK-REV] rpm=%d teeth=%d gaps=%d ticks_per_tooth=%lld\n",

@@ -9,6 +9,18 @@ O listing `FiatTipoIDAFullDump_27c256.asm` declara o mesmo hash. Seus nomes
 foram indexados como evidência de análise anterior, sem aceitar automaticamente
 as descrições: por exemplo, `WATER_TEMP_RAM` aparece como label no vetor 0063h.
 
+**Nota sobre os ensaios dinâmicos históricos:** o emulador implementava
+`MOV direct,@R0/@R1` (opcodes `86h/87h`) com a direção de transferência
+invertida. Isso alterava a execução real da ROM, inclusive a leitura da
+RAM superior `87h` em `1558h`. As tabelas de largura CC3, valores de
+`RAM[14h:15h]`, fases e afirmações de correção lambda medidas antes da
+correção abaixo são registros históricos e não devem fundamentar novas
+inferências. Os ensaios refeitos com o opcode corrigido estão em
+`MA17_FIRMWARE_VARIANTS_ANALYSIS.md`, com dados estruturados em
+`build/ma17-analysis/variants/experiments_opcode86_fixed/` e
+`build/ma17-analysis/variants/lambda_opcode86_fixed/`. A análise estática
+dos bytes da ROM não depende desse defeito.
+
 ## Reproduzir os artefatos
 
 ```sh
@@ -143,7 +155,7 @@ atividade real ainda depende da habilitação da interrupção.
 | 045Bh | `derive_timer1_reload_32_33` | Multiplica por `22h` e `RAM[36h:37h]`, grava `RAM[32h:33h]`, depois usado em `TL1/TH1` em 0298h | Escala temporal e papel físico ainda não confirmados |
 | 04E5h | `derive_timer1_reload_34_35` | Caminho análogo grava `RAM[34h:35h]`, usado em `TL1/TH1` em 0286h | Os bytes também são reutilizados no serviço de diagnóstico |
 | 058Eh | `schedule_cc3_from_iram14_15` | Lê `RAM[14h:15h]`, programa `CCL3/CCH3`, comuta `P1.3` e habilita `CCEN.7` | Papel físico de `P1.3` não confirmado |
-| 06E1h | `lookup_tf0_adc_pattern_by_r6_nibble` | `R6&0Fh` entra em `MOVC A,@A+PC`; o endereço base é 06E2h, de modo que índice zero lê o opcode `RET=22h`, e índices 1..15 leem a tabela 06E3h..06F1h | O IDA chama a tabela de estados; aqui os bytes são rastreados até `R1`, `ADCON0` e `DAPR`, sem inferir sensores físicos |
+| 06E1h | `lookup_tf0_adc_pattern_by_r6_nibble` | `R6&0Fh` entra em `MOVC A,@A+PC`; o endereço base é 06E2h, de modo que índice zero lê o opcode `RET=22h`, e índices 1..15 leem a tabela 06E3h..06F1h | O IDA chama `DAh` de `DAPR`; no C517A é `ADDATL`, escrito para iniciar a conversão |
 | 0721h | `route_adc_sample_to_iram_or_upper_a8` | Redireciona o alvo `63h` para RAM superior `A8h`; para `62h`, trata valores fora de `04h..F7h`; por fim grava via `@R1`. Teste dos opcodes originais confirma cinco canais | O valor em `RAM[63h]` é elaborado depois em 4756h; identidades físicas dos canais não foram demonstradas |
 | 084Fh | `shared_reti_at_084f` | `RETI` após a restauração de registradores também recebe `LCALL` em 0823h; a execução continua em 0826h após liberar o nível ativo de interrupção | O IDA compacta o byte como `nullsub_2`; a rotina chamadora prossegue no serviço TF0 |
 | 0850h | `reset_entry` | `LJMP 0850h` no vetor 0000h; execução observada em log local | Finalidade de cada etapa da inicialização ainda não auditada |
@@ -373,16 +385,17 @@ nem que cada combinação de bit e deslocamento ocorra em operação real.
 Um ensaio de quatro segundos com `python3 tools/trace_ma17.py --seconds 4
 --inject-after 0.5 --crank-immediate --output-dir
 build/ma17-analysis/kline-fault-probe` registrou a entrada K-Line em 4AD1h,
-mas nenhum PC em 42BFh..45D4h. A associação abaixo continua estática, sem
-confirmação desse caminho durante a operação completa. Um teste isolado em
+mas nenhum PC em 42BFh..45D4h. Esse ensaio inicial não alcançou o
+diagnóstico; a sessão PTY posterior descrita abaixo alcançou. Um teste isolado em
 `tests/test.cpp` carrega os 32.768 bytes da ROM original no núcleo, entra
 diretamente em 4329h ou 44BBh com `R7=0/9` e observa XRAM CDh..CFh. Em
-4329h, os índices 2 e 9 produziram `02 04 1E` e `02 06 1F`; em 44BBh,
+4329h, os índices 1, 2 e 9 produziram `02 04 1D`, `02 04 1E` e
+`02 06 1F`; em 44BBh,
 com `R6=2/9` e `DPTR=6E27h`, produziram `02 04 9E` e `02 06 9F`.
 Isso confirma a leitura `MOVC`, o deslocamento de tripla e a ligação do bit
 7 do status nessas entradas controladas. O mesmo teste continua em 4DFBh
-sem reinicializar XRAM e confirma os quatro buffers `B8h..BEh`:
-`06 01 FC 02 04 1E 03`, `06 01 FC 02 06 1F 03`,
+sem reinicializar XRAM e confirma os cinco buffers `B8h..BEh`:
+`06 01 FC 02 04 1D 03`, `06 01 FC 02 04 1E 03`, `06 01 FC 02 06 1F 03`,
 `06 01 FC 02 04 9E 03` e `06 01 FC 02 06 9F 03`.
 O byte `01h` é o contador `RAM[40h]` incrementado por 5137h. O ensaio
 confirma o encadeamento das rotinas com estado inicial controlado; não prova
@@ -392,6 +405,19 @@ o teste lê `XRAM[B8h]=06h` para `RAM[45h]`, avança o ponteiro a `B9h` e
 executa 4C72h..4C7Ch; `S0BUF` termina com `06h`. Isso confirma o primeiro
 byte entregue ao registrador serial nos quatro casos isolados. Os bytes
 seguintes, a temporização real e a saída elétrica permanecem não verificados.
+
+Uma sessão PTY completa com a ROM G original, `MA17_P4_6_FORCE_LOW=1`,
+`MA17_ADC_CH0=40`, `MA17_ADC_CH6=220`, `MA17_ADC_CH3=40`,
+`MA17_ADC_CH5=40`, `MA17_ADC_CH7=63` e `MA17_CRANK_IMMEDIATE=1`
+observou `29D5h` ligar `27h.0` no tick 1.187.188, `41E5h` publicar
+`F84Eh=01h` no tick 1.384.046, e a execução alcançar `4329h` e `4DFBh`.
+O cliente PTY recebeu o frame `FCh` com payload `02 04 1D` e terminou
+com `DIAGNOSTICS PASS`. Reprodução: adicionar
+`MA17_EXPECT_FAULT_TRIPLET=02041D` às variáveis acima e executar
+`./run_full_test.sh`. Captura em
+`build/ma17-analysis/pty/kline-idle-fault-bit0-40-220.txt`. O código
+numérico é `0402h` em little endian; a interpretação física descrita
+pelo scanner e a fiação de `P4.6` continuam hipóteses.
 
 Com `R7=0`, os bits da primeira varredura apontam para estas triplas base.
 Na segunda varredura, substitua XRAM `4Eh..50h` por `5Eh..60h` na mesma
@@ -424,6 +450,110 @@ esta tabela não identifica isoladamente o pacote que será transmitido.
 | `50h.4` | 21 | `6E66h` | `0302h` | `03h` |
 | `50h.5` | 22 | `6E69h` | `FFFFh` | `00h` |
 | `50h.6` | 23 | `6E6Ch` | `0A02h` | `1Bh` |
+
+### Origem dos bits associados ao atuador de lenta
+
+Os códigos atribuídos pelo scanner ao atuador são `0402h` (interruptor)
+e `1A01h` (motor/atuador, descrição incerta). Na ROM, os bytes de código
+estão em ordem little endian: `02 04` em `6E2Ah/6E2Dh/6E30h` e
+`01 1A` em `6E33h`. Com `R7=0`, esses quatro registros correspondem
+aos bits 0..3 de `XRAM[F84Eh]`. Em `407Dh` o firmware mascara
+`IRAM[27h]` com `XRAM[F884h]`; `41E5h` publica os bits ativos em
+`XRAM[F84Eh]`. Portanto, a tabela sozinha não indica que uma falha
+esteja ativa. O caminho até o pacote depende ainda do índice `R7`,
+dos bits de habilitação e da varredura diagnóstica.
+
+| Bit de `F84Eh` (`R7=0`) | Tripla ROM | Código | Ponto que arma `RAM[27h]` | Condição local comprovada pelos opcodes |
+| --- | --- | --- | --- | --- |
+| 0 | `6E2Ah`: `02 04 1D` | `0402h` | `29D5h` liga `27h.0` | `P4.6=0`, `24h.4=1`, `RAM[70h]>4Ah` e `MOVX F83Ch=0`, entre outras guardas de `29B6h..29D4h` |
+| 1 | `6E2Dh`: `02 04 1E` | `0402h` | `2B42h` liga `27h.1` | Leitura `F839h`: `ACC.6=0` e `ACC.5=1` |
+| 2 | `6E30h`: `02 04 1E` | `0402h` | `316Ch` liga `27h.2` | `RAM[24h].0=0` |
+| 3 | `6E33h`: `01 1A 1B` | `1A01h` | `2B49h` ou `2C0Ch` liga `27h.3` | Em `2B49h`, adicionalmente `ACC.7=0`; em `2C0Ch`, contador `F83Bh=0` evita a limpeza imediata |
+
+O comparador final do bit 0 (`29CBh..29D6h` em G/S88, deslocado
+`+1Ch` em A/A+/S37/S36) foi executado nas seis ROMs originais:
+`70h=4Ah` não passa, `70h=4Bh` passa somente com `F83Ch=00h`.
+Nos boots G com P4.6 baixo, `RAM[70h]` estabilizou em `1Bh` para
+TPS 40/95 e `37h` para TPS 120/180; `29D0h` foi atingido, mas
+`29D2h` não. O teste `IdleFaultBitZeroRequiresThrottleThresholdAndZeroXramInSixRoms`
+confirma as duas guardas finais, sem simular o circuito do interruptor.
+Com ADC0/6=40/220, as duas execuções G chegaram a `6Fh=1Bh` em
+`11B6h` e `70h=53h` em `11C0h`, o ramo alternativo que soma `38h`.
+O controle com P4.6 alto seguiu `29F5h` e publicou `F84Eh=04h`;
+com a leitura experimental de P4.6 baixa, `29D5h` ligou `27h.0`
+no tick 1.187.188 e `41E5h` publicou `F84Eh=01h` no tick 1.384.046.
+Esse contraste isola o caminho digital no harness; não valida a
+plausibilidade elétrica de ADC6=220 nem a ligação física de P4.6.
+Teste `test_tps_derived_bit_zero_fault_needs_experimental_low_p46`;
+capturas `idle_fault_bit0_tps_40_220*/`.
+
+Os três registros `0402h` têm bytes de estado diferentes ou origens
+internas diferentes; o texto do scanner não identifica qual circuito
+produz cada bit. `41CDh` espelha `27h` em `F884h`; a publicação em
+`F84Eh` ocorre depois da máscara e das guardas em `41CFh..41E5h`.
+
+Na inicialização, `0CB7h` lê `XRAM[F847h]`: `0CBAh` copia o bit 0 em
+`27h.1`, e `0CBEh` copia o bit 1 em `27h.3`. No ramo observado,
+`0C85h` inicializa antes `F847h=80h`; essa cópia não prova retenção
+de falhas entre partidas. Em `2D21h..2D56h`,
+o firmware copia esses dois bits de volta para `F847h[0..1]`, junto
+com outros estados. Em `0CD2h`, ele atribui `27h.0` e pode ligá-lo
+em `29D5h` quando `XRAM[3Ch]` é zero sob guardas anteriores; `27h.1`
+liga em `2B42h` após testar `XRAM[@R0]` com `ACC.6=0` e `ACC.5=1`;
+`27h.3` liga em `2B49h` quando, além disso, `ACC.7=0`, ou em `2C0Ch`
+por outro ramo com temporizador. `27h.2` liga em `316Ch` quando
+`24h.0=0`. Os bits são limpos por caminhos próprios, inclusive
+`2D16h` para 0/1/3 e `315Bh` para 2. Esses PCs e condições são
+relações digitais; ainda não identificam o pino do interruptor ou os
+terminais da ponte H.
+
+O trace da ROM G com 1.000 RPM, ADC3/5/7=40/40/63 e TPS
+ADC0/6=40/95 mostrou `27h.2` ligado em `316Ch` no tick 10.078,
+publicado como `F84Eh=04h` em `41E5h` no tick 157.419. Depois,
+`2B42h` e `2B49h` ligaram 1 e 3 nos ticks 1.238.640/1.238.643;
+`41E5h` publicou `F84Eh=0Eh` no tick 1.386.856. Com TPS
+20/70 ocorreu a mesma sequência; com TPS 120/180 somente o bit 2
+foi publicado nos 2,4 milhões de ticks observados. A diferença
+depende do estímulo TPS nesse modelo, mas não comprova a interpretação
+elétrica dos códigos nem que um pacote de erro foi transmitido.
+Reproduzir: `MA17_TRACE_IDLE_FAULT=1` com `tools/trace_ma17.py`;
+capturas em `build/ma17-analysis/variants/idle_fault_tps_*/`.
+
+O ramo específico em `2B38h` lê `XRAM[F839h]`; com TPS 40/95, esse
+byte chega a `2Eh` no tick 1.238.627. A subrotina `550Dh..556Fh`
+combina um nibble de estado e um contador no mesmo byte: `55A1h`
+é apenas autoteste, `0CA7h` inicializa `F839h=0Fh`, `555Bh` reduz
+o contador e `5577h` recarrega o nibble baixo. Assim, `2Eh` não deve
+ser interpretado diretamente como leitura do interruptor físico.
+No ramo `2B39h..2B49h`, bit 6 ligado desvia antes das falhas; bit 5
+ligado com bit 6 desligado liga `27h.1`; bit 7 desligado liga também
+`27h.3`. Com TPS 120/180, `F839h` ficou em `0Fh` e `2B38h` não foi
+alcançado nos mesmos 2,4 milhões de ticks.
+
+Contrafactuais G forneceram outro valor somente ao `MOVX` de
+`2B38h/F839h`, mantendo o byte armazenado em `2Eh` e o SHA-256 da ROM:
+`0Eh` (bit 5 limpo) e `6Eh` (bit 6 ligado) mantiveram `F84Eh=04h`;
+`AEh` (bits 5/7 ligados, 6 desligado) produziu `F84Eh=06h`, sem o
+bit 3. O controle original publicou `0Eh`. Isso demonstra os três
+testes de bit no caminho emulado, sem ainda identificar o circuito
+elétrico ou validar a descrição física de `0402h/1A01h` do scanner.
+Capturas em `idle_fault_xram_tps_*/` e `idle_fault_override_*/`.
+
+Forçar experimentalmente a leitura de `P4.6` em zero, com a trava de
+saída preservada, manteve `F839h=0Fh` após a inicialização e impediu
+`2B38h` nos 2,4 milhões de ticks observados. Nesse caso, `2C0Ch`
+ligou `27h.3` transitoriamente. O contador `F83Bh` começou em `32h`
+por `0CAFh` e foi decrementado em `2C1Bh`: enquanto não zerou,
+`2C19h` limpou o bit novamente. Após `01h→00h` no tick 664.994,
+o bit permaneceu ligado na passagem seguinte (`2C0Ch`, tick 675.388);
+`2D56h` salvou `F847h=C6h` e `41E5h` publicou `F84Eh=08h` perto
+do tick 873 mil, tanto com TPS 40/95 quanto 120/180. P4.6 também
+afeta outras rotas e pode exercer a função CM6 do C517A. O teste
+`test_experimental_p46_low_changes_idle_fault_source_path` protege
+o contraste digital; a conexão elétrica do interruptor continua aberta.
+O ramo temporizado tem os mesmos opcodes nas seis ROMs: `2C0Ch` em
+G/S88 corresponde a `2C28h` em A/A+/S37/S36. A inicialização
+`0CABh..0CAFh` do contador `F83Bh=32h` também é idêntica.
 
 O scanner local identifica a requisição `07h` e a resposta `FCh` como
 operações de leitura de erros. Seu `errorPacketToString` interpreta os dois
@@ -494,12 +624,92 @@ do scanner, não identificações demonstradas pela igualdade dos bytes:
 | 8 | IRAM 61h | 83h | Tensão de bateria |
 | 9 | MOVX 69h, página corrente | 00h | Adaptação de purga EVAP |
 
+O atuador de lenta descrito para esta ECU é um motor DC com ponte H que
+move o batente mínimo da borboleta; um interruptor na ponta informa o
+contato da borboleta. Isso orienta a busca por uma entrada discreta,
+controle das duas direções do motor e realimentação pelo TPS. Ainda
+não há identificação elétrica dessas três conexões no firmware Fiat.
+O scanner chama o campo `MOVX` de endereço baixo `3Dh` de posição do
+atuador (`F8:3Dh` na hipótese de página); isto **não é** o mesmo
+endereço que a `IRAM[3Dh]` usada pelo código em `30F0h` para definir
+`29h.0`. A própria ROM escreve `IRAM[3Dh]` em `0C48h` e `187Fh..1910h`,
+na rota que lê `ROM[7221h]` para a correção lambda. O nome do IDA
+`IDLE_RPM_REGULATOR` em `003Dh` também é enganoso: esse `LJMP 58BCh`
+chega a um trecho que limpa `TR1`, liga `P5.0/P5.1` e zera `47h`,
+compatível com o serviço do Timer 2/RPM, sem prova de acionamento da
+ponte H. A leitura do interruptor e as saídas do motor seguem em aberto.
+
+O estímulo `MA17_TRACE_IDLE_POSITION=1` registra mudanças de `XRAM[F83Dh]`
+com PC e tick, sem alterar o valor lido ou escrito. Em três boots G
+de 1,6 milhão de ticks a 1.000 RPM, `ADC0/6=20/70`, `40/95` e
+`120/180`, apareceram apenas quatro mudanças: autoteste da XRAM em
+`55A1h` (`00→55→AA`), limpeza em `0A51h` (`AA→00`) e inicialização
+em `0C8Dh` (`00→07`). O caso `40/95` continuou até 12 milhões de
+ticks sem nova mudança. Portanto, esses perfis ainda não demonstram
+um laço fechado do atuador; falta estimular e identificar o interruptor
+e observar os sinais de comando da ponte H. Capturas:
+`build/ma17-analysis/variants/idle_position_tps_{20_70,40_95,120_180}/`
+e `idle_position_tps_40_95_12m/`.
+
+Há outro escritor efetivo em `2494h`: ele copia `R4` para `F83Dh`.
+`2378h` lê o valor atual para `R4`, e os ramos `23CEh..2490h`
+podem incrementá-lo ou decrementá-lo antes da escrita. A busca por
+endereços literais também aponta os escritores condicionais `2258h`,
+`22EFh` e `281Fh`; endereçamento calculado ainda não foi excluído.
+`MA17_TRACE_IDLE_POSITION_ALL=1` inclui escritas sem mudança de valor.
+Em oito cenários G (TPS 40/95 ou 120/180; ADC2=40/160;
+ADC3=4/80), `2494h` escreveu `07h→07h` de 117 a 230 vezes em
+2,4 milhões de ticks. Cinco rotações de 750 a 4.000 RPM produziram
+107 a 114 dessas escritas, todas `07h→07h`. Forçar experimentalmente
+P4.7 baixo em TPS 40/95 ou 120/180 tampouco mudou o byte. P4.7 pode
+ser a saída alternativa CM7 no C517A; o ensaio não identifica sua
+ligação na ECU. Capturas `idle_position_grid_*/`,
+`idle_position_rpm_*/` e `idle_position_p47low_*/`.
+
+O bloco original `23CEh..2494h` comprova que `F83Dh` pode mudar sob
+outros estados. Com `DPTR=7300h`, `R4=07h` e XRAM `F840h..F845h=66h`,
+uma execução isolada dos opcodes das seis ROMs produziu `F83Dh=06h`
+ou `08h` conforme o carry de entrada. No mesmo bloco, `7305h=65h`
+limita a redução de `F840h..F845h`, `7306h=9Ch` limita o aumento,
+e `7301h=33h` limita o incremento de `R4`; os quatro casos de borda
+foram testados. Nas ROMs A/A+/S37/S36, a entrada homóloga é `23EAh`
+(G/S88: `23CEh`). São caminhos digitais com estado preparado; nenhum
+boot sem alteração do estado intermediário demonstrou ainda `F83Dh`
+subir ou descer.
+
+O salto em `23AFh` bloqueia a entrada nesse bloco quando qualquer uma
+das guardas anteriores deixa carry ligado. Com TPS 40/95 e ADC3=4,
+`63h=04h` já estava abaixo de `ROM[7358h]=18h`, mas o trace em
+`23AFh` ainda mostrou carry 1, `20h.3=1`, `24h.4=0` e `2Dh.4=0`.
+As três últimas condições, cada qual presente na cadeia de `ORL C`,
+impediam o ramo. Isso explica por que reduzir só o ADC3 não mudou
+`F83Dh`; as condições físicas correspondentes ainda são incertas.
+
+Em um boot G de 12,3 milhões de ticks, com ADC3=4, TPS 120/180 e
+`P4.6` lido em zero somente a partir do tick 12.200.000, `20h.3`
+já havia sido limpo em `231Ch` no tick 12.030.846. Em `23AFh`, no
+tick 12.287.229, o carry foi zero e as guardas externas passaram.
+Sem intervenção em `R4`, a comparação viu `R4=R5=07h` e não houve
+mudança de `F83Dh`. Em dois contrafactuais com a mesma ROM original,
+alterar somente `R4` em `23B1h` para `05h` ou `09h` fez as
+instruções originais em `2494h` escreverem `07h→06h` ou `07h→08h`.
+O estímulo `MA17_OVERRIDE_IDLE_POSITION_R4` não modela um sensor
+físico; demonstra a causalidade digital depois que a guarda abre.
+Capturas `idle_position_r4_{05,09}_12_2m/`; teste lento
+`test_idle_position_r4_change_steps_original_rom_in_both_directions`.
+
 A leitura independente `01h` com bytes `[01,F8,0C]` retornou `80h`,
 igual à posição 4 do quadro `F4h`. Na rotina de leitura, `F8h` seleciona
 `MOVX`; a página efetiva vem de `P2/XPAGE`, portanto o pedido isolado não
 prova que o segundo byte é um endereço alto. O ensaio de PTY confirmou
 quatro campos por duas rotas distintas; os outros seis ainda têm apenas a
 relação estrutural comprovada pelo teste isolado da rotina.
+Nos ensaios da ROM G com ADC3=4, ADC5=40/200 e 2,4 milhões de ticks,
+`F8:0Ch` foi escrito pela rotina de correção, mas seu único `MOVX` leitor
+observado foi o autoteste da XRAM em `55A2h`. A intervenção nesse autoteste
+é inválida; preservá-lo não revelou leituras posteriores do byte. Assim,
+o campo é uma saída diagnóstica observada nessa janela, sem evidência de
+realimentação direta do valor armazenado para o cálculo de CC3.
 No fluxo atual de `src/ECUSerial/ECUSerial.cpp` do scanner, o pedido de
 coleta imprime os bytes do quadro `F4h`; as descrições da tabela não são
 aplicadas nessa saída. A regra de endian também depende do comando:
@@ -508,7 +718,7 @@ aplicadas nessa saída. A regra de endian também depende do comando:
 scanner combina leituras genéricas de dois bytes em ordem oposta.
 
 A agenda ADC em 06E3h..06F1h fornece ao serviço TF0 um byte por índice
-`R6=1..15`. Os três bits baixos escolhem o canal em `ADCON0/DAPR`; o byte
+`R6=1..15`. Os três bits baixos escolhem o canal em `ADCON0`; o byte
 inteiro é o alvo inicial em `R1`. Depois de `IADC`, 0721h..0747h guarda a
 amostra. A ROM contém este mapa de destinos:
 
@@ -549,17 +759,20 @@ uma conversão angular nem a fiação do TPS. O bloco 2706h..2729h também
 compara `66h` com XRAM `35h` antes de atualizar esse estado.
 No caminho normal em 11C4h..11D4h, o firmware usa o valor selecionado em
 `R4`, executa `SUBB A,#0Dh` com piso zero, divide por 3 e grava `RAM[70h]` em
-11D1h; 11D4h grava `RAM[6Fh]`. Num ensaio Fiat de 1,2 s a 1.000 RPM,
+11D1h; 11D4h grava `RAM[6Fh]`. Num ensaio histórico Fiat, anterior à
+correção do ADC, de 1,2 s a 1.000 RPM,
 com ADC7=63, os pares finais `(6Fh,70h)` foram `(27h,0Dh)` com entradas
 padrão, `(53h,1Bh)` ao mudar somente ADC0 de 120 para 40 e `(A8h,38h)`
 ao mudar somente ADC6 de 95 para 180. As escritas vieram dos mesmos PCs
 nos três casos. A pista 1 baixa (`ADC6=40`) não alterou esse par nesse
-estado. Isso demonstra contribuição das duas pistas para os bytes
-derivados, mas ainda não calibra o ângulo físico nem resolve toda a
-arbitragem quando ambas mudam simultaneamente.
+estado. Esse ensaio indicava contribuição das duas pistas para os bytes
+derivados, mas os valores precisam ser repetidos com o ADC corrigido;
+ele não calibra o ângulo físico nem resolve toda a arbitragem.
+Esta grade histórica também foi obtida antes da correção do ADC do C517A.
 Uma grade de nove combinações, nas mesmas condições de 1,2 s, mostrou
 os pares finais `RAM[6Fh]:RAM[70h]` abaixo. Os cabeçalhos são valores
-brutos injetados em ADC0/ADC6, antes do `+1` em 0744h:
+brutos injetados em ADC0/ADC6, antes do `+1` artificial do modelo antigo
+em 0744h:
 
 | ADC0 / ADC6 | 40 | 95 | 180 |
 | ---: | --- | --- | --- |
@@ -567,11 +780,29 @@ brutos injetados em ADC0/ADC6, antes do `+1` em 0744h:
 | 120 | `27:0D` | `27:0D` | `A8:38` |
 | 180 | `27:0D` | `27:0D` | `27:0D` |
 
-Isso confirma que o par derivado depende da combinação das pistas,
+Com o modelo ADC corrigido, a execução G a 1.000 RPM, ADC2/3=140/34,
+ADC6=180 e 4 milhões de ticks deu `RAM[6Fh:70h]=A7h:37h` para
+ADC0=40 e ADC0=120. `RAM[60h]` mudou de `28h` para `78h`, enquanto
+`RAM[66h]=B4h` ficou constante. Esses resultados atuais não devem ser
+combinados numericamente com os `A8:38` da grade histórica; as capturas
+estão em `build/ma17-analysis/variants/7939_tps_factor_adc0_*_adc6_180_control/`.
+
+Na grade histórica, o par derivado dependia da combinação das pistas,
 inclusive com retorno ao par `27:0D` em combinações extremas. A grade
 não representa posições reais do TPS: faltam as funções de transferência
 elétrica das duas pistas e a comprovação dos limites de sobreposição.
 Os relatórios ficam em `build/ma17-analysis/tps_grid_*/execution.json`.
+O ramo alternativo `11A8h..11C0h` grava primeiro `6Fh` e depois
+`70h=min(FFh,6Fh+38h)`. No estímulo ADC0/6=40/220, o trace G
+observou `6Fh=1Bh` em `11B6h` e `70h=53h` em `11C0h`, nas duas
+leituras experimentais de P4.6. Assim, `70h` tem pelo menos dois
+algoritmos escritores; o ramo `11C0h` supera o limite `4Ah` da
+primeira origem do código de falha `0402h`.
+Os bytes `11A8h..11D4h` são idênticos nas seis ROMs. Um teste que
+executa o trecho original `11A8h..11C0h` em cada imagem confirmou
+`(R2,R3)=(30h,22h)→(6Fh,70h)=(1Bh,53h)`, piso em `00h/38h`
+e saturação em `FFh/FFh`; isso prova a fórmula digital comum,
+sem demonstrar que as seis revisões chegam ao ramo no mesmo estado.
 O rastro de `1047h`, `115Fh`, `1175h` e `11C4h` mostra o mecanismo do
 par repetido. Com ADC0/ADC6 em `120/95`, `40/40` ou `180/180`, a passagem
 em 115Fh tinha `RAM[28h]=06h`; em 116Dh a condição `.1/.2` selecionou
@@ -1028,8 +1259,9 @@ relatório `execution.json` resume as entradas em CC3.
 
 `RAM[67h]` é escrito em 0744h pela amostragem do canal ADC 7: a tabela em
 06E3h..06F1h contém `67h` e o firmware usa os três bits baixos do endereço
-para selecionar `ADCON0`. O callback de ADC do harness devolve 105 nesse canal;
-somado ao bit de `DAPR` em 0716h, resulta em `RAM[67h]=6Ah`. Em 3B22h, o
+para selecionar `ADCON0`. O callback de ADC do harness devolve 105 nesse canal.
+O antigo byte de partida em `DAh` adicionava `+1` artificial e produzia
+`RAM[67h]=6Ah`; com `ADDATL` modelado, resulta `69h`. Em 3B22h, o
 firmware compara esse valor com `41h` para atualizar `RAM[2Bh].5`. O sensor
 físico ligado ao canal 7 ainda não foi identificado.
 

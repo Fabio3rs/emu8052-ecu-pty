@@ -102,15 +102,22 @@ void CpuHooks::install_fiat_peripherals(em8051 &cpu) {
             "[DEBUG] XRAM trace callbacks registrados (0xD0/0xD1 monitor)\n");
     fflush(stderr);
 
-    // Timer 0 ISR waits for SAB80C517 IRCON.0 after each ADC conversion.
+    // SAB80C517A User's Manual Addendum, ADC timing (p. 5-7): writing
+    // ADDATL starts conversion and IRCON0.0 signals completion. Completion
+    // remains immediate here; conversion latency is not yet simulated.
     cpu.mSFR[0xC0 - 0x80] = 0x01;
     cpu.sfrwrite[0xC0 - 0x80] = write_ircon;
     fprintf(stderr,
             "[WORKAROUND] IRCON callback registered (fake ADC ready)\n");
 
+    // SAB80C517A ADC registers (p. 5-6): D9h is ADDATH and DAh is
+    // ADDATL, unlike the older SAB80C517 map where DAh was DAPR.
     cpu.sfrread[0xD9 - 0x80] = read_addat;
+    cpu.sfrread[0xDA - 0x80] = read_addatl;
+    cpu.sfrwrite[0xDA - 0x80] = start_adc_conversion;
     fprintf(stderr,
-            "[WORKAROUND] ADDAT callback registered (simulated ADC values)\n");
+            "[WORKAROUND] ADDATH/ADDATL callbacks registered "
+            "(simulated 10-bit ADC values)\n");
 }
 
 } // namespace ma17

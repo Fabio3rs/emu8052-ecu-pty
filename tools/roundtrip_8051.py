@@ -29,6 +29,10 @@ def definitions(header, c517a=False):
     result = []
     seen = set()
     for kind, name, value in SFR.findall(header):
+        if c517a:
+            # reg517.h targets the older C517. SAB80C517A User's Manual
+            # Addendum, ADC registers (p. 5-6), renames D9h/DAh.
+            name = {"ADDAT": "ADDATH", "DAPR": "ADDATL"}.get(name, name)
         if name.lower() in seen:
             raise ValueError(f"duplicate symbol: {name}")
         seen.add(name.lower())

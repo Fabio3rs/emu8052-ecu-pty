@@ -1,6 +1,7 @@
 .vscode
 .cache
 .env
+.venv/
 bin
 
 # Prerequisites

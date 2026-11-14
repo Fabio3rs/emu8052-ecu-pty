@@ -32,6 +32,19 @@ uint8_t PortController::read(em8051 *cpu, uint8_t address) {
         else
             p4 &= static_cast<uint8_t>(~0x20u);
 
+        // SAB80C517 manual, Port 4 pin description (p. 270): a latch bit
+        // of 1 permits an external low input on the bidirectional pin.
+        // Keep the output latch high when sampling this experimental pin level.
+        const uint8_t latch_with_kline = p4;
+        if (p4_6_force_low_ ||
+            (p4_6_low_from_tick_ >= 0 && ticks_ >= p4_6_low_from_tick_))
+            p4 &= static_cast<uint8_t>(~0x40u);
+        if (p4_7_force_low_) {
+            // SAB80C517 manual, Port 4 (p. 270): P4.7 is bidirectional;
+            // CM7 is an alternate output. This is an experimental pin read.
+            p4 &= static_cast<uint8_t>(~0x80u);
+        }
+
         if (p4 != last_p4_value_) {
             const auto elapsed =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -46,7 +59,7 @@ uint8_t PortController::read(em8051 *cpu, uint8_t address) {
             last_p4_value_ = p4;
         }
 
-        cpu->mSFR[address - 0x80] = p4;
+        cpu->mSFR[address - 0x80] = latch_with_kline;
         return p4;
     }
 

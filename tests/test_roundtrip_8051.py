@@ -43,6 +43,10 @@ class RoundtripTests(unittest.TestCase):
         self.assertIn("S0RELL DATA 0AAh", assembly)
         self.assertIn("XPAGE DATA 091h", assembly)
         self.assertIn("SYSCON DATA 0B1h", assembly)
+        self.assertIn("ADDATH DATA 0D9h", assembly)
+        self.assertIn("ADDATL DATA 0DAh", assembly)
+        self.assertNotIn("DAPR DATA", assembly)
+        self.assertIn("mov ADDATL, A", assembly)
         self.assertIn("push XPAGE", assembly)
         self.assertIn("mov SYSCON, #02h", assembly)
 
@@ -104,12 +108,13 @@ class RoundtripTests(unittest.TestCase):
     def test_adc7_threshold_controls_cc3_path(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("build/emu8051-tty is required for dynamic firmware test")
-        for adc7, guarded in ((63, False), (64, True)):
+        for adc7, guarded in ((64, False), (65, True)):
             with self.subTest(adc7=adc7):
                 env = dict(os.environ, MA17_ADC_CH7=str(adc7))
                 result = subprocess.run(
                     [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
-                     "--seconds", "1.2", "--no-kline-inject", "--crank-immediate"],
+                     "--seconds", "10", "--stop-ticks", "1200000",
+                     "--no-kline-inject", "--crank-immediate"],
                     capture_output=True, text=True, env=env)
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 report = json.loads((ROOT / "build" / "ma17-analysis" /
@@ -134,7 +139,7 @@ class RoundtripTests(unittest.TestCase):
                     self.assertGreater(cc3["cc3_pin_model_paired_pulses"], 0)
                     self.assertGreater(phase["paired_half_cycles"], 0)
                     self.assertAlmostEqual(
-                        phase["cc3_low_after_p5_low_median_ticks"], 1993, delta=300)
+                        phase["cc3_low_after_p5_low_median_ticks"], 1994, delta=50)
                     self.assertLessEqual(
                         abs(cc3["cc3_pin_model_width_minus_4x_raw_median_ticks"]), 15)
                     self.assertEqual(cc3["p1_3_shadow_median_low_width_ticks"], 4)
@@ -157,14 +162,111 @@ class RoundtripTests(unittest.TestCase):
                 report = json.loads((Path(directory) / "execution.json").read_text())
                 self.assertEqual(report["adc_input_values"][channel], 40)
                 changes = report["sensor_ram_observation"]
-                self.assertEqual(changes[address][-1]["after"], "29")
+                self.assertEqual(changes[address][-1]["after"], "28")
                 self.assertEqual(changes[address][-1]["source_pc"], "0744")
                 if channel == 1:
                     self.assertEqual(report["engine_ram_observation"]["7D"][-1]
                                      ["source_pc"], "404B")
                 if channel == 3:
-                    self.assertEqual(changes["63"][-1]["after"], "29")
+                    self.assertEqual(changes["63"][-1]["after"], "28")
                     self.assertEqual(changes["63"][-1]["source_pc"], "4756")
+
+    def test_temperature_adc10_stimuli_reach_distinct_firmware_bytes(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("build/emu8051-tty is required for dynamic firmware test")
+        with tempfile.TemporaryDirectory() as directory:
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_CH",
+                                          "MA17_OVERRIDE_"))}
+            env.update(MA17_ADC_CH2="40", MA17_ADC_CH3="40",
+                       MA17_ADC10_CH2="321", MA17_ADC10_CH3="642",
+                       MA17_ADC_CH7="63")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--seconds", "8", "--stop-ticks", "2400000", "--rpm", "1000",
+                 "--no-kline-inject", "--crank-immediate", "--output-dir", directory],
+                capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            report = json.loads((Path(directory) / "execution.json").read_text())
+            self.assertEqual(report["adc_10bit_input_values"][2:4], [321, 642])
+            self.assertEqual(report["adc_input_values"][2:4], [80, 160])
+            changes = report["sensor_ram_observation"]
+            self.assertEqual(changes["62"][-1]["after"], "50")
+            self.assertEqual(changes["63"][-1]["after"], "A1")
+            self.assertEqual(changes["62"][-1]["source_pc"], "0744")
+            self.assertEqual(changes["63"][-1]["source_pc"], "4756")
+
+    def test_coolant_adc_step_preserves_raw_channel_and_preprocessing_boundary(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("build/emu8051-tty is required for dynamic firmware test")
+        firmwares = (ROOT / "FiatTipo_MA17_dump_27c256.bin",
+                     ROOT / "firmwares_modificados_ma17_tipo" /
+                     "tipo 1.6 alcool27c256 SUN 8817.bin")
+        for firmware in firmwares:
+            observations = {}
+            for final_adc3, processed in ((204, "33"), (208, "11")):
+                with self.subTest(firmware=firmware.name, final_adc3=final_adc3), \
+                        tempfile.TemporaryDirectory() as directory:
+                    env = {key: value for key, value in os.environ.items()
+                           if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_CH",
+                                                  "MA17_ADC10_STEP_CH", "MA17_OVERRIDE_"))}
+                    env.update(MA17_ADC10_CH2="400", MA17_ADC10_CH3="160",
+                               MA17_ADC10_STEP_CH3=f"800000:{final_adc3}",
+                               MA17_ADC_CH7="63")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--seconds", "15",
+                         "--stop-ticks", "2400000", "--rpm", "1000", "--trace-movc",
+                         "--no-kline-inject", "--crank-immediate",
+                         "--output-dir", directory],
+                        capture_output=True, text=True, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    report = json.loads((Path(directory) / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    self.assertEqual(report["adc_10bit_step_sequences"][3],
+                                     [{"tick": 800000, "value": final_adc3}])
+                    changes = report["sensor_ram_observation"]
+                    self.assertEqual(changes["A8"][-1]["after"], f"{final_adc3 >> 2:02X}")
+                    self.assertEqual(changes["A8"][-1]["source_pc"], "0744")
+                    self.assertEqual(changes["63"][-1]["after"], processed)
+                    self.assertEqual(changes["63"][-1]["source_pc"], "4756")
+                    self.assertEqual(changes["62"][-1]["after"], "64")
+                    self.assertEqual(changes["62"][-1]["source_pc"], "0744")
+                    selected = {row["mapped"] for row in report["movc_observation"]["reads"]
+                                if row["pc"] == "52A2"}
+                    self.assertEqual("73D8" in selected, final_adc3 == 204)
+                    observations[final_adc3] = report
+            self.assertEqual(observations[204]["engine_ram_observation"]["4E"][-1]
+                             ["after"], "42")
+            self.assertEqual(observations[208]["engine_ram_observation"]["4E"][-1]
+                             ["after"], "00")
+            self.assertGreater(observations[204]["cc3_observation"]["iram14_15_median"],
+                               observations[208]["cc3_observation"]["iram14_15_median"])
+
+    def test_air_gate_report_counts_original_firmware_decisions(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("build/emu8051-tty is required for dynamic firmware test")
+        with tempfile.TemporaryDirectory() as directory:
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_CH",
+                                          "MA17_OVERRIDE_"))}
+            env.update(MA17_TRACE_AIR_716C_GATE="1", MA17_ADC_CH7="63")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--seconds", "8", "--stop-ticks", "400000", "--rpm", "1000",
+                 "--no-kline-inject", "--crank-immediate", "--output-dir", directory],
+                capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            report = json.loads((Path(directory) / "execution.json").read_text())
+            gate = report["air_gate_observation"]
+            self.assertTrue(gate["enabled"])
+            self.assertGreater(gate["pc_counts"]["3CB7"], 0)
+            self.assertGreater(gate["pc_counts"]["3D0C"], 0)
+            self.assertEqual(gate["2e6_set_at_3cb7"], 0)
+            self.assertEqual(gate["r2_below_6f_at_3cb7"], 0)
+            self.assertEqual(gate["carry_set_at_3d0c"], 0)
+            self.assertFalse(gate["sample_limit_reached"])
 
     def test_battery_adc_changes_timer1_output_path(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
@@ -188,8 +290,8 @@ class RoundtripTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 reports[adc1] = json.loads((Path(directory) / "execution.json").read_text())
         low, normal = reports[40], reports[130]
-        self.assertEqual(low["sensor_ram_observation"]["61"][-1]["after"], "29")
-        self.assertEqual(normal["sensor_ram_observation"]["61"][-1]["after"], "83")
+        self.assertEqual(low["sensor_ram_observation"]["61"][-1]["after"], "28")
+        self.assertEqual(normal["sensor_ram_observation"]["61"][-1]["after"], "82")
         for address in ("7D", "31", "34"):
             self.assertNotEqual(low["engine_ram_observation"][address][-1]["after"],
                                 normal["engine_ram_observation"][address][-1]["after"])
@@ -201,8 +303,8 @@ class RoundtripTests(unittest.TestCase):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("build/emu8051-tty is required for dynamic firmware test")
         scenarios = (("baseline", {}, ("27", "0D")),
-                     ("track2", {0: 40}, ("53", "1B")),
-                     ("track1", {6: 180}, ("A8", "38")),
+                     ("track2", {0: 40}, ("52", "1B")),
+                     ("track1", {6: 180}, ("A7", "37")),
                      ("both_low", {0: 40, 6: 40}, ("27", "0D")),
                      ("both_high", {0: 180, 6: 180}, ("27", "0D")))
         for name, overrides, expected in scenarios:
@@ -287,6 +389,11 @@ class RoundtripTests(unittest.TestCase):
                          [("0x5269", "0x5278", 16), ("0x53DA", "0x5418", 63)])
         master = (ROOT / "build" / "ma17-analysis" / "modular" / "ma17.asm").read_text()
         self.assertEqual(master.count("$include"), 7)  # registers + six address modules
+        kline = (ROOT / "build" / "ma17-analysis" / "modular" /
+                 "02_kline_and_low_level_io.inc").read_text()
+        self.assertIn("dispatch_kline_request_04_output_sequence:\n", kline)
+        self.assertIn("stage_f5_command_04_progress_response:\n", kline)
+        self.assertIn("\tljmp stage_f5_command_04_progress_response\n", kline)
         tables = (ROOT / "build" / "ma17-analysis" / "modular" /
                   "05_tables_and_calibration.inc").read_text()
         self.assertIn("fault_bit_indexed_triplet_table:\n", tables)

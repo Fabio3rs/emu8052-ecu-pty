@@ -3,6 +3,7 @@
 // profile is configured here.
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -41,7 +42,26 @@ static std::atomic<bool> g_inject_5baud{
 static long long g_instr_counter = 0;
 static ma17::UartScheduler g_uart_scheduler{g_uart, g_instr_counter};
 static std::chrono::steady_clock::time_point start;
-static ma17::PortController g_ports{g_uart, g_instr_counter, start};
+static long long p46_low_start_tick() {
+    const char *raw = std::getenv("MA17_P4_6_LOW_FROM_TICK");
+    if (!raw)
+        return -1;
+    errno = 0;
+    char *end = nullptr;
+    const long long value = std::strtoll(raw, &end, 10);
+    if (errno || end == raw || *end != '\0' || value < 0) {
+        std::fprintf(stderr, "Invalid MA17_P4_6_LOW_FROM_TICK: %s\n", raw);
+        std::exit(2);
+    }
+    return value;
+}
+// SAB80C517 Port 4 GPIO input: experimental low pin stimuli, not a claim
+// about the Fiat board wiring. The P4 output latch remains untouched.
+static ma17::PortController g_ports{
+    g_uart, g_instr_counter, start,
+    std::getenv("MA17_P4_6_FORCE_LOW") != nullptr,
+    std::getenv("MA17_P4_7_FORCE_LOW") != nullptr,
+    p46_low_start_tick()};
 
 static void uart_on_scanner_byte(uint8_t byte) {
     g_uart_scheduler.on_scanner_byte(byte);

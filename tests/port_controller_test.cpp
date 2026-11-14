@@ -34,3 +34,46 @@ TEST(PortController, P5ReadsCurrentFirmwareLatch) {
 
     EXPECT_EQ(ports.read(&cpu, 0xF8), 0xA7);
 }
+
+TEST(PortController, P4BitSixExternalLowDoesNotChangeOutputLatch) {
+    ma17::PtyBridge bridge{+[](uint8_t) {}};
+    long long ticks = 0;
+    auto start = std::chrono::steady_clock::now();
+    ma17::PortController ports{bridge, ticks, start, true};
+    em8051 cpu{};
+    cpu.mSFR[0xE8 - 0x80] = 0xEA;
+
+    bridge.rxd_line_state = true;
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0x8A);
+    EXPECT_EQ(cpu.mSFR[0xE8 - 0x80], 0xCA);
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0x8A);
+}
+
+TEST(PortController, P4BitSevenExperimentalLowDoesNotChangeOutputLatch) {
+    ma17::PtyBridge bridge{+[](uint8_t) {}};
+    long long ticks = 0;
+    auto start = std::chrono::steady_clock::now();
+    ma17::PortController ports{bridge, ticks, start, false, true};
+    em8051 cpu{};
+    cpu.mSFR[0xE8 - 0x80] = 0xEA;
+
+    bridge.rxd_line_state = true;
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0x4A);
+    EXPECT_EQ(cpu.mSFR[0xE8 - 0x80], 0xCA);
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0x4A);
+}
+
+TEST(PortController, P4BitSixTimedLowUsesEmulatedTicks) {
+    ma17::PtyBridge bridge{+[](uint8_t) {}};
+    long long ticks = 99;
+    auto start = std::chrono::steady_clock::now();
+    ma17::PortController ports{bridge, ticks, start, false, false, 100};
+    em8051 cpu{};
+    cpu.mSFR[0xE8 - 0x80] = 0xEA;
+    bridge.rxd_line_state = true;
+
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0xCA);
+    ticks = 100;
+    EXPECT_EQ(ports.read(&cpu, 0xE8), 0x8A);
+    EXPECT_EQ(cpu.mSFR[0xE8 - 0x80], 0xCA);
+}

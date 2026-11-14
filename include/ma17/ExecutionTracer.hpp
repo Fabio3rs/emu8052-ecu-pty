@@ -16,6 +16,7 @@ void trace_p13_shadow(const em8051 &cpu, long long tick, uint16_t source_pc);
 void trace_isr_vector(const em8051 &cpu);
 void trace_pre_tick_boot_and_crank(const em8051 &cpu, long long tick,
                                    bool crank_enabled);
+void apply_pre_tick_experiments(em8051 &cpu);
 void trace_pre_tick_engine(const em8051 &cpu, long long tick);
 void trace_pre_tick_cc3(const em8051 &cpu, long long tick);
 void trace_invalid_pc(const em8051 &cpu, uint16_t last_pc);
