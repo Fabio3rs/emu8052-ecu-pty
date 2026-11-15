@@ -422,6 +422,111 @@ def expand_curated_catalog(paths, catalog):
             "rom_sha256": catalog["rom_sha256"], "tables": tables}
 
 
+def audit_pointer_catalog_coverage(directory, catalog):
+    """Classify directory targets without treating subviews as new tables."""
+    catalog_spans = sorted((int(table["start"], 16),
+                            int(table["end_exclusive"], 16))
+                           for table in catalog["tables"])
+
+    def catalog_covers(start, end):
+        cursor = start
+        for low, high in catalog_spans:
+            if low > cursor:
+                break
+            cursor = max(cursor, high)
+            if cursor >= end:
+                return True
+        return False
+
+    rows = []
+    for region in directory["regions"]:
+        slot = region["pointer_slot"]
+        versions = region["versions"]
+        direct = []
+        contained = []
+        for table in catalog["tables"]:
+            table_start = int(table["start"], 16)
+            table_end = int(table["end_exclusive"], 16)
+            starts_inside = all(table_start <= int(version["start"], 16) <
+                                table_end for version in versions)
+            if (slot in ([table.get("pointer_slot")] +
+                         table.get("pointer_slots", [])) and starts_inside):
+                direct.append(table["id"])
+            elif starts_inside and all(
+                    int(version["candidate_end_exclusive"], 16) <= table_end
+                    for version in versions):
+                contained.append(table["id"])
+        status = "direct" if direct else "contained" if contained else "unclassified"
+        raw = [version["raw_hex"] for version in versions]
+        selected = direct or contained
+        covered_end = max((int(table["end_exclusive"], 16)
+                           for table in catalog["tables"]
+                           if table["id"] in selected), default=None)
+        candidate_ends = [int(version["candidate_end_exclusive"], 16)
+                          for version in versions]
+        rows.append({"pointer_slot": slot, "status": status,
+                     "covered_by": selected,
+                     "selected_entry_fully_covers_candidate_interval":
+                         covered_end is not None and
+                         all(end <= covered_end for end in candidate_ends),
+                     "catalog_fully_covers_candidate_interval": all(
+                         catalog_covers(int(version["start"], 16), end)
+                         for version, end in zip(versions, candidate_ends)),
+                     "outside_selected_entry_suffix":
+                         None if covered_end is None or
+                         all(end <= covered_end for end in candidate_ends)
+                         else {"start": f"0x{covered_end:04X}",
+                               "end_exclusive":
+                                   f"0x{max(candidate_ends):04X}"},
+                     "same_bytes_all_roms": len(set(raw)) == 1,
+                     "different_bytes_vs_G": [
+                         version["different_bytes_vs_gasoline"]
+                         for version in versions[1:]]})
+    counts = {status: sum(row["status"] == status for row in rows)
+              for status in ("direct", "contained", "unclassified")}
+    return {"scope": "pointer-target intervals use provisional next-target ends",
+            "counts": counts, "regions": rows}
+
+
+def catalog_provisional_pointer_targets(directory, coverage):
+    """Keep every uncatalogued pointer target visible without inferring a table."""
+    by_slot = {row["pointer_slot"]: row for row in coverage["regions"]}
+    candidates = []
+    for region in directory["regions"]:
+        slot = region["pointer_slot"]
+        if by_slot[slot]["status"] != "unclassified":
+            continue
+        versions = []
+        for version in region["versions"]:
+            raw = bytes.fromhex(version["raw_hex"])
+            versions.append({**version,
+                             "byte_statistics": {
+                                 "min_u8": min(raw), "max_u8": max(raw),
+                                 "distinct_u8": len(set(raw)),
+                                 "zero_count": raw.count(0),
+                                 "ff_count": raw.count(0xFF)}})
+        candidates.append({
+            "id": f"unclassified_{slot.lower()}",
+            "pointer_slot": slot,
+            "pointer_encoding": region["pointer_encoding"],
+            "extent_basis": region["extent_basis"],
+            "dimensions": None,
+            "element_encoding": "raw bytes; signedness and table layout unverified",
+            "consumer": None,
+            "physical_function": None,
+            "confidence": {"pointer_and_bytes": "confirmed_all_six",
+                           "table_extent_and_function": "unverified"},
+            "open_questions": ["Identify the original-code consumer and exact bounds",
+                               "Determine layout, inputs, outputs and physical meaning"],
+            "same_target_all_roms": region["same_target_all_roms"],
+            "versions": versions,
+        })
+    if len(candidates) != coverage["counts"]["unclassified"]:
+        raise ValueError("provisional pointer catalog omits an unclassified slot")
+    return {"scope": "unclassified directory targets, not proven tables",
+            "count": len(candidates), "candidates": candidates}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path,
@@ -455,6 +560,12 @@ def main():
     expanded = expand_curated_catalog(paths, curated)
     (args.output_dir / "calibration_catalog_expanded.json").write_text(
         json.dumps(expanded, indent=2) + "\n")
+    coverage = audit_pointer_catalog_coverage(directory, curated)
+    (args.output_dir / "pointer_catalog_coverage.json").write_text(
+        json.dumps(coverage, indent=2) + "\n")
+    provisional = catalog_provisional_pointer_targets(directory, coverage)
+    (args.output_dir / "provisional_pointer_catalog.json").write_text(
+        json.dumps(provisional, indent=2) + "\n")
     print(f"{len(result['images'])} images; {len(result['pairs'])} pairs; {destination}")
     for pair in result["pairs"]:
         print(f"{pair['left']} <> {pair['right']}: "

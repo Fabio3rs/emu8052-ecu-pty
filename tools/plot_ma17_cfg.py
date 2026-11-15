@@ -25,8 +25,10 @@ def read_assembly(source, rom):
     lengths = Instructions()
     labels, code = {}, {}
     pc = 0
-    for include in re.findall(r"^\$include\s+(\S+\.inc)$", source.read_text(), re.M):
-        for line in (source.parent / include).read_text().splitlines():
+    includes = re.findall(r"^\$include\s+(\S+\.inc)$", source.read_text(), re.M)
+    inputs = [source.parent / include for include in includes] if includes else [source]
+    for input_path in inputs:
+        for line in input_path.read_text().splitlines():
             statement = line.split(";", 1)[0].strip()
             if not statement:
                 continue

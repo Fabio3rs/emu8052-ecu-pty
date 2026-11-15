@@ -32,17 +32,27 @@ uint8_t PortController::read(em8051 *cpu, uint8_t address) {
         else
             p4 &= static_cast<uint8_t>(~0x20u);
 
-        // SAB80C517 manual, Port 4 pin description (p. 270): a latch bit
-        // of 1 permits an external low input on the bidirectional pin.
-        // Keep the output latch high when sampling this experimental pin level.
+        // SAB80C517 Port 4 (p. 270): a high latch permits an external
+        // low input. Fiat G samples P4.6 at 2D57h/2D60h; its state feeds
+        // IRAM 2Fh.0, then the 2653h guard and 481Ah table choice.
+        // CM6 is an alternate function; ECU wiring and effective mode
+        // remain unidentified. This knob models the CPU pin input only.
+        // Keep the output latch high for this experimental input level.
         const uint8_t latch_with_kline = p4;
         if (p4_6_force_low_ ||
             (p4_6_low_from_tick_ >= 0 && ticks_ >= p4_6_low_from_tick_))
             p4 &= static_cast<uint8_t>(~0x40u);
         if (p4_7_force_low_) {
             // SAB80C517 manual, Port 4 (p. 270): P4.7 is bidirectional;
-            // CM7 is an alternate output. This is an experimental pin read.
+            // CM7 is an alternate output. Fiat G reads it at PC 21D4h;
+            // neither A/C request nor physical ECU wiring is established.
             p4 &= static_cast<uint8_t>(~0x80u);
+        }
+        if (p4_3_force_low_) {
+            // SAB80C517 Port 4 (p. 270): external low on a high latch.
+            // Fiat 2374h/4991h sample P4.3 in idle-related code; the
+            // physical idle contact is not identified on the ECU board.
+            p4 &= static_cast<uint8_t>(~0x08u);
         }
 
         if (p4 != last_p4_value_) {

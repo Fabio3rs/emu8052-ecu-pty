@@ -16,11 +16,13 @@ class PortController {
                    std::chrono::steady_clock::time_point &startup_time,
                    bool p4_6_force_low = false,
                    bool p4_7_force_low = false,
-                   long long p4_6_low_from_tick = -1)
+                   long long p4_6_low_from_tick = -1,
+                   bool p4_3_force_low = false)
         : bridge_(pty_bridge), ticks_(emulated_ticks),
           startup_time_(startup_time), p4_6_force_low_(p4_6_force_low),
           p4_7_force_low_(p4_7_force_low),
-          p4_6_low_from_tick_(p4_6_low_from_tick) {}
+          p4_6_low_from_tick_(p4_6_low_from_tick),
+          p4_3_force_low_(p4_3_force_low) {}
 
     uint8_t read(em8051 *cpu, uint8_t address);
 
@@ -31,6 +33,7 @@ class PortController {
     bool p4_6_force_low_;
     bool p4_7_force_low_;
     long long p4_6_low_from_tick_;
+    bool p4_3_force_low_;
     uint8_t last_p4_value_ = 0xFF;
 };
 

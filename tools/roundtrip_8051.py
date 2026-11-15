@@ -15,7 +15,20 @@ ROOT = Path(__file__).resolve().parents[1]
 SFR = re.compile(r"^\s*(sfr|sbit)\s+(\w+)\s*=\s*0x([0-9a-fA-F]+);", re.M)
 MA17_SHA256 = "a34734350611cf561eb39ac1a63097defcaaff642cd7780526f632dda40f8e1f"
 RENAULT_CLIO_SHA256 = "cf0c841d924bfc740ffbe825d7b87d9df22cfa7f3bfcfa4eafe7765e03795412"
-# Fiat Tipo only: non-erased C517 vector entries in this 27C256 dump.
+# These original Fiat images share the C517A boot SFR usage and vector layout.
+# A+ is byte-identical to A; hashes select a CPU profile, not a calibration name.
+FIAT_MA17_VARIANTS = {
+    MA17_SHA256: "Fiat Tipo Bosch Monomotronic MA1.7 gasoline",
+    "29403d0044c4d841da46edcce257184894b1eb1185257bddc4a277a32c1ae8e1":
+        "Fiat Tipo Bosch Monomotronic MA1.7 A/A+",
+    "bfa59928ca41695458063835dc1a05a489b9deb5755bb1d7740c22874fdcbe28":
+        "Fiat Tipo Bosch Monomotronic MA1.7 S88",
+    "91ffb89d8293e7058144df474d1e53fa1236875b9dff047784c9cc77306ab6e2":
+        "Fiat Tipo Bosch Monomotronic MA1.7 S37",
+    "fd6288a06b0618fe8d4fd0561ca8f1feb75bfda1d4cb092041ff64053ffef8a8":
+        "Fiat Tipo Bosch Monomotronic MA1.7 S36",
+}
+# Non-erased C517 vector entries verified at these offsets in all five unique Fiat images.
 # CTF at 009Bh is also reached by the Timer 1 output handler at 0090h.
 MA17_VECTORS = (0x03, 0x0B, 0x1B, 0x23, 0x2B, 0x43,
                 0x53, 0x63, 0x6B, 0x9B)
@@ -113,10 +126,10 @@ def main():
     if not original or len(original) > 65536:
         parser.error("firmware must contain 1..65536 bytes")
     firmware_hash = sha256(original)
-    firmware_origin = {
-        MA17_SHA256: "Fiat Tipo Bosch Monomotronic MA1.7 27C256",
-        RENAULT_CLIO_SHA256: "Renault Clio Bosch Monomotronic MA1.7 revision",
-    }.get(firmware_hash, "unknown MCS-51 firmware")
+    fiat_profile = firmware_hash in FIAT_MA17_VARIANTS
+    firmware_origin = FIAT_MA17_VARIANTS.get(
+        firmware_hash, "Renault Clio Bosch Monomotronic MA1.7 revision"
+        if firmware_hash == RENAULT_CLIO_SHA256 else "unknown MCS-51 firmware")
     output = args.output_dir or ROOT / "build" / "roundtrip" / firmware.stem
     output.mkdir(parents=True, exist_ok=True)
     mcu = output / "sab80c517.mcu"
@@ -124,11 +137,11 @@ def main():
     assembly = output / (firmware.stem + ".asm")
     rebuilt = output / (firmware.stem + ".rebuilt.bin")
     symbols = definitions((ROOT / "reg517.h").read_text(),
-                          c517a=firmware_hash == MA17_SHA256)
+                          c517a=fiat_profile)
     mcu.write_text("\n".join(f"{n} {k} 0{v:02X}h" for n, k, v in symbols) + "\n")
     disasm = ROOT / ".venv" / "bin" / "disasm51"
     command = [str(disasm), "--include", str(mcu), "--entry", "RESET"]
-    if firmware_hash == MA17_SHA256:
+    if fiat_profile:
         for vector in MA17_VECTORS:
             command += ["--entry", hex(vector)]
     for option, values in (("--entry", args.entry), ("--indirect", args.indirect),

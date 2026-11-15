@@ -4,6 +4,7 @@ import ast
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -18,15 +19,347 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from compare_ma17_variants import (EXPECTED, REFERENCE, SIDECARS, VARIANTS,
+                                   audit_pointer_catalog_coverage,
+                                   catalog_provisional_pointer_targets,
                                    catalog_candidate_tables, catalog_diagnostics,
                                    catalog_matrix_deltas,
                                    catalog_pointer_regions, compare, decode_xxd,
                                    expand_curated_catalog,
                                    inventory, write_matrix_heatmap)
-from trace_ma17 import summarize_injection_flow
+from audit_ma17_pointer_lookahead import audit as audit_pointer_lookahead
+from audit_ma17_directory_prefix import audit as audit_directory_prefix
+from trace_ma17 import parse_ram69_producer, summarize_injection_flow
 
 
 class CompareVariantsTests(unittest.TestCase):
+    def test_directory_prefix_audit_detects_effective_movc_reads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, rows in (("no_hit", [{"pc": "523B", "address": "7002",
+                                            "count": 4}]),
+                               ("hit", [{"pc": "523B", "address": "7000",
+                                         "count": 3}])):
+                output = root / name
+                output.mkdir()
+                (output / "execution.json").write_text(json.dumps({
+                    "firmware_sha256": name,
+                    "movc_observation": {"reads": rows}}))
+            result = audit_directory_prefix(root)
+            self.assertEqual(result["execution_files"], 2)
+            self.assertEqual(result["movc_reports"], 2)
+            self.assertEqual(result["prefix_read_occurrences"], 3)
+            self.assertEqual(result["prefix_read_rows"][0]["address"], "7000")
+
+    def test_7310_rpm_bound_consumer_is_relocated_in_a_family(self):
+        gasoline = REFERENCE.read_bytes()
+        reference = gasoline[0x2C49:0x2D61]
+        self.assertEqual(reference[:13],
+                         bytes.fromhex("74 10 93 FA 20 39 03 30 C9 03 02 2C D3"))
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                a_family = name != "G" and "SUN 8817" not in name
+                start = 0x2C65 if a_family else 0x2C49
+                expected = bytearray(reference)
+                if a_family:
+                    expected[12] = 0xEF  # LJMP 2CD3h relocates to 2CEFh.
+                self.assertEqual(image[start:start + len(reference)], expected)
+                self.assertEqual(image[0x7310], 0x38)
+
+    def test_ram70_guard_and_fault_sites_align_across_six_roms(self):
+        gasoline = REFERENCE.read_bytes()
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                shift = 0 if name == "G" or name == EXPECTED[2] else 0x1C
+                for first, last in ((0x29CB, 0x29D7),
+                                    (0x2C0C, 0x2C2C)):
+                    self.assertEqual(image[first + shift:last + shift],
+                                     gasoline[first:last])
+                guard = bytearray(gasoline[0x2C3C:0x2D16])
+                scheduler = bytearray(gasoline[0x1F9B:0x205C])
+                if shift:
+                    # Relocated jump targets and two revised call targets.
+                    guard[0x2C48 - 0x2C3C] = 0xE9
+                    guard[0x2C55 - 0x2C3C] = 0xEF
+                    scheduler[0x2029 - 0x1F9B:0x202B - 0x1F9B] = (
+                        bytes.fromhex("53 1C"))
+                    scheduler[0x2037 - 0x1F9B:0x2039 - 0x1F9B] = (
+                        bytes.fromhex("55 2C"))
+                self.assertEqual(image[0x2C3C + shift:0x2D16 + shift],
+                                 guard)
+                self.assertEqual(image[0x1F9B + shift:0x205C + shift],
+                                 scheduler)
+
+    def test_ram6f_pre_movc_guard_sites_align_across_six_roms(self):
+        gasoline = REFERENCE.read_bytes()
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                shift = 0 if name == "G" or name == EXPECTED[2] else 0x1C
+                self.assertEqual(image[0x11C4:0x11D4],
+                                 gasoline[0x11C4:0x11D4])
+                for start, end in ((0x299A, 0x29A8), (0x2A78, 0x2AB4),
+                                   (0x2AF9, 0x2B05), (0x2B38, 0x2B41),
+                                   (0x2B42, 0x2B4F)):
+                    self.assertEqual(image[start + shift:end + shift],
+                                     gasoline[start:end], (name, start))
+
+    def test_pointer_lookahead_audit_distinguishes_direct_and_crossing_reads(self):
+        catalog = {"candidates": [
+            {"pointer_slot": "0x7082", "versions": [
+                {"start": "0x78A9", "candidate_end_exclusive": "0x78BD"}]},
+            {"pointer_slot": "0x7086", "versions": [
+                {"start": "0x78D1", "candidate_end_exclusive": "0x78E5"}]}]}
+        reads = [
+            {"pc": "5350", "opcode": "93", "dptr": "7895",
+             "address": "78A9", "value": "00", "count": 3},
+            {"pc": "5350", "opcode": "93", "dptr": "78A9",
+             "address": "78AA", "value": "00", "count": 2},
+            {"pc": "06E1", "opcode": "83", "dptr": "78D1",
+             "address": "78D1", "value": "00", "count": 7},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / f"trace{i}.json" for i in range(2)]
+            for index, path in enumerate(paths):
+                path.write_text(json.dumps({"firmware_sha256": f"rom{index}",
+                                            "movc_observation": {"reads": reads}}))
+            report = audit_pointer_lookahead(catalog, paths)
+        self.assertEqual(report["trace_files"], 2)
+        self.assertEqual(report["trace_files_by_rom"], {"rom0": 1, "rom1": 1})
+        first, second = report["slots"]
+        self.assertEqual((first["cross_boundary"]["trace_files"],
+                          first["cross_boundary"]["occurrences"]), (2, 6))
+        self.assertEqual((first["direct_base"]["trace_files"],
+                          first["direct_base"]["occurrences"]), (2, 4))
+        self.assertEqual(first["cross_boundary"]["by_rom"], {
+            "rom0": {"trace_files": 1, "occurrences": 3},
+            "rom1": {"trace_files": 1, "occurrences": 3}})
+        self.assertEqual(second["direct_base"]["occurrences"], 0)
+        self.assertEqual(second["cross_boundary"]["occurrences"], 0)
+        changed = copy.deepcopy(catalog)
+        changed["candidates"][0]["versions"].append(
+            {"start": "0x78AA", "candidate_end_exclusive": "0x78BD"})
+        with self.assertRaisesRegex(ValueError, "variant intervals differ"):
+            audit_pointer_lookahead(changed, [])
+
+    def test_t2i1_has_no_setter_in_classified_fiat_code(self):
+        sys.path.insert(0, str(ROOT / "disasm51" / "src"))
+        from disasm51.instructions import Instructions
+
+        instructions = Instructions()
+        write = re.compile(
+            r"^(?:(?:mov|orl|anl|xrl|inc|dec|djnz|pop|setb|clr|cpl|jbc)"
+            r"\s+(?:T2CON|T2I1)\b|xch\s+A,\s*T2CON\b)", re.I)
+        with tempfile.TemporaryDirectory() as directory:
+            for name, path in (("G", REFERENCE),
+                               *((name, VARIANTS / name) for name in EXPECTED)):
+                with self.subTest(rom=name):
+                    output = Path(directory) / path.stem
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "roundtrip_8051.py"),
+                         str(path), "--output-dir", str(output)],
+                        capture_output=True, text=True, timeout=15,
+                        check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["roundtrip"], "PASS")
+                    source = (output / (path.stem + ".disasm51.asm")).read_text()
+                    rom = path.read_bytes()
+                    pc = 0
+                    writes = []
+                    for line in source.splitlines():
+                        body = line.split(";", 1)[0].strip()
+                        if not body:
+                            continue
+                        if body.lower().startswith("org\t"):
+                            pc = int(body.split()[1].removesuffix("h"), 16)
+                        elif body.lower().startswith(("db ", "dw ")):
+                            pc += (2 if body.lower().startswith("dw ") else 1) * (
+                                body.count(",") + 1)
+                        elif line.startswith("\t") and body[0].isalpha():
+                            length = instructions[rom[pc]].length
+                            if write.search(body):
+                                writes.append((pc, rom[pc:pc + length].hex()))
+                            pc += length
+                    later = "SUN 8817" not in name and name != "G"
+                    self.assertEqual(writes, [
+                        (0x0AF6, "75c885"),
+                        (0x3B9A if later else 0x3B6C, "43c885"),
+                        (0x4B7F if later else 0x4ABC, "75c800"),
+                        (0x6320, "75c800"), (0x6334, "75c811")])
+                    # SAB80C517 T2I1 is bit C9h. Check raw bytes too: a
+                    # possible JBC straddles POP 10h and XCH A,R1.
+                    for opcode in (0xC2, 0xD2, 0xB2, 0x92):
+                        self.assertNotIn(bytes((opcode, 0xC9)), rom)
+                    apparent_jbc = 0x5753 if later else 0x5690
+                    self.assertEqual(
+                        [i for i in range(len(rom) - 1)
+                         if rom[i:i + 2] == b"\x10\xC9"], [apparent_jbc])
+                    self.assertEqual(rom[apparent_jbc - 1:apparent_jbc + 3],
+                                     b"\xD0\x10\xC9\x22")
+
+    def test_7958_rpm_curve_pointer_and_relocated_calls(self):
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(image[0x706A:0x706C], bytes.fromhex("79 58"))
+                self.assertEqual(image[0x7958:0x7960],
+                                 bytes.fromhex("47 03 04 04 EE FF 9A 24"))
+                call = "90 70 6A 12 52 F2" if name == "G" or "SUN 8817" in name \
+                    else "90 70 6A 12 53 B5"
+                base = 0x15AF if name == "G" or "SUN 8817" in name else 0x15FD
+                self.assertEqual(image[base:base + 6], bytes.fromhex(call))
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x15B5:0x15C5],
+                         bytes.fromhex("E5 4B 8A F0 A4 E5 4A B5 F0 00 40 02 E5 F0 FB 7A"))
+
+    def test_78fd_7911_matrix_layout_and_g_consumers(self):
+        first = bytes.fromhex("80 80 81 82" * 5)
+        second = bytes(20)
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(image[0x7060:0x7064], bytes.fromhex("78 FD 79 11"))
+                self.assertEqual(image[0x78FD:0x7911], first)
+                self.assertEqual(image[0x7911:0x7925], second)
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x3D7E:0x3D84],
+                         bytes.fromhex("90 70 60 12 53 2B"))
+        self.assertEqual(gasoline[0x3DA8:0x3DB3],
+                         bytes.fromhex("79 B1 F7 90 70 62 12 53 2B F5 58"))
+        self.assertEqual(gasoline[0x1891:0x1897],
+                         bytes.fromhex("79 B1 E7 30 E7 03"))
+        self.assertEqual(gasoline[0x1913:0x1919],
+                         bytes.fromhex("79 B1 E7 20 E7 03"))
+        self.assertEqual(gasoline[0x18FD:0x1900], bytes.fromhex("85 58 3C"))
+        self.assertEqual(gasoline[0x1906:0x1909], bytes.fromhex("85 58 3C"))
+
+    def test_78f9_rpm_curve_pointer_and_g_consumer(self):
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(image[0x705E:0x7060], bytes.fromhex("78 F9"))
+                self.assertEqual(image[0x78F9:0x78FD], bytes.fromhex("00 13 2A 3A"))
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x3D18:0x3D1E],
+                         bytes.fromhex("90 70 5E 12 53 29"))
+        self.assertEqual(gasoline[0x3D25:0x3D2A],
+                         bytes.fromhex("E5 6F 9A 92 2B"))
+
+    def test_7952_curve_pointer_layout_and_g_consumer(self):
+        curve = bytes.fromhex("63 02 5E 2F 10 22")
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(image[0x7068:0x706A], bytes.fromhex("79 52"))
+                self.assertEqual(image[0x7952:0x7958], curve)
+                call = "90 70 68 12 52 F2" if name == "G" or "SUN 8817" in name \
+                    else "90 70 68 12 53 B5"
+                self.assertEqual(image[0x1274:0x127A], bytes.fromhex(call))
+                self.assertEqual(image[0x1282:0x128A],
+                                 bytes.fromhex("B5 47 00 50 03 02 12 DE"))
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x1274:0x127A],
+                         bytes.fromhex("90 70 68 12 52 F2"))
+        self.assertEqual(gasoline[0x1282:0x128A],
+                         bytes.fromhex("B5 47 00 50 03 02 12 DE"))
+
+    def test_79c4_curve_pointer_layout_and_g_consumer(self):
+        curve = bytes.fromhex("47 04 3c 64 40 0c 83 82 7e 7c")
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(image[0x70D6:0x70D8], bytes.fromhex("79 C4"))
+                self.assertEqual(image[0x79C4:0x79CE], curve)
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x35B7:0x35BD],
+                         bytes.fromhex("90 70 D6 12 52 F2"))
+        self.assertEqual(gasoline[0x35BD:0x35C3],
+                         bytes.fromhex("EA B2 E7 78 E1 F2"))
+
+    def test_74a8_iram63_selector_and_ram46_reader_are_homologous(self):
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x7002:0x7004], bytes.fromhex("73 D4"))
+        self.assertEqual(gasoline[0x700A:0x700C], bytes.fromhex("74 A8"))
+        segment = gasoline[0x4773:0x4783]
+        reader = gasoline[0x48E0:0x4901]
+        curve = gasoline[0x74A8:0x74B2]
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                g_family = name == "G" or "SUN 8817" in name
+                expected_segment = bytearray(segment)
+                expected_reader = bytearray(reader)
+                if not g_family:
+                    expected_segment[4:6] = bytes.fromhex("53 3C")
+                    expected_reader[11] = 0xE4
+                segment_base = 0x4773 if g_family else 0x4830
+                reader_base = 0x48E0 if g_family else 0x499D
+                self.assertEqual(image[segment_base:segment_base + 16],
+                                 expected_segment)
+                self.assertEqual(image[reader_base:reader_base + 33],
+                                 expected_reader)
+                self.assertEqual(image[0x7002:0x7004], bytes.fromhex("73 D4"))
+                self.assertEqual(image[0x700A:0x700C], bytes.fromhex("74 A8"))
+                self.assertEqual(image[0x74A8:0x74B2], curve)
+                self.assertEqual(image[0x7276:0x7279],
+                                 bytes.fromhex("25 2E 30"))
+                self.assertEqual(image[0x7302], 0x02)
+                self.assertEqual(image[0x7309], 0x02)
+                self.assertEqual(image[0x7318], 0x10)
+                self.assertEqual(image[0x7358], 0x18)
+
+    def test_post_coolant_fallback_constant_and_reader_are_homologous(self):
+        gasoline = REFERENCE.read_bytes()
+        prefix = gasoline[0x4901:0x4914]
+        self.assertEqual(gasoline[0x727F], 0x2E)
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                reader = 0x4901 if name == "G" or "SUN 8817" in name \
+                    else 0x49BE
+                self.assertEqual(image[reader:reader + len(prefix)], prefix)
+                self.assertEqual(image[0x727F], 0x2E)
+
+    def test_air_segment_73c0_and_xram91_producer_are_homologous(self):
+        gasoline = REFERENCE.read_bytes()
+        self.assertEqual(gasoline[0x708E:0x7090], bytes.fromhex("73 C0"))
+        table = bytes.fromhex("62 06 31 1A 18 20 0F 18")
+        for name, path in (("G", REFERENCE),
+                           *((name, VARIANTS / name) for name in EXPECTED)):
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                base = 0x45F9 if name == "G" or "SUN 8817" in name \
+                    else 0x46B6
+                target = 0x5279 if base == 0x45F9 else 0x533C
+                self.assertEqual(image[0x708E:0x7090], bytes.fromhex("73 C0"))
+                self.assertEqual(image[0x73C0:0x73C8], table)
+                self.assertEqual(image[base:base + 4], bytes.fromhex("90 70 8E 12"))
+                self.assertEqual(image[base + 4:base + 6],
+                                 target.to_bytes(2, "big"))
+                self.assertEqual(image[base + 6:base + 16],
+                                 gasoline[0x45FF:0x4609])
+
+    def test_ram69_producer_parser_preserves_flag_and_output_bytes(self):
+        line = ("[RAM69-PATH] tick=123 PC=3B06 A=89 B=A5 DPTR=7200 "
+                "R2=00 U8C=89 RAM47=28 RAM69=89 flags2B=38 PSW=00")
+        self.assertEqual(parse_ram69_producer(line),
+                         {"U8C": "89", "RAM47": "28", "RAM69": "89",
+                          "flags2B": "38"})
+        self.assertIsNone(parse_ram69_producer(line.replace("PC=3B06", "PC=3AF1")))
+        with self.assertRaises(ValueError):
+            parse_ram69_producer(line.replace("flags2B=38", "flags2B=GG"))
+
     def test_matrix_selector_limit_consumers_map_across_code_revisions(self):
         gasoline = REFERENCE.read_bytes()
         for name, path in (("G", REFERENCE),
@@ -427,6 +760,138 @@ class CompareVariantsTests(unittest.TestCase):
                     end = int(version["candidate_end_exclusive"], 16)
                     self.assertEqual(len(bytes.fromhex(version["raw_hex"])), end - start)
 
+    def test_pointer_catalog_coverage_tracks_subviews_and_unknowns(self):
+        paths = [REFERENCE, *(VARIANTS / name for name in EXPECTED)]
+        directory = catalog_pointer_regions(paths)
+        curated = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json").read_text())
+        coverage = audit_pointer_catalog_coverage(directory, curated)
+        self.assertEqual(coverage["counts"],
+                         {"direct": 104, "contained": 8, "unclassified": 4})
+        rows = {row["pointer_slot"]: row for row in coverage["regions"]}
+        self.assertEqual(len(rows), 116)
+        for slot, entry in (("0x7024", "conditional_additive_curve_748a"),
+                            ("0x7026", "conditional_additive_curve_7494"),
+                            ("0x7028", "conditional_additive_curve_749e"),
+                            ("0x702C", "conditional_additive_curve_7476"),
+                            ("0x702E", "conditional_additive_curve_7480"),
+                            ("0x7074", "iram6a_bit0_clear_curve_797a"),
+                            ("0x7076", "iram6a_bit0_set_curve_7982")):
+            self.assertEqual(rows[slot]["status"], "direct")
+            self.assertEqual(rows[slot]["covered_by"], [entry])
+        self.assertEqual(rows["0x7006"]["covered_by"], ["constant_curve_741c"])
+        self.assertEqual(rows["0x7016"]["covered_by"],
+                         ["iram49_direct_index_table_74e4"])
+        self.assertEqual(rows["0x7036"]["covered_by"],
+                         ["constant_xram_f87f_table_7ae0"])
+        self.assertEqual(rows["0x7058"]["covered_by"],
+                         ["tps_derived_70_segment_7970"])
+        self.assertEqual(rows["0x7054"]["covered_by"],
+                         ["iram70_segment_7824"])
+        self.assertEqual(rows["0x7056"]["covered_by"],
+                         ["rpm_segment_782b"])
+        self.assertEqual(rows["0x70DE"]["covered_by"],
+                         ["rpm_segment_79e8_r1_gate"])
+        self.assertEqual(rows["0x709A"]["covered_by"],
+                         ["rpm_curve_to_f8a3_79a8"])
+        self.assertEqual(rows["0x70C6"]["covered_by"],
+                         ["upper_iram85_curve_79b0"])
+        self.assertEqual(rows["0x70C8"]["covered_by"],
+                         ["upper_iram86_curve_79ba"])
+        self.assertEqual(rows["0x70D6"]["covered_by"],
+                         ["iram47_curve_to_xram_f8e1_79c4"])
+        self.assertEqual(rows["0x7068"]["covered_by"],
+                         ["iram63_gate_curve_7952"])
+        self.assertEqual(rows["0x705E"]["covered_by"],
+                         ["rpm_curve_to_iram25_bit3_78f9"])
+        self.assertEqual(rows["0x7060"]["covered_by"],
+                         ["iram70_rpm_matrix_to_upper_b1_78fd"])
+        self.assertEqual(rows["0x7062"]["covered_by"],
+                         ["iram70_rpm_matrix_to_iram58_7911"])
+        self.assertEqual(rows["0x706A"]["covered_by"],
+                         ["rpm_curve_to_iram59_7958"])
+        self.assertEqual(rows["0x7010"]["covered_by"],
+                         ["t2i1_iram46_curve_74c6"])
+        for slot, entry in (("0x700C", "iram46_mode0_selector1_curve_74b2"),
+                            ("0x700E", "iram46_mode0_selector2_curve_74bc"),
+                            ("0x7012", "iram46_mode1_selector1_curve_74d0"),
+                            ("0x7014", "iram46_mode1_selector2_curve_74da")):
+            self.assertEqual(rows[slot]["covered_by"], [entry])
+        self.assertTrue(rows["0x7058"][
+            "selected_entry_fully_covers_candidate_interval"])
+        for slot, start in (("0x70E0", "0x79F0"), ("0x70E2", "0x7A20"),
+                            ("0x70E4", "0x7A50"), ("0x70E6", "0x7A80"),
+                            ("0x70E8", "0x7AB0")):
+            self.assertEqual(rows[slot]["status"], "direct")
+            self.assertTrue(rows[slot]["selected_entry_fully_covers_candidate_interval"])
+            self.assertEqual(next(row for row in directory["regions"]
+                                  if row["pointer_slot"] == slot)["versions"][0]["start"],
+                             start)
+        self.assertEqual((rows["0x7050"]["status"],
+                          rows["0x7050"]["covered_by"]),
+                         ("contained", ["lookup_table_7662"]))
+        self.assertEqual((rows["0x7032"]["status"],
+                          rows["0x7032"]["covered_by"]),
+                         ("direct", ["coolant_iram4f_curves_74ee"]))
+        self.assertFalse(rows["0x70C4"][
+            "selected_entry_fully_covers_candidate_interval"])
+        self.assertTrue(rows["0x70C4"]["catalog_fully_covers_candidate_interval"])
+        self.assertEqual(rows["0x70C4"]["outside_selected_entry_suffix"],
+                         {"start": "0x7F96", "end_exclusive": "0x8000"})
+        baseline_suffix = paths[0].read_bytes()[0x7F96:0x8000]
+        self.assertEqual([
+            sum(left != right for left, right in zip(
+                baseline_suffix, path.read_bytes()[0x7F96:0x8000]))
+            for path in paths[1:]], [6, 6, 74, 87, 87])
+        self.assertTrue(all(row["selected_entry_fully_covers_candidate_interval"]
+                            for row in coverage["regions"]
+                            if row["status"] in ("direct", "contained") and
+                            row["pointer_slot"] != "0x70C4"))
+        self.assertTrue(all(row["same_bytes_all_roms"] and
+                            row["different_bytes_vs_G"] == [0] * 5
+                            for row in coverage["regions"]
+                            if row["status"] == "unclassified"))
+
+    def test_provisional_pointer_catalog_preserves_all_unclassified_bytes(self):
+        paths = [REFERENCE, *(VARIANTS / name for name in EXPECTED)]
+        directory = catalog_pointer_regions(paths)
+        curated = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json").read_text())
+        coverage = audit_pointer_catalog_coverage(directory, curated)
+        provisional = catalog_provisional_pointer_targets(directory, coverage)
+        expected = {row["pointer_slot"] for row in coverage["regions"]
+                    if row["status"] == "unclassified"}
+        self.assertEqual(provisional["count"], len(expected))
+        self.assertEqual({row["pointer_slot"] for row in provisional["candidates"]},
+                         expected)
+        images = {str(path.relative_to(ROOT)): path.read_bytes() for path in paths}
+        for row in provisional["candidates"]:
+            slot = int(row["pointer_slot"], 16)
+            self.assertIsNone(row["dimensions"])
+            self.assertIsNone(row["physical_function"])
+            for version in row["versions"]:
+                image = images[version["rom"]]
+                start = int(version["start"], 16)
+                end = int(version["candidate_end_exclusive"], 16)
+                raw = bytes.fromhex(version["raw_hex"])
+                self.assertEqual(int.from_bytes(image[slot:slot + 2], "big"), start)
+                self.assertEqual(raw, image[start:end])
+                self.assertEqual(version["rom_sha256"], hashlib.sha256(image).hexdigest())
+                self.assertEqual(version["byte_statistics"]["ff_count"], raw.count(0xFF))
+
+    def test_r1_gate_lookup_windows_are_nonzero_even_with_index_spill(self):
+        paths = [REFERENCE, *(VARIANTS / name for name in EXPECTED)]
+        starts = {0x70E0: 0x79F0, 0x70E2: 0x7A20, 0x70E4: 0x7A50,
+                  0x70E6: 0x7A80, 0x70E8: 0x7AB0}
+        for path in paths:
+            image = path.read_bytes()
+            with self.subTest(rom=path.name):
+                for slot, expected in starts.items():
+                    start = int.from_bytes(image[slot:slot + 2], "big")
+                    self.assertEqual(start, expected)
+                    span = image[start:start + 96]  # R4 can reach 15*6+5.
+                    self.assertEqual(len(span), 96)
+                    self.assertGreater(min(span), 0)
+                    self.assertEqual(span.count(0), 0)
+
     def test_diagnostic_byte_order_and_collection_selector(self):
         paths = [REFERENCE, *(VARIANTS / name for name in EXPECTED)]
         fault, first, second = catalog_diagnostics(paths)["tables"]
@@ -463,10 +928,27 @@ class CompareVariantsTests(unittest.TestCase):
         for name, image in images.items():
             self.assertEqual(catalog["rom_sha256"][name], hashlib.sha256(image).hexdigest())
         for table in catalog["tables"]:
+            required = ("id", "start", "end_exclusive", "pointer_slot",
+                        "dimensions", "format", "axes", "consumer", "output",
+                        "confidence", "open_questions", "tests")
+            for field in required:
+                self.assertIn(field, table, (table.get("id"), field))
+            self.assertTrue(table["confidence"], table["id"])
+            self.assertIn("physical_function", table["confidence"], table["id"])
+            self.assertIn(table["confidence"]["physical_function"],
+                          {"unknown", "not_applicable", "unverified",
+                           "scanner_hypothesis", "probable RPM axis"}, table["id"])
+            self.assertIsInstance(table["open_questions"], list)
+            self.assertIsInstance(table["tests"], list)
             start = int(table["start"], 16)
             end = int(table["end_exclusive"], 16)
             self.assertGreater(end, start)
+            cells = math.prod(table["dimensions"])
+            self.assertIn(end - start - cells, (0, 2), table["id"])
             for name, image in images.items():
+                if end - start == cells + 2:
+                    self.assertEqual(image[start + 1], table["dimensions"][0],
+                                     (table["id"], name, "segment count"))
                 raw_hex = table.get(f"raw_{name}_hex")
                 if raw_hex:
                     self.assertEqual(bytes.fromhex(raw_hex), image[start:end],
@@ -489,7 +971,76 @@ class CompareVariantsTests(unittest.TestCase):
         self.assertEqual(images["G"][0x755C:0x755E], b"\x6f\x0b")
         self.assertEqual(images["G"][0x7569:0x756B], b"\x6f\x05")
 
-    def test_curated_catalog_covers_changed_pointer_data_before_rom_tail(self):
+    def test_unclassified_nonpointer_intervals_preserve_variant_bytes(self):
+        catalog = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json")
+                             .read_text())
+        images = dict(zip(("G", "A", "A+", "S88", "S37", "S36"),
+                          [REFERENCE.read_bytes(),
+                           *((VARIANTS / name).read_bytes() for name in EXPECTED)]))
+        intervals = {entry["id"]: entry for entry in
+                     catalog["unclassified_nonpointer_intervals"]}
+        self.assertEqual(set(intervals), {"opaque_6eab_6fca",
+                                          "opaque_7199_71f0", "opaque_722c"})
+        first = intervals["opaque_6eab_6fca"]
+        second = intervals["opaque_7199_71f0"]
+        third = intervals["opaque_722c"]
+        self.assertEqual((int(first["start"], 16), int(first["end_exclusive"], 16)),
+                         (0x6EAB, 0x6FCA))
+        self.assertEqual((int(second["start"], 16), int(second["end_exclusive"], 16)),
+                         (0x7199, 0x71F0))
+        self.assertEqual((int(third["start"], 16), int(third["end_exclusive"], 16)),
+                         (0x722C, 0x722D))
+        for name, image in images.items():
+            self.assertEqual(hashlib.sha256(image).hexdigest(),
+                             catalog["rom_sha256"][name])
+            targets = {int.from_bytes(image[slot:slot + 2], "big")
+                       for slot in range(0x7002, 0x70EA, 2)}
+            for entry in intervals.values():
+                start, end = int(entry["start"], 16), int(entry["end_exclusive"], 16)
+                self.assertFalse(any(start <= target < end for target in targets))
+            left, right = image[0x6EAB:0x6FCA], image[0x7199:0x71F0]
+            self.assertEqual(image[0x722C], 0 if name in ("G", "S88")
+                             else 0x9C, name)
+            self.assertEqual(left, b"\xCB" * 286 + b"\xD0" if name in
+                             ("A", "A+") else b"\xFF" * 287, name)
+            if name in ("S37", "S36"):
+                self.assertEqual({byte: right.count(byte) for byte in set(right)},
+                                 {0x7F: 62, 0x77: 20, 0x76: 1, 0x67: 4})
+            else:
+                self.assertEqual(right, b"\xFF" * 87, name)
+        self.assertEqual(images["S37"][0x7199:0x71F0],
+                         images["S36"][0x7199:0x71F0])
+
+    def test_catalog_covers_changed_data_pages(self):
+        catalog = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json")
+                             .read_text())
+        images = [REFERENCE.read_bytes(),
+                  *((VARIANTS / name).read_bytes() for name in EXPECTED)]
+        self.assertTrue(all(len(image) == 32768 for image in images))
+        changed = {offset for offset in range(0x6E00, 0x8000)
+                   if len({image[offset] for image in images}) > 1}
+        self.assertEqual(len(changed), 2399)
+        entries = catalog["tables"] + catalog["unclassified_nonpointer_intervals"]
+        intervals = {entry["id"]: (int(entry["start"], 16),
+                                   int(entry["end_exclusive"], 16))
+                     for entry in entries if "start" in entry and
+                     "end_exclusive" in entry}
+        self.assertEqual(intervals["kline_identification_ascii_6e00"],
+                         (0x6E00, 0x6E18))
+        self.assertEqual(intervals["directory_prefix_pointer_7000"],
+                         (0x7000, 0x7002))
+        self.assertEqual(intervals["a_matrix_state_bounds_72df"],
+                         (0x72DF, 0x72EA))
+        covered = set().union(*(set(range(start, end)) for start, end in
+                                intervals.values()))
+        self.assertEqual(changed - covered, set())
+        for image in images:
+            self.assertEqual(image[0x6E00:0x6E0C].decode("ascii")[:9],
+                             "0261 203 ")
+            self.assertEqual(int.from_bytes(image[0x7000:0x7002], "big"),
+                             0x56B4 if image[0x722C] == 0 else 0x5777)
+
+    def test_catalog_accounts_for_changed_pointer_tail_as_unknown_and_boot(self):
         catalog = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json").read_text())
         paths = [REFERENCE, *(VARIANTS / name for name in EXPECTED)]
         images = [path.read_bytes() for path in paths]
@@ -505,10 +1056,36 @@ class CompareVariantsTests(unittest.TestCase):
                 changed.update(address for address in range(start, end)
                                if images[0][address] != images[index][address])
         self.assertTrue(changed)
-        self.assertFalse({address for address in changed - covered
-                          if address < 0x7F9D})
-        self.assertEqual(len(changed - covered), 87)
-        self.assertEqual(min(changed - covered), 0x7F9F)
+        self.assertFalse(changed - covered)
+        tail_changed = {address for address in changed if address >= 0x7F9D}
+        self.assertEqual((len(tail_changed), min(tail_changed)), (87, 0x7F9F))
+        by_id = {table["id"]: table for table in catalog["tables"]}
+        self.assertEqual((by_id["rom_tail_unclassified_7f9d"]["start"],
+                          by_id["rom_tail_unclassified_7f9d"]["end_exclusive"],
+                          by_id["boot_xram_constants_7ff6"]["start"],
+                          by_id["boot_xram_constants_7ff6"]["end_exclusive"]),
+                         ("0x7F9D", "0x7FF6", "0x7FF6", "0x8000"))
+        self.assertIsNone(by_id["rom_tail_unclassified_7f9d"]["consumer"])
+
+    def test_unclassified_rom_tail_gap_has_variant_specific_raw_patterns(self):
+        paths = [("G", REFERENCE),
+                 *((name, VARIANTS / name) for name in EXPECTED)]
+        s88_gap = (b"\xff" * 8 + b"\x11" * 4 + b"\x06" * 3 +
+                   b"\x11\x10" + b"\x11" * 65 + b"\xff")
+        self.assertEqual(len(s88_gap), 83)
+        for name, path in paths:
+            with self.subTest(rom=name):
+                image = path.read_bytes()
+                self.assertEqual(len(image), 32768)
+                if name == EXPECTED[2]:
+                    expected = s88_gap
+                elif name in EXPECTED[3:]:
+                    expected = b"\xff" * 2 + b"\x00" * 81
+                else:
+                    expected = b"\xff" * 83
+                self.assertEqual(image[0x7F9D:0x7FF0], expected)
+                self.assertEqual(image[0x7FF0:0x7FF6],
+                                 bytes.fromhex("ff ff ff 07 45 ff"))
 
     def test_curated_catalog_test_references_exist(self):
         catalog = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json").read_text())
@@ -525,8 +1102,15 @@ class CompareVariantsTests(unittest.TestCase):
         for table in catalog["tables"]:
             self.assertTrue(table.get("tests"), table["id"])
             for reference in table["tests"]:
-                self.assertIn(reference.split(" (", 1)[0], known,
-                              (table["id"], reference))
+                name = reference.split(" (", 1)[0]
+                if name.endswith(".sh"):
+                    self.assertEqual(Path(name).name, name,
+                                     (table["id"], reference))
+                    script = ROOT / name
+                    self.assertTrue(script.is_file() and os.access(script, os.X_OK),
+                                    (table["id"], reference))
+                else:
+                    self.assertIn(name, known, (table["id"], reference))
 
     def test_expanded_catalog_separates_table_bytes_from_code_revision(self):
         catalog = json.loads((ROOT / "docs" / "MA17_CALIBRATION_CATALOG.json").read_text())
@@ -599,6 +1183,793 @@ class CompareVariantsTests(unittest.TestCase):
 
 
 class VariantTraceTests(unittest.TestCase):
+    def test_g_s88_full_boot_transmits_five_serial_key_bytes(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware_images = (
+            ("G", REFERENCE),
+            ("S88", VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"))
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("MA17_")}
+        expected = ["55", "46", "85", "89", "13", "BC"]
+        with tempfile.TemporaryDirectory() as directory:
+            for name, firmware in firmware_images:
+                with self.subTest(rom=name):
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--crank-immediate",
+                         "--rpm", "1000", "--seconds", "9",
+                         "--inject-after", "1", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=15, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    log = (output / "emulator-trace.log").read_text()
+                    transmitted = re.findall(
+                        r"\[PTY-TX\] Byte 0x([0-9A-F]{2}) written "
+                        r"to PTY \(result=1\)", log)
+                    self.assertGreaterEqual(len(transmitted), len(expected))
+                    self.assertEqual(transmitted[:len(expected)], expected)
+
+    def test_movc_time_buckets_preserve_total_reads_and_rom_addresses(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("MA17_")}
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--trace-movc", "--movc-bucket-ticks", "100000",
+                 "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                 "--stop-ticks", "400000", "--seconds", "15",
+                 "--output-dir", directory],
+                capture_output=True, text=True, env=environment,
+                timeout=20, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+            report = json.loads((Path(directory) / "execution.json").read_text())
+            observation = report["movc_observation"]
+            self.assertEqual(observation["bucket_ticks"], 100000)
+            self.assertEqual(sum(row["count"] for row in observation["buckets"]),
+                             observation["total_reads"])
+            self.assertEqual({row["start_tick"] for row in
+                              observation["buckets"]},
+                             {0, 100000, 200000, 300000})
+            image = REFERENCE.read_bytes()
+            self.assertTrue(all(int(row["address"], 16) < len(image)
+                                for row in observation["buckets"]))
+            invalid = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--movc-bucket-ticks", "100000", "--output-dir", directory],
+                capture_output=True, text=True, env=environment,
+                timeout=5, check=False)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("requires --trace-movc", invalid.stderr)
+
+    def test_coolant_sweep_buckets_follow_adc_steps_in_original_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        reports = {}
+        edges = {}
+        overrides = {}
+        sweep_steps = "1200000:180,1700000:200,2200000:220,2700000:200"
+        with tempfile.TemporaryDirectory() as directory:
+            for name, steps in (("control", None),
+                                ("sweep", sweep_steps),
+                                ("a_cell", sweep_steps),
+                                ("cell_7523", sweep_steps),
+                                ("cell_752d", sweep_steps)):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update(MA17_ADC10_CH2="400", MA17_ADC10_CH3="160",
+                                   MA17_ADC_CH7="63")
+                if steps:
+                    environment["MA17_ADC10_STEP_CH3"] = steps
+                if name == "a_cell":
+                    environment["MA17_OVERRIDE_MOVC_AT"] = "5333:7451:4D"
+                if name == "cell_7523":
+                    environment["MA17_OVERRIDE_MOVC_AT"] = "5333:7523:B5"
+                if name == "cell_752d":
+                    environment["MA17_OVERRIDE_MOVC_AT"] = "5333:752D:A2"
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--movc-bucket-ticks", "100000",
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                     "--stop-ticks", "3200000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                reports[name] = json.loads((output / "execution.json").read_text())
+                log = (output / "emulator-trace.log").read_text()
+                edges[name] = re.findall(
+                    r"\[CC3-PIN\] tick=(\d+).*?value=([01])", log)
+                overrides[name] = "PC=5333 mapped=7451 original=33 supplied=4D" in log
+        control, sweep = reports["control"], reports["sweep"]
+        expected_hash = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
+        self.assertEqual(control["firmware_sha256"], expected_hash)
+        self.assertEqual(sweep["firmware_sha256"], expected_hash)
+        def before(report):
+            counts = Counter()
+            for row in report["movc_observation"]["buckets"]:
+                if row["start_tick"] < 1200000:
+                    counts[row["address"]] += row["count"]
+            return counts
+        self.assertEqual(before(sweep), before(control))
+        self.assertEqual(sum(before(sweep).values()), 73588)
+        first = {address: min(row["start_tick"] for row in
+                              sweep["movc_observation"]["buckets"]
+                              if row["address"] == address)
+                 for address in ("7451", "7266", "79D1")}
+        self.assertEqual(first, {"7451": 1200000, "7266": 1700000,
+                                 "79D1": 2000000})
+        self.assertNotIn("7266", {row["address"] for row in
+                                    control["movc_observation"]["buckets"]})
+        self.assertEqual([row["after"] for row in
+                          sweep["sensor_ram_observation"]["63"][-4:]],
+                         ["2D", "32", "37", "32"])
+        donor = reports["a_cell"]
+        self.assertEqual(donor["firmware_sha256"], expected_hash)
+        self.assertTrue(overrides["a_cell"])
+        self.assertEqual(edges["a_cell"], edges["sweep"])
+        self.assertEqual(len(edges["sweep"]), 203)
+        self.assertEqual([row["after"] for row in
+                          sweep["engine_ram_observation"]["4D"][-4:]],
+                         ["2A", "2B", "2D", "2B"])
+        self.assertEqual([row["after"] for row in
+                          donor["engine_ram_observation"]["4D"][-4:]],
+                         ["2B", "30", "37", "30"])
+        curve79, curve7b = reports["cell_7523"], reports["cell_752d"]
+        self.assertEqual(curve79["firmware_sha256"], expected_hash)
+        self.assertEqual(curve7b["firmware_sha256"], expected_hash)
+        self.assertEqual(edges["cell_7523"], edges["sweep"])
+        self.assertEqual([row["after"] for row in
+                          curve79["engine_ram_observation"]["79"][-4:]],
+                         ["77", "7F", "8C", "7F"])
+        self.assertEqual([row["after"] for row in
+                          curve7b["engine_ram_observation"]["7B"][-4:]],
+                         ["7D", "82", "89", "82"])
+        self.assertEqual([level for _, level in edges["cell_752d"]],
+                         [level for _, level in edges["sweep"]])
+        self.assertEqual(sum(left != right for left, right in
+                             zip(edges["cell_752d"], edges["sweep"])), 5)
+
+    def test_s88_phase_and_upper_a4_split_across_four_original_movc_bytes(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        s88 = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        arms = (("G", REFERENCE, None), ("S88", s88, None),
+                ("G_7580", REFERENCE, "5289:7580:25"),
+                ("G_7B45", REFERENCE, "5289:7B45:0D"),
+                ("G_both", REFERENCE, "5289:7580:25,5289:7B45:0D"),
+                ("G_four", REFERENCE, "5289:7580:25,5289:7B45:0D,"
+                 "532F:7B46:A1,5333:7B47:A1"))
+        reports, edges = {}, {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, firmware, override in arms:
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update(
+                    MA17_ADC10_CH2="400", MA17_ADC10_CH3="160",
+                    MA17_ADC_CH7="63", MA17_ADC10_STEP_CH3=(
+                        "1200000:180,1700000:200,2200000:220,2700000:200"))
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--firmware", str(firmware), "--trace-movc",
+                     "--movc-bucket-ticks", "100000", "--no-kline-inject",
+                     "--crank-immediate", "--rpm", "1000",
+                     "--stop-ticks", "3200000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                reports[name] = json.loads((output / "execution.json").read_text())
+                edges[name] = re.findall(
+                    r"\[CC3-PIN\] tick=(\d+).*?value=([01])",
+                    (output / "emulator-trace.log").read_text())
+                self.assertEqual(reports[name]["firmware_sha256"],
+                                 hashlib.sha256(firmware.read_bytes()).hexdigest())
+        self.assertEqual(len(edges["S88"]), 203)
+        for name in ("G", "G_7580", "G_7B45"):
+            self.assertNotEqual(edges[name], edges["S88"], name)
+        for name in ("G_both", "G_four"):
+            self.assertEqual(edges[name], edges["S88"], name)
+            self.assertEqual(reports[name]["pc_coverage"],
+                             reports["S88"]["pc_coverage"])
+            self.assertEqual(reports[name]["movc_observation"]["buckets"],
+                             reports["S88"]["movc_observation"]["buckets"])
+        self.assertNotEqual(reports["G_both"]["engine_ram_observation"]["A4"],
+                            reports["S88"]["engine_ram_observation"]["A4"])
+        for key in ("sensor_ram_observation", "engine_ram_observation",
+                    "output_latches", "cc3_observation"):
+            self.assertEqual(reports["G_four"][key], reports["S88"][key], key)
+        raw = {row["mapped"]: row["value"] for row in
+               reports["G_four"]["movc_observation"]["reads"]
+               if row["mapped"] in ("7580", "7B45", "7B46", "7B47")}
+        self.assertEqual(raw, {"7580": "10", "7B45": "05",
+                               "7B46": "99", "7B47": "99"})
+
+    def test_s88_phase_cell_pair_reproduces_adc3_sweep_at_1500_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        s88 = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        arms = (("G", REFERENCE, None), ("S88", s88, None),
+                ("G_7580", REFERENCE, "5289:7580:25"),
+                ("G_7B45", REFERENCE, "5289:7B45:0D"),
+                ("G_both", REFERENCE, "5289:7580:25,5289:7B45:0D"),
+                ("G_four", REFERENCE, "5289:7580:25,5289:7B45:0D,"
+                 "532F:7B46:A1,5333:7B47:A1"))
+        reports, edges, sensor_updates, cc3_entries, resume_pcs = {}, {}, {}, {}, {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, firmware, override in arms:
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update(
+                    MA17_ADC10_CH2="400", MA17_ADC10_CH3="160",
+                    MA17_ADC_CH7="63", MA17_ADC10_STEP_CH3=(
+                        "900000:180,1300000:200,1700000:220,2100000:200"),
+                    MA17_TRACE_PC_WINDOW="901820:901880")
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--firmware", str(firmware), "--trace-movc",
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "1500",
+                     "--stop-ticks", "2400000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                reports[name] = json.loads((output / "execution.json").read_text())
+                trace = (output / "emulator-trace.log").read_text()
+                edges[name] = re.findall(
+                    r"\[CC3-PIN\] tick=(\d+).*?value=([01])", trace)
+                sensor_updates[name] = re.findall(
+                    r"\[SENSOR-RAM\] tick=(\d+) addr=63 value=28->2D", trace)
+                cc3_entries[name] = re.findall(
+                    r"\[CC3-ENTRY\] instr=923099 .*?IRAM14_15=([0-9A-F]{4})", trace)
+                resume_pcs[name] = re.findall(
+                    r"\[PC-WINDOW\] tick=901853 PC=([0-9A-F]{4})", trace)
+                self.assertEqual(reports[name]["firmware_sha256"],
+                                 hashlib.sha256(firmware.read_bytes()).hexdigest())
+        reference_edges = edges["S88"]
+        self.assertEqual(len(reference_edges), 226)
+        self.assertEqual(edges["G"][76], reference_edges[76])
+        self.assertEqual((int(edges["G"][77][0]) - int(edges["G"][76][0]),
+                          int(reference_edges[77][0]) -
+                          int(reference_edges[76][0])), (4901, 4765))
+        self.assertEqual(edges["G_7580"][76:78], reference_edges[76:78])
+        self.assertEqual({name: sensor_updates[name] for name in
+                          ("G", "S88", "G_7580", "G_both")},
+                         {"G": ["903126"], "S88": ["923594"],
+                          "G_7580": ["923597"], "G_both": ["923594"]})
+        self.assertEqual({name: cc3_entries[name] for name in
+                          ("G", "S88", "G_7580", "G_both")},
+                         {"G": ["04CC"], "S88": ["04AA"],
+                          "G_7580": ["04AA"], "G_both": ["04AA"]})
+        self.assertEqual({name: resume_pcs[name] for name in
+                          ("G", "S88", "G_7580")},
+                         {"G": ["5246"], "S88": ["4697"],
+                          "G_7580": ["468E"]})
+        self.assertEqual({name: sum(a == b for a, b in
+                                   zip(edges[name], reference_edges))
+                          for name in ("G", "G_7580", "G_7B45", "G_both")},
+                         {"G": 215, "G_7580": 221,
+                          "G_7B45": 211, "G_both": 226})
+        self.assertEqual(edges["G_four"], reference_edges)
+        self.assertEqual(reports["G_both"]["pc_coverage"],
+                         reports["S88"]["pc_coverage"])
+        self.assertNotEqual(reports["G_both"]["engine_ram_observation"]["A4"],
+                            reports["S88"]["engine_ram_observation"]["A4"])
+        self.assertEqual(reports["G_four"]["engine_ram_observation"],
+                         reports["S88"]["engine_ram_observation"])
+
+    def test_s88_phase_cell_pair_reproduces_adc3_sweep_at_3000_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        s88 = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        arms = (("G", REFERENCE, None), ("S88", s88, None),
+                ("G_7580", REFERENCE, "5289:7580:25"),
+                ("G_7B45", REFERENCE, "5289:7B45:0D"),
+                ("G_both", REFERENCE, "5289:7580:25,5289:7B45:0D"),
+                ("G_four", REFERENCE, "5289:7580:25,5289:7B45:0D,"
+                 "532F:7B46:A1,5333:7B47:A1"))
+        reports, edges = {}, {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, firmware, override in arms:
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update(
+                    MA17_ADC10_CH2="400", MA17_ADC10_CH3="160",
+                    MA17_ADC_CH7="63", MA17_ADC10_STEP_CH3=(
+                        "900000:180,1300000:200,1700000:220,2100000:200"))
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--firmware", str(firmware), "--trace-movc",
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "3000",
+                     "--stop-ticks", "2400000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                reports[name] = json.loads((output / "execution.json").read_text())
+                edges[name] = re.findall(
+                    r"\[CC3-PIN\] tick=(\d+).*?value=([01])",
+                    (output / "emulator-trace.log").read_text())
+                self.assertEqual(reports[name]["firmware_sha256"],
+                                 hashlib.sha256(firmware.read_bytes()).hexdigest())
+        reference_edges = edges["S88"]
+        self.assertEqual(len(reference_edges), 456)
+        self.assertEqual({name: sum(a == b for a, b in
+                                   zip(edges[name], reference_edges))
+                          for name in ("G", "G_7580", "G_7B45", "G_both")},
+                         {"G": 427, "G_7580": 435,
+                          "G_7B45": 425, "G_both": 456})
+        self.assertEqual(edges["G_four"], reference_edges)
+        self.assertEqual(reports["G_both"]["movc_observation"]["total_reads"],
+                         reports["S88"]["movc_observation"]["total_reads"])
+        self.assertNotEqual(reports["G_both"]["engine_ram_observation"]["A4"],
+                            reports["S88"]["engine_ram_observation"]["A4"])
+        self.assertEqual(reports["G_four"]["engine_ram_observation"],
+                         reports["S88"]["engine_ram_observation"])
+
+    def test_7958_ordinate_changes_first_g_iram59_write(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        hashes = set()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, ordinate, bounded in (
+                    ("native", None, "FF", "05"),
+                    ("ordinate_40", "532F:795D:40", "40", "01")):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update({f"MA17_ADC_CH{i}": str(value) for i, value
+                                    in enumerate((120, 130, 100, 4, 90, 40, 95, 63))})
+                environment["MA17_TRACE_CURVE_7958_PATH"] = "1"
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                     "--rpm", "1000", "--stop-ticks", "120000",
+                     "--seconds", "10", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=15, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                reads = [row for row in report["movc_observation"]["reads"]
+                         if row["pc"] == "532F" and row["address"] == "795D"]
+                self.assertEqual(len(reads), 1)
+                self.assertEqual(reads[0]["value"], "FF")
+                lines = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                         if line.startswith("[CURVE7958-PATH]")]
+                self.assertGreaterEqual(len(lines), 4)
+                self.assertIn(f"PC=15B5 A={ordinate} R1=00 R2={ordinate}", lines[0])
+                self.assertIn(f"PC=15C3 A={bounded}", lines[1])
+                self.assertIn(f"PC=15CF A={bounded} R1=00 R2=00 R3={bounded}", lines[2])
+                self.assertIn(f"PC=1644 A={bounded} R1=00 R2=00 R3={bounded}",
+                              lines[3])
+                self.assertEqual(report["engine_ram_observation"]["59"][0]["after"],
+                                 bounded)
+                hashes.add(report["emulator_sha256"])
+        self.assertEqual(len(hashes), 1)
+
+    def test_7958_cc3_pulses_are_mediated_by_early_59_5a_reads(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        pulse = re.compile(r"\[CC3-PIN\] tick=(\d+) PC=[0-9A-F]+ value=([01])")
+        widths = {}
+        published = {}
+        hashes = set()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, donor, supply in (
+                    ("native", False, None),
+                    ("donor", True, None),
+                    ("late_supply", True, "1D5C:59:05,1D5E:5A:00"),
+                    ("early_59", True, "1C99:59:05"),
+                    ("early_5a", True, "1C9B:5A:00"),
+                    ("early_both", True, "1C99:59:05,1C9B:5A:00"),
+                    ("native_early_supply", False,
+                     "1C99:59:05,1C9B:5A:00")):
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({f"MA17_ADC_CH{i}": str(value)
+                                        for i, value in enumerate(
+                                            (120, 130, 100, 4, 90, 40, 95, 63))})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:795D:40"
+                    if supply:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = supply
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                         "--rpm", "1000",
+                         "--stop-ticks", "400000", "--seconds", "10",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=15, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    hashes.add(report["emulator_sha256"])
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    log = (output / "emulator-trace.log").read_text()
+                    published[name] = next(
+                        re.search(r"R2=([0-9A-F]{2}) R3=([0-9A-F]{2})", line)
+                        for line in log.splitlines()
+                        if line.startswith("[INJECTION-FLOW]") and
+                        "PC=1ED3" in line and "RAM63=04" in line)
+                    edges = [(int(tick), value) for tick, value in pulse.findall(log)]
+                    widths[name] = [edges[i + 1][0] - edges[i][0]
+                                    for i in range(len(edges) - 1)
+                                    if edges[i][1] == "0" and edges[i + 1][1] == "1"][:3]
+                    if supply:
+                        for entry in supply.split(","):
+                            pc, address, _ = entry.split(":")
+                            self.assertIn(
+                                f"[IRAM-READ-OVERRIDE] PC={pc} addr={address}", log)
+        self.assertEqual(len(hashes), 1)
+        self.assertEqual(widths["native"], [5381, 5380, 5380])
+        self.assertEqual(widths["native_early_supply"], widths["native"])
+        self.assertEqual(widths["donor"], [4373, 4372, 4372])
+        self.assertEqual(widths["late_supply"], widths["donor"])
+        self.assertEqual(widths["early_59"], [5397, 5396, 5396])
+        self.assertEqual(widths["early_5a"], [4357, 4356, 4356])
+        self.assertEqual(widths["early_both"], widths["native"])
+        for name, pair in (("native", ("05", "44")),
+                           ("donor", ("04", "48")),
+                           ("early_59", ("05", "48")),
+                           ("early_5a", ("04", "44")),
+                           ("early_both", ("05", "44"))):
+            self.assertEqual(published[name].groups()[::-1], pair)
+
+    def test_7958_early_cc3_mediation_repeats_across_rpm_and_adc_states(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        pulse = re.compile(r"\[CC3-PIN\] tick=(\d+) PC=[0-9A-F]+ value=([01])")
+        widths = {}
+        hashes = set()
+        scenarios = (
+            (3000, 130, 4, 95, "1C99:59:05,1C9B:5A:00",
+             [5381, 5381, 5381], [4373, 4373, 4373]),
+            (1000, 40, 4, 95, "1C99:59:05,1C9B:5A:00",
+             [6309, 6308, 6308], [5301, 5300, 5300]),
+            (1000, 130, 40, 95, "1C99:59:06,1C9B:5A:00",
+             [6405, 6404, 6404], [4765, 4764, 4764]),
+            (1000, 130, 4, 180, "1C99:59:06,1C9B:5A:7C",
+             [6901, 6900, 6900], [3973, 3972, 3972]))
+        with tempfile.TemporaryDirectory() as directory:
+            for scenario, donor, supply in (
+                    (scenario, donor, supply)
+                    for scenario in scenarios
+                    for donor, supply in ((False, False), (True, False),
+                                          (True, True), (False, True))):
+                rpm, adc1, adc3, adc6, supplied, _, _ = scenario
+                with self.subTest(rpm=rpm, adc1=adc1, adc3=adc3, adc6=adc6,
+                                  donor=donor,
+                                  supply=supply):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({f"MA17_ADC_CH{i}": str(value)
+                                        for i, value in enumerate(
+                                            (120, adc1, 100, adc3, 90, 40, adc6, 63))})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:795D:40"
+                    if supply:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = supplied
+                    output = Path(directory) / (
+                        f"{rpm}_{adc1}_{adc3}_{adc6}_{donor}_{supply}")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                         "--rpm", str(rpm), "--stop-ticks", "1000000",
+                         "--seconds", "10", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    hashes.add(report["emulator_sha256"])
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    edges = [(int(tick), value) for tick, value in pulse.findall(
+                        (output / "emulator-trace.log").read_text())]
+                    widths[rpm, adc1, adc3, adc6, donor, supply] = [
+                        edges[i + 1][0] - edges[i][0]
+                        for i in range(len(edges) - 1)
+                        if edges[i][1] == "0" and edges[i + 1][1] == "1"][:3]
+        self.assertEqual(len(hashes), 1)
+        for scenario in scenarios:
+            rpm, adc1, adc3, adc6 = scenario[:4]
+            native, donor = scenario[-2:]
+            self.assertEqual(widths[rpm, adc1, adc3, adc6, False, False], native)
+            self.assertEqual(widths[rpm, adc1, adc3, adc6, False, True], native)
+            self.assertEqual(widths[rpm, adc1, adc3, adc6, True, False], donor)
+            self.assertEqual(widths[rpm, adc1, adc3, adc6, True, True], native)
+
+    def test_78fd_b1_reader_branch_and_7911_58_reader_reachability(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        hashes = set()
+        cases = (("native", None, "00", "00", False),
+                 ("first_40", "532F:78FD:40", "D0", "00", True),
+                 ("second_40", "532F:7911:40", "00", "30", False))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, upper_b1, ram58, extra_branch in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({f"MA17_ADC_CH{i}": str(value) for i, value
+                                        in enumerate((120, 130, 100, 4, 90, 40, 95, 63))})
+                    environment["MA17_TRACE_B1_58_READERS"] = "1"
+                    if override:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = override
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                         "--rpm", "1000", "--stop-ticks", "1400000",
+                         "--seconds", "20", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=25, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    lines = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                             if line.startswith("[B1-58-READER]")]
+                    self.assertEqual(sum("PC=1894" in line for line in lines), 16)
+                    self.assertEqual(sum("PC=1897" in line for line in lines),
+                                     16 if extra_branch else 0)
+                    self.assertIn(f"PC=1894 A={upper_b1} U_B1={upper_b1} "
+                                  f"RAM58={ram58} RAM3C=00", lines[0])
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertNotIn("18FD", hits)
+                    self.assertNotIn("1906", hits)
+                    hashes.add(report["emulator_sha256"])
+        self.assertEqual(len(hashes), 1)
+
+    def test_78fd_7911_matrix_cells_write_separate_iram_destinations(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        hashes = set()
+        cases = (("native", None, "80", "00", "00"),
+                 ("first_40", "532F:78FD:40", "50", "D0", "00"),
+                 ("second_40", "532F:7911:40", "80", "00", "30"))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, r2, upper_b1, ram58 in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment["MA17_TRACE_78FD_7911_OUTPUTS"] = "1"
+                    if override:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = override
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                         "--rpm", "1000", "--stop-ticks", "600000",
+                         "--seconds", "15", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    for address, original in (("78FD", "80"), ("7911", "00")):
+                        reads = [row for row in report["movc_observation"]["reads"]
+                                 if row["pc"] == "532F" and row["address"] == address]
+                        self.assertTrue(reads)
+                        self.assertTrue(all(row["value"] == original for row in reads))
+                    lines = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                             if line.startswith("[MATRIX78FD-7911]")]
+                    self.assertGreaterEqual(len(lines), 4)
+                    self.assertIn(f"PC=3D84 A={r2} R2={r2}", lines[0])
+                    self.assertIn(f"PC=3DAB A={upper_b1} R2={upper_b1}", lines[1])
+                    self.assertIn(f"U_B1={upper_b1}", lines[1])
+                    self.assertIn(f"PC=3DB3 A={ram58} R2={ram58}", lines[3])
+                    self.assertIn(f"RAM58={ram58} U_B1={upper_b1}", lines[3])
+                    hashes.add(report["emulator_sha256"])
+        self.assertEqual(len(hashes), 1)
+
+    def test_78f9_ordinate_is_masked_by_iram28_bit1_in_late_g_state(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        hashes = set()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, expected_r2 in (
+                    ("native", None, "05"),
+                    ("ordinate_80", "532F:78F9:80", "65")):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment["MA17_TRACE_CURVE_78F9_GATE"] = "1"
+                environment["MA17_TRACE_CURVE_78F9_LATE"] = "1"
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                     "--rpm", "1000", "--stop-ticks", "2400000",
+                     "--seconds", "30", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                lines = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                         if line.startswith("[CURVE78F9-GATE]")]
+                self.assertGreaterEqual(len(lines), 2)
+                self.assertIn(f"PC=3D1E R2={expected_r2} R5=00 R6=40", lines[0])
+                self.assertIn("RAM47=28 RAM6F=27 F25=76 F28=06 F2E=84", lines[0])
+                self.assertIn(f"PC=3D2A R2={expected_r2}", lines[1])
+                self.assertIn("F25=76 F28=06 F2E=84", lines[1])
+                hashes.add(report["emulator_sha256"])
+        self.assertEqual(len(hashes), 1)
+
+    def test_78f9_ordinate_sets_iram25_bit3_when_unmasked(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        emulators = set()
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, r2, f25 in (
+                    ("native", None, "00", "17"),
+                    ("ordinate_80", "532F:78F9:80", "80", "1F")):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment["MA17_TRACE_CURVE_78F9_GATE"] = "1"
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                     "--rpm", "1000", "--stop-ticks", "600000",
+                     "--seconds", "15", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=20, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                reads = [row for row in report["movc_observation"]["reads"]
+                         if row["pc"] == "532F" and row["address"] == "78F9"]
+                self.assertEqual(len(reads), 1)
+                self.assertEqual(reads[0]["value"], "00")
+                gates = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                         if line.startswith("[CURVE78F9-GATE]")]
+                self.assertGreaterEqual(len(gates), 2)
+                self.assertIn(f"PC=3D1E R2={r2} R5=00 R6=00", gates[0])
+                self.assertIn("RAM6F=73 F25=17 F28=00 F2E=87", gates[0])
+                self.assertIn(f"PC=3D2A R2={r2}", gates[1])
+                self.assertIn(f"F25={f25} F28=00 F2E=87", gates[1])
+                emulators.add(report["emulator_sha256"])
+        self.assertEqual(len(emulators), 1)
+
+    def test_7952_curve_ordinate_switches_g_1285_branch(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        results = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, value, branch in (
+                    ("native", None, "10", "12DE"),
+                    ("ordinate_80", "532F:7956:80", "80", "128A")):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment["MA17_TRACE_CURVE_7952_GATE"] = "1"
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                     "--rpm", "1000", "--stop-ticks", "600000",
+                     "--seconds", "15", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=20, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                reads = [row for row in report["movc_observation"]["reads"]
+                         if row["pc"] == "532F" and row["address"] == "7956"]
+                self.assertEqual(len(reads), 1)
+                self.assertEqual(reads[0]["value"], "10")
+                gates = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                         if line.startswith("[CURVE7952-GATE]")]
+                self.assertEqual(len([line for line in gates if "PC=1285" in line]), 33)
+                self.assertIn(f"PC=1285 A={value} RAM47=28 RAM63=50", gates[0])
+                self.assertIn(f"PC={branch}", gates[1])
+                results[name] = (report["emulator_sha256"], report["stop_ticks_observed"])
+        self.assertEqual(results["native"], results["ordinate_80"])
+
+    def test_79c4_movc_ordinate_changes_xram_f8e1_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        results = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, expected in (("native", None, "03"),
+                                             ("ordinate_40", "532F:79CA:40", "C0")):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment["MA17_TRACE_CURVE_79C4_WRITE"] = "1"
+                if override:
+                    environment["MA17_OVERRIDE_MOVC_AT"] = override
+                output = Path(directory) / name
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--trace-movc", "--no-kline-inject", "--crank-immediate",
+                     "--rpm", "1000", "--stop-ticks", "600000",
+                     "--seconds", "15", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=20, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                reads = [row for row in report["movc_observation"]["reads"]
+                         if row["pc"] == "532F" and row["address"] == "79CA"]
+                self.assertEqual(len(reads), 1)
+                self.assertGreater(int(reads[0]["count"]), 0)
+                self.assertEqual(reads[0]["value"], "83")
+                writes = [line for line in (output / "emulator-trace.log").read_text().splitlines()
+                          if line.startswith("[CURVE79C4-WRITE]")]
+                self.assertTrue(writes)
+                self.assertIn(f"addr=F8E1 previous=00 value={expected}", writes[0])
+                results[name] = (report["emulator_sha256"], report["stop_ticks_observed"])
+        self.assertEqual(results["native"], results["ordinate_40"])
+
+    def test_constant_741c_curve_natural_indices_stay_in_bounds_in_two_states(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = (("baseline_1000", 1000, 40, 95, 80, {0, 1, 3, 4}),
+                 ("high_tps_4000_cold", 4000, 180, 247, 4, {0, 1}))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, rpm, adc0, adc6, adc3, expected_offsets in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({"MA17_ADC_CH0": str(adc0),
+                                        "MA17_ADC_CH2": "100",
+                                        "MA17_ADC_CH3": str(adc3),
+                                        "MA17_ADC_CH5": "40",
+                                        "MA17_ADC_CH6": str(adc6),
+                                        "MA17_ADC_CH7": "63"})
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm", str(rpm),
+                         "--trace-movc", "--stop-ticks", "2400000",
+                         "--seconds", "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["dptr"] == "741C" and row["pc"] in ("532F", "5333")]
+                    self.assertTrue(reads)
+                    self.assertEqual({int(row["mapped"], 16) - 0x741C for row in reads},
+                                     expected_offsets)
+                    self.assertTrue(all(int(row["mapped"], 16) <= 0x7425
+                                        for row in reads))
+
     def test_mode_one_two_last_column_difference_is_reached(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
@@ -1057,6 +2428,52 @@ class VariantTraceTests(unittest.TestCase):
                                                  59400 * int(value, 16) / 512),
                                              15)
 
+    def test_rpm47_matches_crank_rate_in_g_and_s88_profiles(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((REFERENCE, ((750, 0x1E), (1000, 0x28),
+                              (775, 0x1F), (825, 0x21),
+                              (1175, 0x2F), (1225, 0x31),
+                              (1500, 0x3C), (1713, 0x44),
+                              (1724, 0x45), (1725, 0x45),
+                              (1738, 0x45), (1749, 0x46),
+                              (1975, 0x4F), (2000, 0x50), (2025, 0x51),
+                              (2725, 0x6D), (2775, 0x6F),
+                              (3000, 0x78), (3575, 0x8F),
+                              (3625, 0x91), (4000, 0xA0))),
+                 (VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin",
+                  ((750, 0x1E), (3000, 0x78))))
+        with tempfile.TemporaryDirectory() as directory:
+            for firmware, speeds in cases:
+                for rpm, expected_raw in speeds:
+                    with self.subTest(firmware=firmware.name, rpm=rpm):
+                        output = Path(directory) / f"{firmware.stem}_{rpm}"
+                        environment = {key: value for key, value in
+                                       os.environ.items()
+                                       if not key.startswith(("MA17_ADC_CH",
+                                                              "MA17_ADC10_",
+                                                              "MA17_OVERRIDE_"))}
+                        result = subprocess.run(
+                            [sys.executable, str(ROOT / "tools" /
+                                                 "trace_ma17.py"),
+                             "--firmware", str(firmware), "--no-kline-inject",
+                             "--crank-immediate", "--rpm", str(rpm),
+                             "--stop-ticks", "1200000", "--seconds", "20",
+                             "--output-dir", str(output)],
+                            capture_output=True, text=True, env=environment,
+                            timeout=30, check=False)
+                        self.assertEqual(result.returncode, 0,
+                                         result.stderr[-1500:])
+                        report = json.loads((output / "execution.json").read_text())
+                        self.assertEqual(report["firmware_sha256"],
+                                         hashlib.sha256(firmware.read_bytes())
+                                         .hexdigest())
+                        changes = report["rpm_observation"]["ram47_changes"]
+                        self.assertTrue(changes)
+                        self.assertEqual(changes[-1]["after"],
+                                         f"{expected_raw:02X}")
+                        self.assertEqual(changes[-1]["next_pc"], "0EA7")
+
     def test_7ed9_ram31_mediation_at_750_and_2000_rpm(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
@@ -1436,6 +2853,544 @@ class VariantTraceTests(unittest.TestCase):
                     self.assertGreater(len(gates), 1000)
                     self.assertTrue(all("T2I1=0" in line for line in gates))
 
+    def test_post_coolant_curve_744e_axis_comes_from_iram63_segment(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc2, adc3, ram63, index, fraction, address, value in (
+                    (100, 20, "14", "00", "00", "744E", "15"),
+                    (100, 80, "50", "03", "20", "7451", "33"),
+                    (220, 20, "14", "00", "00", "744E", "15")):
+                with self.subTest(adc2=adc2, adc3=adc3):
+                    output = Path(directory) / f"{adc2}_{adc3}"
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": str(adc2),
+                        "MA17_ADC_CH3": str(adc3), "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_POST_COOLANT_AXIS": "1"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["stop_ticks_observed"], 2400000)
+                    self.assertTrue(report["post_coolant_axis_trace_enabled"])
+                    reads = report["movc_observation"]["reads"]
+                    self.assertTrue(any(row["pc"] == "532F" and
+                                        row["address"] == address and
+                                        row["value"] == value for row in reads))
+                    hits = (output / "pc-hits.txt").read_text().splitlines()
+                    self.assertNotIn("47A2", hits)
+                    self.assertNotIn("47A3", hits)
+                    if adc2 == 220:
+                        self.assertIn("4793", hits)
+                    else:
+                        self.assertNotIn("4793", hits)
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line in
+                            (output / "emulator-trace.log").read_text().splitlines()
+                            if line.startswith("[POST-COOLANT-AXIS]")]
+                    for pc, dptr in (("477F", "73D5"), ("47AC", "7200"),
+                                     ("491F", "7018"), ("532F", "744E")):
+                        first = next(row for row in rows if row["PC"] == pc)
+                        self.assertEqual(first["DPTR"], dptr)
+                        self.assertEqual((first["RAM63"], first["R5"],
+                                          first["R6"]), (ram63, index, fraction))
+                        self.assertEqual(int(first["T2CON"], 16) & 2, 0)
+                    segment = next(row for row in rows if row["PC"] == "477F")
+                    if adc2 == 220:
+                        self.assertGreater(int(segment["RAM62"], 16),
+                                           REFERENCE.read_bytes()[0x7264])
+                        self.assertEqual(int(segment["F28"], 16) & 0x38, 0)
+                        self.assertEqual(int(segment["F29"], 16) & 0x08, 0)
+                    else:
+                        self.assertLessEqual(int(segment["RAM62"], 16),
+                                             REFERENCE.read_bytes()[0x7264])
+
+    def test_coolant_bound_flags_reach_xram91_but_bypass_744e(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for raw_adc3, flag in ((3, 0x10), (232, 0x08)):
+                with self.subTest(raw_adc3=raw_adc3):
+                    output = Path(directory) / str(raw_adc3)
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220",
+                        "MA17_ADC10_CH3": str(raw_adc3 * 4),
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_POST_COOLANT_AXIS": "1"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["stop_ticks_observed"], 2400000)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertTrue({"4793", "47A2", "47A3", "490B"} <= hits)
+                    self.assertNotIn("491F", hits)
+                    self.assertFalse(any(0x7430 <= int(row["address"], 16)
+                                         < 0x7462 for row in
+                                         report["movc_observation"]["reads"]))
+                    fallback = [row for row in
+                                report["movc_observation"]["reads"]
+                                if row["pc"] == "4912" and
+                                row["address"] == "727F" and
+                                row["value"] == "2E"]
+                    self.assertEqual(len(fallback), 1)
+                    self.assertGreater(fallback[0]["count"], 500)
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in (output / "emulator-trace.log").read_text().splitlines()
+                            if line.startswith("[POST-COOLANT-AXIS]")]
+                    before = next(row for row in rows if row["PC"] == "477F")
+                    after = next(row for row in rows if row["PC"] == "47AC")
+                    self.assertEqual(before["RAM62"], "DC")
+                    self.assertEqual(before["RAM63"], "11")
+                    self.assertEqual(int(before["F28"], 16) & flag, flag)
+                    self.assertEqual((before["X91"], before["X9E"]),
+                                     ("34", "78"))
+                    self.assertEqual((after["R5"], after["R6"]),
+                                     ("08", "30"))
+
+    def test_air_segment_73c0_writes_xram91_before_fault_lookup(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc2, packed, index, fraction in (
+                    (120, "B0", "04", "B0"),
+                    (160, "F1", "05", "F0"),
+                    (220, "34", "08", "30")):
+                with self.subTest(adc2=adc2):
+                    output = Path(directory) / str(adc2)
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": str(adc2), "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_XRAM_F891": "1",
+                        "MA17_TRACE_POST_COOLANT_AXIS": "1"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["xram_f891_trace_enabled"])
+                    self.assertEqual(report["stop_ticks_observed"], 2400000)
+                    self.assertGreater(sum(row["count"] for row in
+                                           report["movc_observation"]["reads"]
+                                           if row["address"] == "73C0" and
+                                           row["value"] == "62"), 500)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    writes = [dict(re.findall(r"(\w+)=(\w+)", line))
+                              for line in lines if line.startswith("[F891-WRITE]")
+                              and "PC=4608" in line]
+                    self.assertEqual(len(writes), 1)
+                    self.assertTrue(any(f"value=00->{packed}" in line for line
+                                        in lines if line.startswith("[F891-WRITE]")
+                                        and "PC=4608" in line))
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in lines if line.startswith("[POST-COOLANT-AXIS]")]
+                    before = next(row for row in rows if row["PC"] == "477F")
+                    after = next(row for row in rows if row["PC"] == "47AC")
+                    self.assertLess(int(writes[0]["tick"]), int(before["tick"]))
+                    self.assertEqual((before["RAM62"], before["X91"]),
+                                     (f"{adc2:02X}", packed))
+                    self.assertEqual((after["R5"], after["R6"]),
+                                     (index, fraction))
+
+    def test_73c6_width_and_f891_read_have_separate_cc3_effects(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        self.assertEqual(REFERENCE.read_bytes()[0x73C6], 0x0F)
+        with tempfile.TemporaryDirectory() as directory:
+            for width, read, expected_stored, expected_pair, expected_cc3 in (
+                    (None, None, "34", ("08", "30"), 1505),
+                    (None, "14", "34", ("08", "10"), 1505),
+                    ("1F", None, "14", ("08", "10"), 1491),
+                    ("1F", "34", "14", ("08", "30"), 1491)):
+                with self.subTest(width=width, read=read):
+                    output = Path(directory) / f"{width or 'base'}-{read or 'base'}"
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_XRAM_F891": "1",
+                        "MA17_TRACE_POST_COOLANT_AXIS": "1"})
+                    if width:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = f"52A2:73C6:{width}"
+                    if read:
+                        environment["MA17_OVERRIDE_XRAM_F891_47A2"] = read
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["xram_f891_47a2_override_hex"], read)
+                    self.assertEqual(report["cc3_observation"]["iram14_15_median"],
+                                     expected_cc3)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    self.assertTrue(any(f"PC=4608 value=00->{expected_stored}" in line
+                                        for line in lines if line.startswith("[F891-WRITE]")))
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in lines if line.startswith("[POST-COOLANT-AXIS]")
+                            and "PC=47AC" in line]
+                    self.assertTrue(rows)
+                    self.assertEqual((rows[0]["R5"], rows[0]["R6"]),
+                                     expected_pair)
+                    if read:
+                        self.assertTrue(any(f"stored={expected_stored} supplied={read}"
+                                            in line for line in lines if line.startswith(
+                                                "[F891-READ-OVERRIDE]")))
+
+    def test_73c6_cc3_effect_is_mediated_by_f891_read_at_564a(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for width, read, stored, median in (
+                    (None, None, "34", 1505),
+                    (None, "14", "34", 1491),
+                    ("1F", None, "14", 1491),
+                    ("1F", "34", "14", 1505)):
+                with self.subTest(width=width, read=read):
+                    output = Path(directory) / f"{width or 'base'}-{read or 'base'}"
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_XRAM_F891": "1"})
+                    if width:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = f"52A2:73C6:{width}"
+                    if read:
+                        environment["MA17_OVERRIDE_XRAM_F891_564A"] = read
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["xram_f891_564a_override_hex"], read)
+                    self.assertEqual(report["cc3_observation"]["iram14_15_median"],
+                                     median)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    self.assertTrue(any(f"PC=4608 value=00->{stored}" in line
+                                        for line in lines if line.startswith("[F891-WRITE]")))
+                    self.assertTrue(any(f"PC=564A value={stored}" in line
+                                        for line in lines if line.startswith("[F891-READ]")))
+                    if read:
+                        self.assertTrue(any(f"stored={stored} supplied={read}"
+                                            in line for line in lines if line.startswith(
+                                                "[F891-READ-OVERRIDE] PC=564A")))
+
+    def test_f891_cc3_effect_uses_129d_caller_of_564a(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for caller, width, supplied, expected, upper87, ram4ab in (
+                    ("12A0", None, "14", 1491, "5A", "8A"),
+                    ("1552", None, "14", 1505, "5B", "91"),
+                    ("15D5", None, "14", 1505, "5B", "91"),
+                    ("12A0", "1F", "34", 1505, "5B", "91")):
+                with self.subTest(caller=caller, width=width):
+                    output = Path(directory) / f"{caller}-{width or 'base'}"
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_XRAM_F891": "1",
+                        "MA17_TRACE_129D_PATH": "1",
+                        "MA17_OVERRIDE_XRAM_F891_564A": supplied,
+                        "MA17_OVERRIDE_XRAM_F891_564A_RETURN": caller})
+                    if width:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = f"52A2:73C6:{width}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["xram_f891_564a_return_filter_hex"],
+                                     caller)
+                    self.assertEqual(report["cc3_observation"]["iram14_15_median"],
+                                     expected)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    self.assertTrue(any(f"return={caller} " in line for line
+                                        in lines if line.startswith(
+                                            "[F891-READ-OVERRIDE] PC=564A")))
+                    self.assertEqual({"12A0", "1552", "15D5"}, {
+                        re.search(r"return=([0-9A-F]{4})", line).group(1)
+                        for line in lines if line.startswith("[F891-564A-CALLER]")})
+                    path = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in lines if line.startswith("[129D-PATH]")
+                            and "PC=12D9" in line]
+                    self.assertTrue(path)
+                    self.assertEqual((path[-1]["UIRAM87"], path[-1]["RAM4A"],
+                                      path[-1]["RAM4B"]),
+                                     (upper87, ram4ab, ram4ab))
+                    downstream = "8F" if upper87 == "5A" else "9D"
+                    scheduled = "D3" if upper87 == "5A" else "E1"
+                    inputs = [dict(re.findall(r"(\w+)=(\w+)", line))["RAM5A"]
+                              for line in lines if line.startswith("[INJECTION-INPUT]")]
+                    self.assertGreater(len(inputs), 200)
+                    self.assertEqual(Counter(inputs).most_common(1)[0][0],
+                                     downstream)
+                    for pc, expected_r2 in (("1DD8", downstream),
+                                             ("1ED3", scheduled)):
+                        samples = [dict(re.findall(r"(\w+)=(\w+)", line))["R2"]
+                                   for line in lines if line.startswith(
+                                       "[INJECTION-FLOW]") and f"PC={pc} " in line]
+                        self.assertGreater(len(samples), 200)
+                        self.assertEqual(Counter(samples).most_common(1)[0][0],
+                                         expected_r2)
+
+    def test_7426_output_mediates_f891_cc3_effect_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        rom = REFERENCE.read_bytes()
+        self.assertEqual(rom[0x7004:0x7006], bytes.fromhex("74 12"))
+        self.assertEqual(rom[0x7008:0x700A], bytes.fromhex("74 26"))
+        self.assertEqual(rom[0x741B], 0xBE)
+        self.assertEqual(rom[0x742F], 0x60)
+        with tempfile.TemporaryDirectory() as directory:
+            for name, movc, f891, upper87, ram4ab, cc3 in (
+                    ("base", None, None, "5B", "91", 1505),
+                    ("7426_only", "5333:742F:5A", None, "5A", "91", 1491),
+                    ("7412_only", "5333:741B:98", None, "5B", "8A", 1505),
+                    ("7426_rescue", "5333:742F:6A", "14", "5B", "8A", 1505)):
+                with self.subTest(name=name):
+                    output = Path(directory) / name
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_129D_PATH": "1"})
+                    if movc:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = movc
+                    if f891:
+                        environment["MA17_OVERRIDE_XRAM_F891_564A"] = f891
+                        environment["MA17_OVERRIDE_XRAM_F891_564A_RETURN"] = "12A0"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(rom).hexdigest())
+                    self.assertTrue(report["path_129d_trace_enabled"])
+                    self.assertEqual(report["cc3_observation"]["iram14_15_median"],
+                                     cc3)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    path = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in lines if line.startswith("[129D-PATH]")
+                            and "PC=12D9" in line]
+                    self.assertTrue(path)
+                    self.assertEqual((path[-1]["UIRAM87"], path[-1]["RAM4A"],
+                                      path[-1]["RAM4B"]),
+                                     (upper87, ram4ab, ram4ab))
+                    downstream = "8F" if upper87 == "5A" else "9D"
+                    scheduled = "D3" if upper87 == "5A" else "E1"
+                    inputs = [dict(re.findall(r"(\w+)=(\w+)", line))["RAM5A"]
+                              for line in lines if line.startswith("[INJECTION-INPUT]")]
+                    self.assertGreater(len(inputs), 200)
+                    self.assertEqual(Counter(inputs).most_common(1)[0][0],
+                                     downstream)
+                    for pc, expected_r2 in (("1DD8", downstream),
+                                             ("1ED3", scheduled)):
+                        samples = [dict(re.findall(r"(\w+)=(\w+)", line))["R2"]
+                                   for line in lines if line.startswith(
+                                       "[INJECTION-FLOW]") and f"PC={pc} " in line]
+                        self.assertGreater(len(samples), 200)
+                        self.assertEqual(Counter(samples).most_common(1)[0][0],
+                                         expected_r2)
+
+    def test_7426_cc3_mediation_repeats_in_s88(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        rom = firmware.read_bytes()
+        self.assertEqual(rom[0x7008:0x700A], bytes.fromhex("74 26"))
+        self.assertEqual(rom[0x742F], 0x60)
+        with tempfile.TemporaryDirectory() as directory:
+            for name, movc, f891, upper87, ram4ab, cc3, low, r2 in (
+                    ("base", None, None, "5B", "91", 1429, 5705, "51"),
+                    ("cell", "5333:742F:5A", None, "5A", "91", 1416, 5653, "44"),
+                    ("read14", None, "14", "5A", "8A", 1416, 5653, "44"),
+                    ("rescue", "5333:742F:6A", "14", "5B", "8A", 1429, 5705, "51")):
+                with self.subTest(name=name):
+                    output = Path(directory) / name
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_129D_PATH": "1"})
+                    if movc:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = movc
+                    if f891:
+                        environment["MA17_OVERRIDE_XRAM_F891_564A"] = f891
+                        environment["MA17_OVERRIDE_XRAM_F891_564A_RETURN"] = "12A0"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--trace-movc",
+                         "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(rom).hexdigest())
+                    self.assertEqual((report["cc3_observation"]["iram14_15_median"],
+                                      report["cc3_observation"][
+                                          "cc3_pin_model_median_low_width_ticks"]),
+                                     (cc3, low))
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    path = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in lines if line.startswith("[129D-PATH]")
+                            and "PC=12D9" in line]
+                    self.assertTrue(path)
+                    self.assertEqual((path[-1]["UIRAM87"], path[-1]["RAM4A"],
+                                      path[-1]["RAM4B"]),
+                                     (upper87, ram4ab, ram4ab))
+                    samples = [dict(re.findall(r"(\w+)=(\w+)", line))["R2"]
+                               for line in lines if line.startswith(
+                                   "[INJECTION-FLOW]") and "PC=1DD8 " in line]
+                    self.assertGreater(len(samples), 200)
+                    self.assertEqual(Counter(samples).most_common(1)[0][0], r2)
+
+    def test_post_coolant_727f_fallback_reaches_4d_and_fixed_point(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        self.assertEqual(REFERENCE.read_bytes()[0x7279], 0x19)
+        with tempfile.TemporaryDirectory() as directory:
+            for supplied, expected_4d, expected_r2 in (
+                    (None, "2E", "45"), ("2E", "2E", "45"),
+                    ("00", "19", "25"), ("80", "80", "BA")):
+                with self.subTest(supplied=supplied):
+                    output = Path(directory) / (supplied or "baseline")
+                    environment = {key: val for key, val in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH2": "220", "MA17_ADC_CH3": "232",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM4D_PATH": "1"})
+                    if supplied is not None:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"4912:727F:{supplied}")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["stop_ticks_observed"], 2400000)
+                    self.assertEqual(report["engine_ram_observation"]["4D"][-1]
+                                     ["after"], expected_4d)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["iram14_15_median"], 1505)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 1861)
+                    reads = report["movc_observation"]["reads"]
+                    self.assertGreater(sum(row["count"] for row in reads
+                                           if row["pc"] == "4912" and
+                                           row["address"] == "727F" and
+                                           row["value"] == "2E"), 500)
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line
+                            in (output / "emulator-trace.log").read_text()
+                            .splitlines() if line.startswith("[RAM4D-PATH]")]
+                    steady = [row for row in rows if row["PC"] == "233B" and
+                              int(row["tick"]) > 100000]
+                    self.assertGreater(len(steady), 200)
+                    self.assertTrue(all(row["R2"] == expected_r2
+                                        for row in steady))
+                    self.assertTrue(any(row["PC"] == "2580" and
+                                        row["R2"] == expected_r2
+                                        for row in rows))
+
     def test_744e_donor_changes_4d_and_fixed_point_consumer(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
@@ -1513,6 +3468,381 @@ class VariantTraceTests(unittest.TestCase):
                         baseline_xram_writes = xram_writes
                     else:
                         self.assertEqual(xram_writes, baseline_xram_writes)
+
+    def test_744e_ram4d_read_mediates_cc3_pulse_count_at_3000_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        observations = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, donor, supplied in (
+                    ("control", False, None),
+                    ("donor", True, None),
+                    ("control_r2_2f", False, "2F"),
+                    ("donor_r2_19", True, "19")):
+                with self.subTest(name=name):
+                    output = Path(directory) / name
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_", "MA17_TRACE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_RAM4D_PATH": "1"})
+                    if donor:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                    if supplied:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = (
+                            f"22F3:4D:{supplied}")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["engine_ram_observation"]["4D"][-1]
+                                     ["after"], "2F" if donor else "19")
+                    self.assertEqual(report["movc_matrix_size"], 10 if donor else None)
+                    bound_reads = sum(row["count"] for row in
+                                      report["movc_observation"]["reads"]
+                                      if row["address"] == "7310")
+                    cc3 = report["cc3_observation"]
+                    edges = [(int(tick), int(value)) for tick, value in re.findall(
+                        r"\[CC3-PIN\] tick=(\d+) .*value=([01])",
+                        (output / "emulator-trace.log").read_text())]
+                    observations[name] = (cc3, edges, bound_reads)
+            for name, count, width, reads in (("control", 103, 1129, 123),
+                                              ("donor", 228, 1150, 0),
+                                              ("control_r2_2f", 228, 1150, 0),
+                                              ("donor_r2_19", 103, 1129, 123)):
+                cc3, edges, bound_reads = observations[name]
+                self.assertEqual(cc3["cc3_pin_model_low_starts"], count)
+                self.assertEqual(cc3["cc3_pin_model_median_low_width_ticks"], width)
+                self.assertEqual(bound_reads, reads)
+                self.assertEqual(len(edges), 2 * count)
+            for left, right in (("control", "donor_r2_19"),
+                                ("donor", "control_r2_2f")):
+                first, second = observations[left][1], observations[right][1]
+                self.assertEqual([value for _, value in first],
+                                 [value for _, value in second])
+                self.assertLessEqual(max(abs(a - b) for (a, _), (b, _) in
+                                         zip(first, second)), 2)
+
+    def test_744e_donor_cc3_branch_effect_depends_on_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        expected = {1500: ((51, 121), (51, 121)),
+                    2000: ((68, 122), (68, 122)),
+                    2500: ((86, 122), (118, 85))}
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm, arms in expected.items():
+                for donor, (pulses, bound_reads) in enumerate(arms):
+                    with self.subTest(rpm=rpm, donor=donor):
+                        output = Path(directory) / f"{rpm}_{donor}"
+                        environment = {key: value for key, value in os.environ.items()
+                                       if not key.startswith(("MA17_ADC_CH",
+                                                              "MA17_ADC10_",
+                                                              "MA17_OVERRIDE_",
+                                                              "MA17_TRACE_"))}
+                        environment.update({
+                            "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                            "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                            "MA17_ADC_CH7": "63"})
+                        if donor:
+                            environment.update({
+                                "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                                "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                        result = subprocess.run(
+                            [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                             "--trace-movc", "--no-kline-inject",
+                             "--crank-immediate", "--rpm", str(rpm),
+                             "--stop-ticks", "2400000", "--seconds", "20",
+                             "--output-dir", str(output)],
+                            capture_output=True, text=True, env=environment,
+                            timeout=40, check=False)
+                        self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                        report = json.loads((output / "execution.json").read_text())
+                        self.assertEqual(report["firmware_sha256"],
+                                         hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                        self.assertEqual(report["cc3_observation"]
+                                         ["cc3_pin_model_low_starts"], pulses)
+                        self.assertEqual(sum(row["count"] for row in
+                                             report["movc_observation"]["reads"]
+                                             if row["address"] == "7310"), bound_reads)
+
+    def test_744e_f831_comparison_changes_branch_reachability(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        expected = (("control", False, None, "22", "54", False, 103, 123),
+                    ("donor", True, None, "F8", "7E", True, 228, 0),
+                    ("control_f831_7e", False, "7E", "F8", "7E", True, 228, 0),
+                    ("donor_f831_36", True, "36", "40", "36", False, 103, 123))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, donor, supplied, accumulator, b_value, carry, pulses, reads in expected:
+                with self.subTest(name=name):
+                    output = Path(directory) / name
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_", "MA17_TRACE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_744E_BRANCH": "1",
+                        "MA17_TRACE_XRAM_ADDRESS": "F831"})
+                    if donor:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                    if supplied:
+                        environment["MA17_OVERRIDE_XRAM_READ_AT"] = (
+                            f"2A8C:F831:{supplied}")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], pulses)
+                    self.assertEqual(sum(row["count"] for row in
+                                         report["movc_observation"]["reads"]
+                                         if row["address"] == "7310"), reads)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertEqual("2B38" in hits, bool(reads))
+                    self.assertEqual("2B42" in hits, bool(reads))
+                    self.assertEqual("2C49" in hits, bool(reads))
+                    rows = [dict(re.findall(r"(\w+)=(\w+)", line)) for line in
+                            (output / "emulator-trace.log").read_text().splitlines()
+                            if line.startswith("[CURVE-744E-BRANCH]")]
+                    comparison = next(row for row in rows
+                                      if row["PC"] == "2A91" and
+                                      int(row["tick"]) > 260000)
+                    self.assertEqual((comparison["A"], comparison["B"]),
+                                     (accumulator, b_value))
+                    self.assertEqual(bool(int(comparison["PSW"], 16) & 0x80), carry)
+                    if supplied is None:
+                        writes = [line for line in
+                                  (output / "emulator-trace.log").read_text().splitlines()
+                                  if line.startswith("[XRAM-ADDRESS-WRITE]") and
+                                  "PC=2796 addr=F831" in line]
+                        self.assertTrue(any("value=07->" +
+                                            ("60" if donor else "36") in line
+                                            for line in writes))
+
+    def test_744e_donor_delays_guard_without_removing_it(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        observations = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for donor in (False, True):
+                with self.subTest(donor=donor):
+                    output = Path(directory) / ("donor" if donor else "control")
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_", "MA17_TRACE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_744E_BRANCH": "1",
+                        "MA17_TRACE_XRAM_ADDRESS": "F831",
+                        "MA17_TRACE_CC3_DECISION": "1",
+                        "MA17_TRACE_CC3_AFTER_TICK": "900000"})
+                    if donor:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "5000000", "--seconds", "40",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=60, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["stop_ticks_observed"], 5000000)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    branch = [dict(re.findall(r"(\w+)=(\w+)", line)) for line in lines
+                              if line.startswith("[CURVE-744E-BRANCH]")]
+                    decision = [dict(re.findall(r"(\w+)=(\w+)", line)) for line in lines
+                                if line.startswith("[CC3-DECISION]")]
+                    stages = {pc: int(next(row["tick"] for row in branch
+                                           if row["PC"] == pc))
+                              for pc in ("2AC7", "2AF9", "2B42", "2C49")}
+                    guard_tick = int(next(row["tick"] for row in decision
+                                          if int(row["flags26"], 16) & 0x80))
+                    last_edge = max(int(match.group(1)) for line in lines
+                                    if (match := re.search(
+                                        r"^\[CC3-PIN\] tick=(\d+)", line)))
+                    reads = sum(row["count"] for row in
+                                report["movc_observation"]["reads"]
+                                if row["address"] == "7310")
+                    pulses = report["cc3_observation"]["cc3_pin_model_low_starts"]
+                    threshold_value = "76" if donor else "54"
+                    threshold_tick = int(next(re.search(r"tick=(\d+)", line).group(1)
+                                              for line in lines
+                                              if line.startswith("[XRAM-ADDRESS-WRITE]")
+                                              and "PC=2796 addr=F831" in line
+                                              and "->" + threshold_value in line))
+                    clear_carry_tick = int(next(row["tick"] for row in branch
+                                                if row["PC"] == "2A91" and
+                                                int(row["tick"]) > 265000 and
+                                                not int(row["PSW"], 16) & 0x80))
+                    observations[donor] = (stages, guard_tick, last_edge,
+                                           reads, pulses, threshold_tick,
+                                           clear_carry_tick)
+            control, donor = observations[False], observations[True]
+            self.assertEqual((control[3], control[4]), (377, 103))
+            self.assertEqual((donor[3], donor[4]), (179, 307))
+            delays = [donor[0][pc] - control[0][pc]
+                      for pc in ("2AC7", "2AF9", "2B42", "2C49")]
+            self.assertGreater(min(delays), 2000000)
+            self.assertLess(max(delays) - min(delays), 500)
+            self.assertGreater(donor[1] - control[1], 2000000)
+            self.assertGreater(donor[2] - control[2], 2000000)
+            self.assertLess(control[2], control[1])
+            self.assertLess(donor[2], donor[1])
+            self.assertEqual((control[5], control[6]), (265886, 266070))
+            self.assertEqual((donor[5], donor[6]), (2201240, 2201429))
+            self.assertLess(control[6], control[0]["2AC7"])
+            self.assertLess(donor[6], donor[0]["2AC7"])
+
+    def test_744e_donor_restarts_xram39_nibble_countdown(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        with tempfile.TemporaryDirectory() as directory:
+            for donor in (False, True):
+                with self.subTest(donor=donor):
+                    output = Path(directory) / ("donor" if donor else "control")
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_", "MA17_TRACE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_744E_BRANCH": "1",
+                        "MA17_TRACE_XRAM_ADDRESS": "F839"})
+                    if donor:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    writes = [line for line in lines
+                              if line.startswith("[XRAM-ADDRESS-WRITE]") and
+                              "addr=F839" in line]
+                    reset = "PC=2A4B addr=F839 value=06->0F"
+                    self.assertEqual(any(reset in line for line in writes), donor)
+                    continuation = ("tick=2201473 PC=555B addr=F839 value=0F->0E"
+                                    if donor else
+                                    "tick=266120 PC=555B addr=F839 value=06->05")
+                    self.assertTrue(any(continuation in line for line in writes))
+                    zero_return = next(dict(re.findall(r"(\w+)=(\w+)", line))
+                                       for line in lines
+                                       if line.startswith("[CURVE-744E-BRANCH]")
+                                       and "PC=2AB7" in line and " A=00 " in line)
+                    self.assertEqual(int(zero_return["tick"]),
+                                     2344908 if donor else 317141)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"],
+                                     228 if donor else 103)
+
+    def test_744e_first_cell_alone_reproduces_long_guard_delay(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        alcohol = VARIANTS / EXPECTED[0]
+        observations = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, point in (("full_donor", None),
+                                ("first_cell", "532F:744E:2F"),
+                                ("second_cell", "5333:744F:36")):
+                with self.subTest(name=name):
+                    output = Path(directory) / name
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_", "MA17_TRACE_"))}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH6": "95",
+                        "MA17_ADC_CH3": "20", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_744E_BRANCH": "1"})
+                    if point:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = point
+                    else:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(alcohol),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": "744E"})
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "5000000", "--seconds", "40",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=60, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"], point)
+                    self.assertEqual(report["movc_matrix_size"], 10 if not point else None)
+                    self.assertEqual(report["stop_ticks_observed"], 5000000)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    edges = [(int(match.group(1)), int(match.group(2)))
+                             for line in lines
+                             if (match := re.search(
+                                 r"^\[CC3-PIN\] tick=(\d+).*value=([01])", line))]
+                    stage = int(next(dict(re.findall(r"(\w+)=(\w+)", line))["tick"]
+                                     for line in lines
+                                     if line.startswith("[CURVE-744E-BRANCH]")
+                                     and "PC=2B42" in line))
+                    reads = sum(row["count"] for row in
+                                report["movc_observation"]["reads"]
+                                if row["address"] == "7310")
+                    observations[name] = (edges, stage, reads)
+            donor, first, second = (observations[name] for name in
+                                    ("full_donor", "first_cell", "second_cell"))
+            self.assertEqual((len(donor[0]), donor[2]), (614, 179))
+            self.assertEqual((len(first[0]), first[2]), (614, 179))
+            self.assertEqual((len(second[0]), second[2]), (206, 377))
+            self.assertEqual((donor[1], first[1], second[1]),
+                             (3174451, 3174449, 1146773))
+            self.assertEqual([value for _, value in donor[0]],
+                             [value for _, value in first[0]])
+            self.assertLessEqual(max(abs(a - b) for (a, _), (b, _) in
+                                     zip(donor[0], first[0])), 2)
+            self.assertEqual(donor[0][-1][0], first[0][-1][0])
 
     def test_iram79_7b_curves_are_naturally_read_in_g_and_s88(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
@@ -1644,11 +3974,21 @@ class VariantTraceTests(unittest.TestCase):
                              .read_text().splitlines()
                              if line.startswith("[RAM78-GATE]")]
                     self.assertGreater(len(lines), 300)
-                    self.assertEqual({line.split("PC=")[1][:4] for line in lines},
-                                     {"1B34", "1B3D", "1B48"})
-                    self.assertEqual({line.split("R1=")[1][:2] for line in lines},
+                    # The probe also logs intermediate PCs; retain the
+                    # original gate-point assertion independently of them.
+                    gate_pcs = {"1A3A", "1B34", "1B3D", "1B48"}
+                    self.assertEqual({line.split("PC=")[1][:4] for line in lines}
+                                     & gate_pcs, gate_pcs)
+                    lookup_lines = [line for line in lines if "PC=1A3A" in line]
+                    guard_lines = [line for line in lines
+                                   if any(f"PC={pc}" in line
+                                          for pc in ("1B34", "1B3D", "1B48"))]
+                    self.assertTrue(lookup_lines)
+                    self.assertNotIn("00", {line.split("R1=")[1][:2]
+                                             for line in lookup_lines})
+                    self.assertEqual({line.split("R1=")[1][:2] for line in guard_lines},
                                      {r1})
-                    self.assertEqual({line.split("R7=")[1][:2] for line in lines},
+                    self.assertEqual({line.split("R7=")[1][:2] for line in guard_lines},
                                      {r7})
 
     def test_7e16_path_needs_state_bit_even_when_two_flags_overlap(self):
@@ -1702,14 +4042,66 @@ class VariantTraceTests(unittest.TestCase):
                                 for line in branch))
             self.assertFalse(any("PC=3830" in line for line in lines))
 
+    def test_7e16_state_producer_reaches_original_code_at_higher_rpm(self):
+        emulator = ROOT / "build" / "emu8051-tty"
+        if not emulator.exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm in (1000, 1500):
+                with self.subTest(rpm=rpm):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC", "MA17_OVERRIDE_",
+                                                          "MA17_TRACE_", "MA17_P4_"))}
+                    environment.update(
+                        MA17_P4_6_FORCE_LOW="1", MA17_ADC_CH0="40",
+                        MA17_ADC_CH6="95", MA17_ADC10_STEP_CH6="200000:880",
+                        MA17_ADC_CH2="100", MA17_ADC_CH3="80",
+                        MA17_ADC_CH7="63", MA17_TRACE_7E16_GATE="1")
+                    output = Path(directory) / str(rpm)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--trace-movc",
+                         "--no-kline-inject", "--crank-immediate", "--rpm", str(rpm),
+                         "--stop-ticks", "1600000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["emulator_sha256"],
+                                     hashlib.sha256(emulator.read_bytes()).hexdigest())
+                    self.assertFalse(any(0x7E16 <= int(row["mapped"], 16) < 0x7E8E
+                                         for row in report["movc_observation"]["reads"]))
+                    lines = [line for line in (output / "emulator-trace.log")
+                             .read_text().splitlines()
+                             if line.startswith("[MATRIX-7E16-GATE]")]
+                    def at(pc):
+                        return [line for line in lines if f"PC={pc}" in line]
+                    self.assertEqual(len(at("2E06")), 1)
+                    self.assertEqual(at("2E06")[0].split("RAM46=")[1][:2], "2A")
+                    self.assertEqual(at("2E06")[0].split("RAM47=")[1][:2],
+                                     "28" if rpm == 1000 else "3C")
+                    self.assertEqual(len(at("2E1C")), 0 if rpm == 1000 else 1)
+                    self.assertEqual(any(int(line.split("B=")[1][:2], 16) & 0x20
+                                         for line in at("36DE")), rpm == 1500)
+                    if rpm == 1500:
+                        self.assertTrue(at("36FF"))
+                        self.assertTrue(all(line.split("UC5=")[1][:2] == "53" and
+                                            line.split("RAM70=")[1][:2] == "53" and
+                                            line.split("A=")[1][:2] == "02"
+                                            for line in at("36FF")))
+                        self.assertFalse(at("3701"))
+
     def test_rpm_extremes_keep_ram78_zero_and_lookup_in_bounds(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
         cases = ((300, {("7AB0", "00", "03"), ("7AB0", "2A", "09")},
-                  set()),
+                  {"1A3A"}),
                  (6000, {("79F0", "2F", "0B"), ("7AB0", "00", "03"),
                          ("7AB0", "2A", "09"), ("7AB0", "2F", "09")},
-                  {"1B34", "1B3D", "1B48"}))
+                  {"1A3A", "1B34", "1B3D", "1B48"}))
         with tempfile.TemporaryDirectory() as directory:
             for rpm, expected_reads, expected_gates in cases:
                 with self.subTest(rpm=rpm):
@@ -1741,14 +4133,556 @@ class VariantTraceTests(unittest.TestCase):
                                         int(x["value"], 16) > 0 for x in rows))
                     self.assertNotIn("78", report["engine_ram_observation"])
                     log = (output / "emulator-trace.log").read_text()
+                    gate_pcs = {"1A3A", "1B34", "1B3D", "1B48"}
                     self.assertEqual({line.split("PC=")[1][:4] for line in
                                       log.splitlines() if line.startswith(
-                                          "[RAM78-GATE]")}, expected_gates)
+                                          "[RAM78-GATE]")} & gate_pcs,
+                                     expected_gates)
+                    gate_lines = [line for line in log.splitlines()
+                                  if line.startswith("[RAM78-GATE]")]
+                    at_lookup = {line.split("R1=")[1][:2] for line in gate_lines
+                                 if "PC=1A3A" in line}
+                    at_guard = {line.split("R1=")[1][:2] for line in gate_lines
+                                if "PC=1B34" in line}
+                    self.assertTrue(at_lookup)
+                    self.assertTrue(at_guard <= at_lookup)
+                    self.assertNotIn("00", at_lookup | at_guard)
                     ram78_reads = re.findall(
                         r"\[INJECTION-FLOW\].* PC=1D4B .*?RAM78=([0-9A-F]{2})",
                         log)
                     self.assertTrue(ram78_reads)
                     self.assertEqual(set(ram78_reads), {"00"})
+
+    def test_r1_lookup_zero_opens_1bfd_without_ram78_at_zero_r6(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = (("control", None, False),
+                 ("early_7ada", "1A38:7ADA:00", False),
+                 ("gate_7adf", "1A38:7ADF:00", True),
+                 ("gate_7a1f", "1A38:7A1F:00", True))
+        summaries = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, gate_open in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({"MA17_TRACE_RAM78_GATE": "1",
+                                        "MA17_ADC_CH0": "180", "MA17_ADC_CH2": "100",
+                                        "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                                        "MA17_ADC_CH6": "247", "MA17_ADC_CH7": "63"})
+                    if override:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = override
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm", "6000",
+                         "--trace-movc", "--stop-ticks", "2400000",
+                         "--seconds", "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"], override)
+                    raw_reads = {(row["mapped"], row["value"]): row["count"]
+                                 for row in report["movc_observation"]["reads"]
+                                 if row["pc"] == "1A38"}
+                    self.assertEqual(raw_reads.get(("7ADA", "09")), 10)
+                    self.assertEqual(raw_reads.get(("7ADF", "09")), 104)
+                    self.assertEqual(raw_reads.get(("7A1F", "0B")), 115)
+                    log = (output / "emulator-trace.log").read_text()
+                    initial = re.findall(
+                        r"\[RAM78-GATE\].*?PC=1A3A R1=([0-9A-F]{2})", log)
+                    at_guard = re.findall(
+                        r"\[RAM78-GATE\].*?PC=1B34 R1=([0-9A-F]{2})", log)
+                    at_1bfd = re.findall(
+                        r"\[RAM78-GATE\].*?PC=1BFD R1=00 R6=([0-9A-F]{2})", log)
+                    self.assertEqual("00" in at_guard, gate_open)
+                    self.assertEqual(bool(at_1bfd), gate_open)
+                    self.assertEqual(set(at_1bfd), {"00"} if gate_open else set())
+                    self.assertEqual("00" in initial, override is not None)
+                    self.assertNotIn("78", report["engine_ram_observation"])
+                    self.assertEqual(set(re.findall(
+                        r"\[RAM78-GATE\].*?RAM78=([0-9A-F]{2})", log)),
+                        {"00"})
+                    summaries[name] = (
+                        report["cc3_observation"]["iram14_15_median"],
+                        report["cc3_observation"]["cc3_pin_model_median_low_width_ticks"],
+                        report["output_latches"]["P5.0"]["median_low_width_ticks"])
+        self.assertEqual(len(set(summaries.values())), 1)
+
+    def test_ram78_r6_gate_reaches_cc3_input_through_1d4b(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = (("gate", None, None),
+                 ("r6_zero", "00", None),
+                 ("r6_one", "01", None),
+                 ("consumer_zero", "01", "00"))
+        summaries = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, r6, consumer in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "180", "MA17_ADC_CH2": "100",
+                        "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "247", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM78_GATE": "1",
+                        "MA17_OVERRIDE_MOVC_AT": "1A38:7ADF:00"})
+                    if r6 is not None:
+                        environment["MA17_OVERRIDE_R6_AT_1C19"] = r6
+                    if consumer is not None:
+                        environment["MA17_OVERRIDE_RAM78"] = consumer
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm", "6000",
+                         "--trace-movc", "--stop-ticks", "2400000",
+                         "--seconds", "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"],
+                                     "1A38:7ADF:00")
+                    self.assertEqual(report["r6_1c19_override_hex"], r6)
+                    self.assertEqual(report["ram78_override_hex"], consumer)
+                    log = (output / "emulator-trace.log").read_text()
+                    self.assertIn("PC=1BFD R1=00 R6=00", log)
+                    writes = report["engine_ram_observation"].get("78", [])
+                    at_consumer = set(re.findall(
+                        r"\[INJECTION-FLOW\].* PC=1D4B .*?RAM78=([0-9A-F]{2})",
+                        log))
+                    if r6 == "01":
+                        self.assertIn("[RAM78-R6-OVERRIDE] PC=1C19", log)
+                        self.assertTrue(any(row["source_pc"] == "1C36"
+                                            for row in writes))
+                        self.assertRegex(log, r"\[RAM78-GATE\].*PC=1C34")
+                        if consumer is None:
+                            self.assertTrue(at_consumer - {"00"})
+                        else:
+                            self.assertEqual(at_consumer, {"00"})
+                    else:
+                        self.assertFalse(writes)
+                        self.assertEqual(at_consumer, {"00"})
+                    summaries[name] = (
+                        report["cc3_observation"]["iram14_15_median"],
+                        report["cc3_observation"]["cc3_pin_model_paired_pulses"],
+                        report["output_latches"]["P5.0"]["median_low_width_ticks"])
+        self.assertEqual(summaries["gate"], summaries["r6_zero"])
+        self.assertEqual(summaries["gate"], summaries["consumer_zero"])
+        self.assertGreater(summaries["r6_one"][0], summaries["gate"][0])
+        self.assertLess(summaries["r6_one"][1], summaries["gate"][1])
+        self.assertEqual(summaries["r6_one"][2], summaries["gate"][2])
+
+    def test_natural_tps_opening_reaches_ram78_curve_and_consumer(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = (("opening", 40, 95, 720, 988, False),
+                 ("closing", 180, 247, 160, 380, False),
+                 ("opening_zero_consumer", 40, 95, 720, 988, True),
+                 ("opening_factor_zero", 40, 95, 720, 988, False),
+                 ("opening_factor_ec", 40, 95, 720, 988, False),
+                 ("opening_factor_f0", 40, 95, 720, 988, False))
+        results = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for name, adc0, adc6, target0, target6, zero in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": str(adc0), "MA17_ADC_CH2": "100",
+                        "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": str(adc6), "MA17_ADC_CH7": "63",
+                        "MA17_ADC10_STEP_CH0": f"800000:{target0}",
+                        "MA17_ADC10_STEP_CH6": f"800000:{target6}",
+                        "MA17_TRACE_RAM78_GATE": "1"})
+                    if zero:
+                        environment["MA17_OVERRIDE_RAM78"] = "00"
+                    factor = {"opening_factor_zero": "00",
+                              "opening_factor_ec": "EC",
+                              "opening_factor_f0": "F0"}.get(name)
+                    if factor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"079C:73F4:{factor}")
+                    output = Path(directory) / name
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm", "6000",
+                         "--trace-movc", "--stop-ticks", "2400000",
+                         "--seconds", "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"],
+                                     f"079C:73F4:{factor}" if factor else None)
+                    self.assertIsNone(report["r6_1c19_override_hex"])
+                    log = (output / "emulator-trace.log").read_text()
+                    writes = report["engine_ram_observation"].get("78", [])
+                    reads = report["movc_observation"]["reads"]
+                    if name != "closing":
+                        self.assertRegex(log,
+                                         r"\[RAM78-GATE\].*PC=1C19 R1=00 R6=FF")
+                        self.assertTrue(any(row["source_pc"] == "1C36"
+                                            and row["after"] == "FF" for row in writes))
+                        self.assertEqual({(row["mapped"], row["value"]): row["count"]
+                                          for row in reads if row["pc"] in
+                                          {"532F", "5333"} and row["mapped"]
+                                          in {"7146", "7147"}},
+                                         {("7146", "FF"): 5,
+                                          ("7147", "FF"): 5})
+                        self.assertTrue(all(int(row["value"], 16) > 0
+                                            for row in reads if row["pc"] == "1A38"))
+                        if factor:
+                            self.assertTrue(any(row["source_pc"] == "07A1"
+                                                and row["before"] == "FF"
+                                                and row["after"] ==
+                                                {"00": "00", "EC": "EB",
+                                                 "F0": "EF"}[factor]
+                                                for row in writes))
+                            self.assertTrue(any(row["pc"] == "079C"
+                                                and row["mapped"] == "73F4"
+                                                and row["value"] == "EE"
+                                                and row["count"] == 110
+                                                for row in reads))
+                    else:
+                        self.assertFalse(writes)
+                        self.assertNotIn("PC=1C19 R1=00", log)
+                    pairs = re.findall(
+                        r"\[INJECTION-FLOW\] tick=(\d+) PC=1DD8 "
+                        r"R2=([0-9A-F]{2}) R3=([0-9A-F]{2})", log)
+                    nonzero_reads = sum(value != "00" for value in re.findall(
+                        r"\[INJECTION-FLOW\].*PC=1D4B.*RAM78=([0-9A-F]{2})",
+                        log))
+                    results[name] = (
+                        {r3 + r2 for tick, r2, r3 in pairs
+                         if 817000 <= int(tick) <= 840000},
+                        report["cc3_observation"]["iram14_15_median"],
+                        {r3 + r2 for tick, r2, r3 in pairs
+                         if 890000 <= int(tick) <= 910000}, nonzero_reads)
+        self.assertIn("07A4", results["opening"][0])
+        self.assertIn("044D", results["opening_zero_consumer"][0])
+        self.assertEqual(results["opening"][1],
+                         results["opening_zero_consumer"][1])
+        self.assertIn("06C5", results["opening"][2])
+        self.assertEqual(results["opening_factor_zero"][2], {"044D"})
+        self.assertIn("06AF", results["opening_factor_ec"][2])
+        self.assertIn("06DF", results["opening_factor_f0"][2])
+        self.assertGreater(results["opening"][3],
+                           results["opening_factor_zero"][3])
+
+    def test_s88_tps_opening_73f4_factor_reaches_ram78_consumer(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        results = {}
+        with tempfile.TemporaryDirectory() as directory:
+            for factor in ("EE", "EC", "F0", "00"):
+                with self.subTest(factor=factor):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH2": "100",
+                        "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_ADC10_STEP_CH0": "800000:720",
+                        "MA17_ADC10_STEP_CH6": "800000:988",
+                        "MA17_TRACE_RAM78_GATE": "1"})
+                    if factor != "EE":
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"079C:73F4:{factor}")
+                    output = Path(directory) / factor
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "6000", "--trace-movc",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    log = (output / "emulator-trace.log").read_text()
+                    self.assertRegex(log,
+                                     r"\[RAM78-GATE\].*PC=1C19 R1=00 R6=FF")
+                    writes = report["engine_ram_observation"].get("78", [])
+                    self.assertTrue(any(row["source_pc"] == "1C36"
+                                        and row["after"] == "FF" for row in writes))
+                    self.assertTrue(any(row["source_pc"] == "07A1"
+                                        and row["before"] == "FF"
+                                        and row["after"] ==
+                                        {"EE": "ED", "EC": "EB",
+                                         "F0": "EF", "00": "00"}[factor]
+                                        for row in writes))
+                    self.assertTrue(any(row["pc"] == "079C"
+                                        and row["mapped"] == "73F4"
+                                        and row["value"] == "EE"
+                                        and row["count"] == 110
+                                        for row in report["movc_observation"]["reads"]))
+                    values = re.findall(
+                        r"\[INJECTION-FLOW\] tick=(\d+) PC=1DD8 "
+                        r"R2=([0-9A-F]{2}) R3=([0-9A-F]{2})", log)
+                    results[factor] = (
+                        {r3 + r2 for tick, r2, r3 in values
+                         if 890000 <= int(tick) <= 910000},
+                        report["cc3_observation"]["iram14_15_median"],
+                        report["output_latches"]["P5.0"]["median_low_width_ticks"])
+        self.assertIn("0793", results["EE"][0])
+        self.assertIn("077B", results["EC"][0])
+        self.assertIn("07B0", results["F0"][0])
+        self.assertEqual(results["00"][0], {"04D0"})
+        self.assertEqual({value[1:] for value in results.values()},
+                         {(340.0, 1843)})
+
+    def test_ram78_tps_step_gate_repeats_across_rpm_and_g_s88(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        sun = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        cases = ((1000, 120, 180, ["FF", "FC", "B6", "9A", "7E"], 1),
+                 (3000, 180, 247, ["FF"] * 5, 3))
+        with tempfile.TemporaryDirectory() as directory:
+            for firmware in (REFERENCE, sun):
+                for rpm, adc0, adc6, expected_r6, expected_writes in cases:
+                    with self.subTest(firmware=firmware.name, rpm=rpm,
+                                      adc0=adc0, adc6=adc6):
+                        environment = {key: value for key, value in
+                                       os.environ.items() if not key.startswith("MA17_")}
+                        environment.update({
+                            "MA17_ADC_CH0": "40", "MA17_ADC_CH2": "100",
+                            "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                            "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                            "MA17_ADC10_STEP_CH0": f"800000:{adc0 * 4}",
+                            "MA17_ADC10_STEP_CH6": f"800000:{adc6 * 4}",
+                            "MA17_TRACE_RAM78_GATE": "1"})
+                        output = Path(directory) / (
+                            f"{firmware.stem}_{rpm}_{adc0}_{adc6}")
+                        run = subprocess.run(
+                            [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                             "--firmware", str(firmware), "--no-kline-inject",
+                             "--crank-immediate", "--rpm", str(rpm),
+                             "--stop-ticks", "2400000", "--seconds", "30",
+                             "--output-dir", str(output)],
+                            capture_output=True, text=True, env=environment,
+                            timeout=35, check=False)
+                        self.assertEqual(run.returncode, 0,
+                                         run.stderr[-1500:])
+                        report = json.loads((output / "execution.json").read_text())
+                        self.assertEqual(report["firmware_sha256"],
+                                         hashlib.sha256(firmware.read_bytes()).hexdigest())
+                        self.assertIsNone(report["movc_override_at_hex"])
+                        self.assertIsNone(report["r6_1c19_override_hex"])
+                        self.assertIsNone(report["ram78_override_hex"])
+                        log = (output / "emulator-trace.log").read_text()
+                        gates = re.findall(
+                            r"\[RAM78-GATE\].*PC=1C19 R1=([0-9A-F]{2}) "
+                            r"R6=([0-9A-F]{2})", log)
+                        self.assertEqual(gates, [("00", value)
+                                                 for value in expected_r6])
+                        writes = [row for row in report[
+                            "engine_ram_observation"].get("78", [])
+                            if row["source_pc"] == "1C36"]
+                        self.assertEqual(len(writes), expected_writes)
+                        self.assertEqual(writes[0]["after"], "FF")
+
+    def test_7520_donor_needs_natural_ram78_at_1d4b(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        sun = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        expected = {REFERENCE: ("06C5", "07DC", "044D", 217.0, 1847),
+                    sun: ("0793", "08CC", "04D0", 340.0, 1843)}
+        with tempfile.TemporaryDirectory() as directory:
+            for firmware, (native, donor_pair, zero_pair,
+                           cc3_median, p5_median) in expected.items():
+                for donor in (False, True):
+                    for zero in (False, True):
+                        with self.subTest(firmware=firmware.name,
+                                          donor=donor, zero=zero):
+                            environment = {key: value for key, value in
+                                           os.environ.items()
+                                           if not key.startswith("MA17_")}
+                            environment.update({
+                                "MA17_ADC_CH0": "40", "MA17_ADC_CH2": "100",
+                                "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                                "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                                "MA17_ADC10_STEP_CH0": "800000:720",
+                                "MA17_ADC10_STEP_CH6": "800000:988",
+                                "MA17_TRACE_RAM78_GATE": "1"})
+                            if donor:
+                                environment["MA17_OVERRIDE_MOVC_AT"] = (
+                                    "532F:7520:6F")
+                            if zero:
+                                environment["MA17_OVERRIDE_RAM78"] = "00"
+                            output = Path(directory) / (
+                                f"{firmware.stem}_{int(donor)}_{int(zero)}")
+                            run = subprocess.run(
+                                [sys.executable,
+                                 str(ROOT / "tools" / "trace_ma17.py"),
+                                 "--firmware", str(firmware),
+                                 "--no-kline-inject", "--crank-immediate",
+                                 "--rpm", "6000", "--trace-movc",
+                                 "--stop-ticks", "2400000", "--seconds", "30",
+                                 "--output-dir", str(output)],
+                                capture_output=True, text=True,
+                                env=environment, timeout=35, check=False)
+                            self.assertEqual(run.returncode, 0,
+                                             run.stderr[-1500:])
+                            report = json.loads(
+                                (output / "execution.json").read_text())
+                            self.assertEqual(report["firmware_sha256"],
+                                             hashlib.sha256(
+                                                 firmware.read_bytes()).hexdigest())
+                            self.assertEqual(report["movc_override_at_hex"],
+                                             "532F:7520:6F" if donor else None)
+                            self.assertEqual(report["ram78_override_hex"],
+                                             "00" if zero else None)
+                            self.assertEqual(report["engine_ram_observation"][
+                                "79"][0]["after"], "6F" if donor else "4D")
+                            self.assertTrue(any(
+                                row["pc"] == "532F" and row["mapped"] ==
+                                "7520" and row["value"] == "4D"
+                                for row in report["movc_observation"]["reads"]))
+                            log = (output / "emulator-trace.log").read_text()
+                            self.assertRegex(log,
+                                             r"\[RAM78-GATE\].*PC=1C19 R1=00 R6=FF")
+                            pairs = re.findall(
+                                r"\[INJECTION-FLOW\] tick=(\d+) PC=1DD8 "
+                                r"R2=([0-9A-F]{2}) R3=([0-9A-F]{2})", log)
+                            observed = {r3 + r2 for tick, r2, r3 in pairs
+                                        if 890000 <= int(tick) <= 910000}
+                            self.assertIn(zero_pair if zero else
+                                          donor_pair if donor else native, observed)
+                            self.assertEqual(report["cc3_observation"][
+                                "iram14_15_median"], cc3_median)
+                            self.assertEqual(report["output_latches"]["P5.0"][
+                                "median_low_width_ticks"], p5_median)
+
+    def test_7520_donor_changes_local_cc3_pulse_via_ram78_at_3000_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        sun = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        cases = ((REFERENCE, False, False, "07FA", 8156),
+                 (REFERENCE, True, False, "0947", 9488),
+                 (REFERENCE, False, True, "0506", 5132),
+                 (REFERENCE, True, True, "0506", 5132),
+                 (sun, False, False, "08F0", 9140),
+                 (sun, True, False, "0A67", 9885))
+        with tempfile.TemporaryDirectory() as directory:
+            for firmware, donor, zero, expected_input, expected_width in cases:
+                with self.subTest(firmware=firmware.name, donor=donor,
+                                  zero_ram78=zero):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH2": "100",
+                        "MA17_ADC_CH3": "4", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_ADC10_STEP_CH0": "800000:720",
+                        "MA17_ADC10_STEP_CH6": "800000:988",
+                        "MA17_TRACE_RAM78_GATE": "1"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:7520:6F"
+                    if zero:
+                        environment["MA17_OVERRIDE_RAM78"] = "00"
+                    output = Path(directory) / (
+                        f"{firmware.stem}_{int(donor)}_{int(zero)}")
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "3000", "--trace-movc",
+                         "--stop-ticks", "1100000", "--seconds", "30",
+                         "--output-dir", str(output)], capture_output=True,
+                        text=True, env=environment, timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    log = (output / "emulator-trace.log").read_text()
+                    entries = re.findall(
+                        r"\[CC3-ENTRY\] instr=(\d+) PC=058E .*?"
+                        r"IRAM14_15=([0-9A-F]{4})", log)
+                    local_inputs = [value for tick, value in entries
+                                    if 907000 <= int(tick) < 907200]
+                    self.assertEqual(local_inputs, [expected_input])
+                    edges = [(int(tick), int(value)) for tick, value in
+                             re.findall(r"\[CC3-PIN\] tick=(\d+) .*?"
+                                        r"value=(\d)", log)]
+                    widths = [next_tick - tick for (tick, value),
+                              (next_tick, next_value) in zip(edges, edges[1:])
+                              if 907000 <= tick < 907200 and value == 0
+                              and next_value == 1]
+                    self.assertEqual(len(widths), 1)
+                    self.assertLessEqual(abs(widths[0] - expected_width), 2)
+
+    def test_ram78_tps_adc10_boundary_follows_channel6_in_tested_state(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        sun = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        cases = ((REFERENCE, 189, 409, False, "2F", "66", "1D", "D1"),
+                 (REFERENCE, 190, 410, True, "30", "67", "1E", "E1"),
+                 (sun, 189, 409, False, "2F", "66", "1D", "D1"),
+                 (sun, 190, 410, True, "30", "67", "1E", "E1"),
+                 (REFERENCE, 190, 409, False, "30", "66", "1D", "D1"),
+                 (REFERENCE, 189, 410, True, "2F", "67", "1E", "E1"))
+        with tempfile.TemporaryDirectory() as directory:
+            for firmware, adc0, adc6, opens, ram60, ram66, ram70, ram6a in cases:
+                with self.subTest(firmware=firmware.name,
+                                  adc0=adc0, adc6=adc6):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC10_CH0": "160", "MA17_ADC10_CH6": "380",
+                        "MA17_ADC10_STEP_CH0": f"800000:{adc0}",
+                        "MA17_ADC10_STEP_CH6": f"800000:{adc6}",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH5": "40", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM78_GATE": "1"})
+                    output = Path(directory) / (
+                        f"{firmware.stem}_{adc0}_{adc6}")
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    for address, expected in (("60", ram60), ("66", ram66),
+                                              ("70", ram70), ("6A", ram6a)):
+                        events = report["sensor_ram_observation"].get(
+                            address, report["engine_ram_observation"].get(
+                                address, []))
+                        changed = [row["after"] for row in events
+                                   if 800000 <= row["tick"] <= 810000]
+                        should_change = (adc0 != 160 if address == "60"
+                                         else adc6 != 380)
+                        self.assertEqual(bool(changed), should_change)
+                        if should_change:
+                            self.assertEqual(changed[-1], expected)
+                    log = (output / "emulator-trace.log").read_text()
+                    entries = re.findall(
+                        r"\[RAM78-GATE\].*PC=1C19 R1=00 R6=([0-9A-F]{2})",
+                        log)
+                    writes = [row for row in report[
+                        "engine_ram_observation"].get("78", [])
+                        if row["source_pc"] == "1C36"]
+                    self.assertEqual(bool(entries), opens)
+                    self.assertEqual(bool(writes), opens)
+                    if opens:
+                        self.assertEqual(len(entries), 5)
+                        self.assertEqual(writes[0]["after"], "97")
 
     def test_temperature_adc10_rounding_and_channel_isolation(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
@@ -2251,6 +5185,771 @@ class VariantTraceTests(unittest.TestCase):
             self.assertNotIn("PC=2B42 RAM27=04->06", log)
             self.assertIn("PC=41E5 XRAM4E=00->04", log)
 
+    def test_7331_movc_reload_changes_f826_without_cc3_inhibit(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        settings = {key: value for key, value in os.environ.items()
+                    if not key.startswith("MA17_")}
+        settings.update(MA17_TRACE_XRAM_ADDRESS="F826",
+                        MA17_TRACE_CC3_DECISION="1",
+                        MA17_TRACE_CC3_AFTER_TICK="1600000",
+                        MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                        MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                        MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                        MA17_ADC10_CH6="988", MA17_ADC10_CH7="252",
+                        MA17_ADC10_STEP_CH0="1200000:160",
+                        MA17_ADC10_STEP_CH6="1200000:380")
+        first_inhibit = []
+        with tempfile.TemporaryDirectory() as directory:
+            for value, first_reload in ((None, "32"), ("01", "01")):
+                with self.subTest(value=value):
+                    environment = dict(settings)
+                    if value is not None:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = f"2D0A:7331:{value}"
+                    output = Path(directory) / (value or "original")
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm", "3000",
+                         "--stop-ticks", "3000000", "--seconds", "30",
+                         "--trace-movc", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "2D0A" and row["mapped"] == "7331"]
+                    self.assertEqual(len(reads), 1)
+                    self.assertEqual(reads[0]["value"], "32")
+                    log = (output / "emulator-trace.log").read_text().splitlines()
+                    writes = [line for line in log if line.startswith(
+                        "[XRAM-ADDRESS-WRITE]") and "PC=2D15" in line]
+                    self.assertTrue(writes)
+                    self.assertIn(f"value=00->{first_reload}", writes[0])
+                    states = [line for line in log if line.startswith(
+                        "[CC3-DECISION]") and "PC=2054" in line and
+                        int(line.split("flags26=")[1][:2], 16) & 0x80]
+                    self.assertTrue(states)
+                    first_inhibit.append(states[0].split("tick=")[1].split()[0])
+        self.assertEqual(first_inhibit, ["2190344", "2190344"])
+
+    def test_p43_level_is_copied_to_f8e2_status_bit_in_full_fiat_boot(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        settings = {key: value for key, value in os.environ.items()
+                    if not key.startswith("MA17_")}
+        settings.update(MA17_TRACE_XRAM_ADDRESS="F8E2",
+                        MA17_ADC_CH0="40", MA17_ADC_CH6="95",
+                        MA17_ADC_CH3="40", MA17_ADC_CH5="40",
+                        MA17_ADC_CH7="63")
+        reports = []
+        with tempfile.TemporaryDirectory() as directory:
+            for low, expected in ((False, ["00->57", "57->77"]),
+                                  (True, ["00->53", "53->73"])):
+                environment = dict(settings)
+                if low:
+                    environment["MA17_P4_3_FORCE_LOW"] = "1"
+                output = Path(directory) / ("p43low" if low else "default")
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                     "--stop-ticks", "2400000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=40, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                writes = [line for line in (output / "emulator-trace.log")
+                          .read_text().splitlines()
+                          if line.startswith("[XRAM-ADDRESS-WRITE]")
+                          and "PC=49C8 addr=F8E2" in line]
+                self.assertEqual([line.split("value=")[1] for line in writes],
+                                 expected)
+                hits = (output / "pc-hits.txt").read_bytes()
+                reports.append((report, hits))
+        self.assertEqual(reports[0][1], reports[1][1])
+        for key in ("output_latches", "cc3_observation", "pc_coverage"):
+            self.assertEqual(reports[0][0][key], reports[1][0][key])
+
+    def test_mode_flags_7375_are_read_by_three_fiat_consumers(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("MA17_")}
+        environment.update(MA17_ADC_CH0="40", MA17_ADC_CH6="95",
+                           MA17_ADC_CH3="40", MA17_ADC_CH5="40",
+                           MA17_ADC_CH7="63")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                 "--stop-ticks", "2400000", "--seconds", "30",
+                 "--trace-movc", "--output-dir", str(output)],
+                capture_output=True, text=True, env=environment,
+                timeout=40, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+            report = json.loads((output / "execution.json").read_text())
+        self.assertEqual(report["firmware_sha256"],
+                         hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+        reads = {row["pc"]: row for row in report["movc_observation"]["reads"]
+                 if row["mapped"] == "7375"}
+        for pc in ("210C", "233F", "36BB"):
+            self.assertIn(pc, reads)
+            self.assertEqual((reads[pc]["dptr"], reads[pc]["acc"],
+                              reads[pc]["value"]), ("7300", "75", "09"))
+            self.assertGreater(reads[pc]["count"], 0)
+
+    def test_f8ef_and_upper_c9_stay_zero_after_fiat_tps_release(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith("MA17_")}
+        environment.update(MA17_TRACE_XRAM_ADDRESS="F8EF",
+                           MA17_TRACE_UPPER_CA_CONSUMER="1",
+                           MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                           MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                           MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                           MA17_ADC10_CH6="988", MA17_ADC10_CH7="252",
+                           MA17_ADC10_STEP_CH0="1200000:160",
+                           MA17_ADC10_STEP_CH6="1200000:380")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--no-kline-inject", "--crank-immediate", "--rpm", "3000",
+                 "--stop-ticks", "3000000", "--seconds", "30",
+                 "--trace-movc", "--output-dir", str(output)],
+                capture_output=True, text=True, env=environment,
+                timeout=40, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+            report = json.loads((output / "execution.json").read_text())
+            log = (output / "emulator-trace.log").read_text().splitlines()
+            hits = set((output / "pc-hits.txt").read_text().splitlines())
+        self.assertEqual(report["firmware_sha256"],
+                         hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+        writes = [line.split("value=")[1] for line in log
+                  if line.startswith("[XRAM-ADDRESS-WRITE]")
+                  and "addr=F8EF" in line]
+        self.assertEqual(writes, ["00->55", "55->AA", "AA->00"])
+        for pc in ("3607", "360E", "2E3A"):
+            self.assertNotIn(pc, hits)
+        consumers = [line for line in log
+                     if line.startswith("[UPPER-CA-CONSUMER]")
+                     and "PC=39B2" in line]
+        self.assertGreater(len(consumers), 200)
+        self.assertTrue(all("UC9=00" in line for line in consumers))
+
+    def test_f8ef_read_reaches_upper_c9_r2_and_p5_with_p46_low(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        settings = {key: value for key, value in os.environ.items()
+                    if not key.startswith("MA17_")}
+        settings.update(MA17_P4_6_FORCE_LOW="1",
+                        MA17_TRACE_XRAM_ADDRESS="F8EF",
+                        MA17_TRACE_XRAM_PC="361A",
+                        MA17_TRACE_UPPER_85_86="1",
+                        MA17_TRACE_UPPER_CA_CONSUMER="1",
+                        MA17_ADC_CH0="40", MA17_ADC_CH6="95",
+                        MA17_ADC_CH3="40", MA17_ADC_CH5="40",
+                        MA17_ADC_CH7="63")
+        reports = []
+        with tempfile.TemporaryDirectory() as directory:
+            for override in (False, True):
+                environment = dict(settings)
+                if override:
+                    environment["MA17_OVERRIDE_XRAM_READ_AT"] = "361A:F8EF:00"
+                output = Path(directory) / ("zero_read" if override else "original")
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "3000",
+                     "--stop-ticks", "600000", "--seconds", "30",
+                     "--trace-movc", "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=40, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                log = (output / "emulator-trace.log").read_text().splitlines()
+                reads = [line for line in log if line.startswith(
+                    "[XRAM-PC-READ] PC=361A addr=F8EF")]
+                self.assertEqual(len(reads), 7)
+                self.assertTrue(all("stored=06 P2=F8 XPAGE=F8" in line
+                                    for line in reads))
+                writes = [line.split("value=")[1] for line in log
+                          if line.startswith("[XRAM-ADDRESS-WRITE]")
+                          and "addr=F8EF" in line]
+                self.assertEqual(writes, ["00->55", "55->AA", "AA->00",
+                                          "00->14", "14->06", "06->00"])
+                reads_7375 = [row for row in report["movc_observation"]["reads"]
+                              if row["pc"] == "360E" and row["mapped"] == "7375"]
+                self.assertEqual(len(reads_7375), 1)
+                self.assertEqual(reads_7375[0]["count"], 7)
+                c9_writes = [line for line in log if line.startswith(
+                    "[UPPER-85-86-READER]") and "PC=3699" in line]
+                c9_reads = [line for line in log if line.startswith(
+                    "[UPPER-CA-CONSUMER]") and "PC=39B2" in line]
+                results = [line for line in log if line.startswith(
+                    "[UPPER-CA-CONSUMER]") and "PC=39F4" in line]
+                self.assertEqual(sum(" A=3C " in line for line in c9_writes),
+                                 0 if override else 7)
+                self.assertEqual(sum(" UC9=3C " in line for line in c9_reads),
+                                 0 if override else 7)
+                self.assertEqual(sum(" A=9B " in line for line in results),
+                                 0 if override else 7)
+                reports.append(report)
+        self.assertEqual(reports[0]["cc3_observation"]["cc3_pin_model_low_starts"],
+                         reports[1]["cc3_observation"]["cc3_pin_model_low_starts"])
+        for pin in ("P5.0", "P5.1"):
+            self.assertEqual(reports[0]["output_latches"][pin]["low_starts"],
+                             reports[1]["output_latches"][pin]["low_starts"])
+            self.assertNotEqual(reports[0]["output_latches"][pin]
+                                ["low_width_histogram"],
+                                reports[1]["output_latches"][pin]
+                                ["low_width_histogram"])
+
+    def test_7310_movc_bound_changes_rpm_branch_and_cc3_inhibit(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        settings = {key: value for key, value in os.environ.items()
+                    if not key.startswith("MA17_")}
+        settings.update(MA17_TRACE_CC3_DECISION="1",
+                        MA17_TRACE_CC3_AFTER_TICK="1600000",
+                        MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                        MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                        MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                        MA17_ADC10_CH6="988", MA17_ADC10_CH7="252",
+                        MA17_ADC10_STEP_CH0="1200000:160",
+                        MA17_ADC10_STEP_CH6="1200000:380")
+        cases = ((1400, None, False, "38"),
+                 (1400, "34", True, "38"),
+                 (1500, None, True, "3C"),
+                 (1500, "3C", False, "3C"))
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm, override, inhibited, rpm_byte in cases:
+                with self.subTest(rpm=rpm, override=override):
+                    environment = dict(settings)
+                    if override is not None:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"2C4B:7310:{override}")
+                    output = Path(directory) / f"{rpm}-{override or 'original'}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         str(rpm), "--stop-ticks", "3000000", "--seconds",
+                         "30", "--trace-movc", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "2C4B" and row["mapped"] == "7310"]
+                    self.assertEqual(len(reads), 1)
+                    self.assertEqual(reads[0]["value"], "38")
+                    log = (output / "emulator-trace.log").read_text().splitlines()
+                    decisions = [line for line in log if line.startswith(
+                        "[CC3-DECISION]") and "PC=2054" in line]
+                    self.assertTrue(decisions)
+                    self.assertIn(f"RAM47={rpm_byte}", decisions[-1])
+                    active = [line for line in decisions if
+                              int(line.split("flags26=")[1][:2], 16) & 0x80]
+                    self.assertEqual(bool(active), inhibited)
+                    edges = [int(line.split("tick=")[1].split()[0])
+                             for line in log if line.startswith("[CC3-PIN]")]
+                    self.assertTrue(edges)
+                    self.assertEqual(any(tick > 2900000 for tick in edges),
+                                     not inhibited)
+
+    def test_7310_guard_depends_on_tps_state_at_fixed_rpm(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="0",
+                    MA17_TRACE_TPS_AFTER_TICK="1100000",
+                    MA17_ADC10_CH1="520", MA17_ADC10_CH2="400",
+                    MA17_ADC10_CH3="16", MA17_ADC10_CH4="360",
+                    MA17_ADC10_CH5="160", MA17_ADC10_CH7="252")
+        cases = ((1400, True, False, False, "38"),
+                 (1400, True, True, False, "38"),
+                 (1500, True, False, True, "3C"),
+                 (1500, False, False, False, "3C"),
+                 (1500, False, True, False, "3C"),
+                 (1600, False, False, False, "40"))
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm, closed, p46_low, inhibited, rpm_byte in cases:
+                with self.subTest(rpm=rpm, closed=closed, p46_low=p46_low):
+                    environment = dict(base)
+                    environment["MA17_ADC10_CH0"] = "160" if closed else "720"
+                    environment["MA17_ADC10_CH6"] = "380" if closed else "988"
+                    if p46_low:
+                        environment["MA17_P4_6_FORCE_LOW"] = "1"
+                    output = Path(directory) / f"{rpm}-{closed}-{p46_low}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         str(rpm), "--stop-ticks", "3000000", "--seconds",
+                         "30", "--trace-movc", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["rpm_observation"]
+                                     ["ram47_changes"][-1]["after"], rpm_byte)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "2C4B" and row["mapped"] == "7310"]
+                    self.assertEqual(bool(reads), closed or p46_low)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    decisions = [line for line in lines
+                                 if line.startswith("[CC3-DECISION]")]
+                    self.assertTrue(decisions)
+                    active = any(int(line.split("flags26=")[1][:2], 16) & 0x80
+                                 for line in decisions if "PC=2054" in line)
+                    self.assertEqual(active, inhibited)
+                    edges = [int(line.split("tick=")[1].split()[0])
+                             for line in lines if line.startswith("[CC3-PIN]")]
+                    self.assertTrue(edges)
+                    self.assertEqual(edges[-1] < 1200000, inhibited)
+                    if rpm == 1500 and (closed or p46_low):
+                        hits = set((output / "pc-hits.txt").read_text().splitlines())
+                        self.assertIn("2C4B", hits)
+                        self.assertEqual("2D04" in hits, closed)
+                        if closed:
+                            self.assertNotIn("11A8", hits)
+                            self.assertIn("11D1", hits)
+                            self.assertTrue(any(
+                                "PC=11D1" in line and "A=1B" in line
+                                for line in lines if line.startswith("[TPS-FLOW]")))
+                            self.assertTrue(any(
+                                "PC=2D04 CY=1" in line and
+                                "RAM47=3C" in line and "R2=38" in line
+                                for line in decisions))
+                            self.assertTrue(any(
+                                "PC=2D10 CY=1" in line and
+                                "flags26=10" in line for line in decisions))
+                        else:
+                            self.assertIn("11A8", hits)
+                            self.assertIn("11C0", hits)
+                            self.assertTrue(any(
+                                "PC=1175 R2=B4 R3=1A R4=F7" in line
+                                for line in lines if line.startswith("[TPS-FLOW]")))
+                            self.assertNotIn("2CD9", hits)
+                            self.assertTrue(any(
+                                "PC=2D0E CY=0" in line and
+                                "RAM70=DF" in line and "R2=38" in line
+                                for line in decisions))
+
+    def test_tps_state_can_bypass_7310_before_ram70_comparison(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_ADC10_CH1="520", MA17_ADC10_CH2="400",
+                    MA17_ADC10_CH3="16", MA17_ADC10_CH4="360",
+                    MA17_ADC10_CH5="160", MA17_ADC10_CH7="252",
+                    MA17_TRACE_CUTOFF_PATH="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc0, adc6, ram70, reaches in ((320, 580, "2C", True),
+                                               (400, 680, "34", False)):
+                with self.subTest(adc0=adc0, adc6=adc6):
+                    environment = dict(base, MA17_ADC10_CH0=str(adc0),
+                                       MA17_ADC10_CH6=str(adc6))
+                    output = Path(directory) / str(adc0)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1500", "--stop-ticks", "2000000", "--seconds",
+                         "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    path = [line for line in lines
+                            if line.startswith("[CUTOFF-PATH]")]
+                    self.assertTrue(any("PC=2C3C" in line and
+                                        f"RAM70={ram70}" in line
+                                        for line in path))
+                    self.assertEqual(any("PC=2C49" in line for line in path),
+                                     reaches)
+                    self.assertEqual(any("PC=2D04" in line for line in path),
+                                     reaches)
+                    self.assertEqual(any("PC=2C3C" in line and
+                                         "F24=AA" in line and
+                                         "F27=0E" in line for line in path),
+                                     reaches)
+
+    def test_ram6f_read_mediates_tps_pre_movc_gate(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_ADC10_CH1="520", MA17_ADC10_CH2="400",
+                    MA17_ADC10_CH3="16", MA17_ADC10_CH4="360",
+                    MA17_ADC10_CH5="160", MA17_ADC10_CH7="252",
+                    MA17_TRACE_744E_BRANCH="1",
+                    MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000")
+        cases = ((320, 580, "84", None, True),
+                 (320, 580, "84", "9D", False),
+                 (400, 680, "9D", None, False),
+                 (400, 680, "9D", "84", True))
+        with tempfile.TemporaryDirectory() as directory:
+            for adc0, adc6, stored, supplied, gate in cases:
+                with self.subTest(adc0=adc0, adc6=adc6, supplied=supplied):
+                    environment = dict(base, MA17_ADC10_CH0=str(adc0),
+                                       MA17_ADC10_CH6=str(adc6))
+                    if supplied:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = (
+                            f"29A3:6F:{supplied}")
+                    output = Path(directory) / f"{adc0}_{supplied or 'base'}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1500", "--stop-ticks", "2000000", "--seconds",
+                         "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["iram_read_override_at_hex"],
+                                     f"29A3:6F:{supplied}" if supplied else None)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], 51 if gate else 93)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    for pc in ("2AF9", "2B42", "2C49", "2D04"):
+                        self.assertEqual(pc in hits, gate, pc)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    branch = [line for line in lines
+                              if line.startswith("[CURVE-744E-BRANCH]")]
+                    self.assertTrue(any("PC=2A93" in line and
+                                        f"R2={supplied or stored}" in line
+                                        for line in branch))
+                    decisions = [line for line in lines
+                                 if line.startswith("[CC3-DECISION]") and
+                                 "PC=2054" in line]
+                    active = sum(bool(int(line.split("flags26=")[1][:2],
+                                          16) & 0x80) for line in decisions)
+                    self.assertEqual(active, 81 if gate else 0)
+
+    def test_s88_ram6f_read_repeats_pre_movc_gate(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        gasoline, s88 = REFERENCE.read_bytes(), firmware.read_bytes()
+        for start, end in ((0x11C4, 0x11D4), (0x299A, 0x29A8),
+                           (0x2A78, 0x2AB4), (0x2AF9, 0x2B4F),
+                           (0x2C3C, 0x2D16), (0x1F9B, 0x205C)):
+            self.assertEqual(s88[start:end], gasoline[start:end])
+        self.assertEqual(s88[0x7310], gasoline[0x7310])
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_ADC10_CH1="520", MA17_ADC10_CH2="400",
+                    MA17_ADC10_CH3="16", MA17_ADC10_CH4="360",
+                    MA17_ADC10_CH5="160", MA17_ADC10_CH7="252",
+                    MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc0, adc6, supplied, gate in ((320, 580, None, True),
+                                               (320, 580, "9D", False),
+                                               (400, 680, None, False),
+                                               (400, 680, "84", True)):
+                with self.subTest(adc0=adc0, adc6=adc6, supplied=supplied):
+                    environment = dict(base, MA17_ADC10_CH0=str(adc0),
+                                       MA17_ADC10_CH6=str(adc6))
+                    if supplied:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = (
+                            f"29A3:6F:{supplied}")
+                    output = Path(directory) / f"{adc0}_{supplied or 'base'}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1500",
+                         "--stop-ticks", "2000000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(s88).hexdigest())
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], 51 if gate else 93)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    for pc in ("2AF9", "2B42", "2C49", "2D04"):
+                        self.assertEqual(pc in hits, gate, pc)
+                    decisions = [line for line in
+                                 (output / "emulator-trace.log").read_text().splitlines()
+                                 if line.startswith("[CC3-DECISION]") and
+                                 "PC=2054" in line]
+                    self.assertEqual(sum(bool(int(line.split("flags26=")[1][:2],
+                                                  16) & 0x80)
+                                         for line in decisions), 81 if gate else 0)
+
+    def test_ram70_read_at_2cd3_mediates_rpm_guard_but_not_persistence(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000",
+                    MA17_ADC10_CH1="520", MA17_ADC10_CH2="400",
+                    MA17_ADC10_CH3="16", MA17_ADC10_CH4="360",
+                    MA17_ADC10_CH5="160", MA17_ADC10_CH7="252")
+        cases = (("closed", None, 51, True, True),
+                 ("closed", "DF", 143, False, False),
+                 ("open_p46low", None, 143, False, False),
+                 ("open_p46low", "1B", 139, True, True))
+        with tempfile.TemporaryDirectory() as directory:
+            for state, override, pulse_count, reaches_2d04, active in cases:
+                with self.subTest(state=state, override=override):
+                    environment = dict(base)
+                    closed = state == "closed"
+                    environment["MA17_ADC10_CH0"] = "160" if closed else "720"
+                    environment["MA17_ADC10_CH6"] = "380" if closed else "988"
+                    if not closed:
+                        environment["MA17_P4_6_FORCE_LOW"] = "1"
+                    if override:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = (
+                            f"2CD3:70:{override}")
+                        environment["MA17_OVERRIDE_IRAM_READ_AFTER_TICK"] = (
+                            "1100000")
+                    output = Path(directory) / f"{state}-{override or 'base'}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1500", "--stop-ticks", "3000000", "--seconds",
+                         "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], pulse_count)
+                    self.assertEqual(report["iram_read_override_at_hex"],
+                                     f"2CD3:70:{override}" if override else None)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertEqual("2D04" in hits, reaches_2d04)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    overrides = [line for line in lines
+                                 if line.startswith("[IRAM-READ-OVERRIDE]")]
+                    self.assertEqual(bool(overrides), override is not None)
+                    if override:
+                        self.assertIn(f"supplied={override}", overrides[0])
+                    decisions = [line for line in lines
+                                 if line.startswith("[CC3-DECISION]") and
+                                 "PC=2054" in line]
+                    active_count = sum(bool(int(line.split("flags26=")[1][:2],
+                                                16) & 0x80)
+                                       for line in decisions)
+                    self.assertEqual(bool(active_count), active)
+                    if state == "open_p46low" and override:
+                        self.assertEqual(active_count, 8)
+                        self.assertTrue(any(
+                            "PC=2D0E CY=0" in line and "flags26=90" in line
+                            for line in lines if line.startswith("[CC3-DECISION]")
+                            and int(line.split("tick=")[1].split()[0]) > 1186000))
+                        self.assertTrue(any(
+                            "PC=2054" in line and "flags26=00" in line
+                            for line in decisions))
+                        edges = [int(line.split("tick=")[1].split()[0])
+                                 for line in lines if line.startswith("[CC3-PIN]")]
+                        self.assertGreater(edges[-1], 2900000)
+
+    def test_ram70_read_pair_controls_guard_persistence_with_p46_low(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_P4_6_FORCE_LOW="1", MA17_TRACE_IDLE_FAULT="1",
+                    MA17_TRACE_CUTOFF_PATH="1",
+                    MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000",
+                    MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                    MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                    MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                    MA17_ADC10_CH6="988", MA17_ADC10_CH7="252")
+        cases = (("base", None, 143, 0, True),
+                 ("gate", "2CD3:70:1B", 139, 8, True),
+                 ("fault", "29CE:70:1B", 143, 0, True),
+                 ("both", "2CD3:70:1B,29CE:70:1B", 48, 185, False))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, starts, active_count, late_edges in cases:
+                with self.subTest(name=name):
+                    environment = dict(base)
+                    if override:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = override
+                        environment["MA17_OVERRIDE_IRAM_READ_AFTER_TICK"] = (
+                            "1100000")
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1500", "--stop-ticks", "3000000", "--seconds",
+                         "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["cutoff_path_trace_enabled"])
+                    self.assertEqual(report["iram_read_override_at_hex"],
+                                     override)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], starts)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    decisions = [line for line in lines
+                                 if line.startswith("[CC3-DECISION]") and
+                                 "PC=2054" in line]
+                    self.assertEqual(sum(bool(int(line.split("flags26=")[1][:2],
+                                                  16) & 0x80)
+                                         for line in decisions), active_count)
+                    edges = [int(line.split("tick=")[1].split()[0])
+                             for line in lines if line.startswith("[CC3-PIN]")]
+                    self.assertEqual(edges[-1] > 2900000, late_edges)
+                    if name == "gate":
+                        self.assertTrue(any(
+                            "PC=29D5 RAM27=08->09" in line
+                            for line in lines if line.startswith(
+                                "[IDLE-FAULT-SOURCE]")))
+                        self.assertTrue(any(
+                            "PC=2C24" in line and "F27=09" in line
+                            for line in lines if line.startswith("[CUTOFF-PATH]")))
+                    if name == "both":
+                        self.assertTrue(any(
+                            "PC=2BFD" in line and "F27=08" in line and
+                            "F26=90" in line for line in lines
+                            if line.startswith("[CUTOFF-PATH]")))
+                        self.assertFalse(any(
+                            "PC=29D5" in line for line in lines
+                            if line.startswith("[IDLE-FAULT-SOURCE]")))
+
+    def test_s88_ram70_read_pair_repeats_guard_interaction(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        base = {key: value for key, value in os.environ.items()
+                if not key.startswith("MA17_")}
+        base.update(MA17_P4_6_FORCE_LOW="1", MA17_TRACE_IDLE_FAULT="1",
+                    MA17_TRACE_CC3_DECISION="1",
+                    MA17_TRACE_CC3_AFTER_TICK="1000000",
+                    MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                    MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                    MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                    MA17_ADC10_CH6="988", MA17_ADC10_CH7="252")
+        cases = (("base", None, 143, 0, True),
+                 ("gate", "2CD3:70:1B", 139, 8, True),
+                 ("fault", "29CE:70:1B", 143, 0, True),
+                 ("both", "2CD3:70:1B,29CE:70:1B", 48, 186, False))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, override, starts, active_count, late_edges in cases:
+                with self.subTest(name=name):
+                    environment = dict(base)
+                    if override:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = override
+                        environment["MA17_OVERRIDE_IRAM_READ_AFTER_TICK"] = (
+                            "1100000")
+                    output = Path(directory) / name
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1500",
+                         "--stop-ticks", "3000000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    self.assertEqual(report["iram_read_override_at_hex"],
+                                     override)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], starts)
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    decisions = [line for line in lines
+                                 if line.startswith("[CC3-DECISION]") and
+                                 "PC=2054" in line]
+                    self.assertEqual(sum(bool(int(line.split("flags26=")[1][:2],
+                                                  16) & 0x80)
+                                         for line in decisions), active_count)
+                    edges = [int(line.split("tick=")[1].split()[0])
+                             for line in lines if line.startswith("[CC3-PIN]")]
+                    self.assertEqual(edges[-1] > 2900000, late_edges)
+                    bit_zero_set = any("PC=29D5 RAM27=08->09" in line
+                                       for line in lines if line.startswith(
+                                           "[IDLE-FAULT-SOURCE]"))
+                    self.assertEqual(bit_zero_set, name in ("base", "gate"))
+
+    def test_s88_7310_bound_has_same_branch_response(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        firmware = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        settings = {key: value for key, value in os.environ.items()
+                    if not key.startswith("MA17_")}
+        settings.update(MA17_TRACE_CC3_DECISION="1",
+                        MA17_TRACE_CC3_AFTER_TICK="1600000",
+                        MA17_ADC10_CH0="720", MA17_ADC10_CH1="520",
+                        MA17_ADC10_CH2="400", MA17_ADC10_CH3="16",
+                        MA17_ADC10_CH4="360", MA17_ADC10_CH5="160",
+                        MA17_ADC10_CH6="988", MA17_ADC10_CH7="252",
+                        MA17_ADC10_STEP_CH0="1200000:160",
+                        MA17_ADC10_STEP_CH6="1200000:380")
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm, override, inhibited in ((1400, None, False),
+                                             (1400, "34", True),
+                                             (1500, None, True),
+                                             (1500, "3C", False)):
+                with self.subTest(rpm=rpm, override=override):
+                    environment = dict(settings)
+                    if override is not None:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"2C4B:7310:{override}")
+                    output = Path(directory) / f"{rpm}-{override or 'original'}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(firmware), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", str(rpm),
+                         "--stop-ticks", "3000000", "--seconds", "30",
+                         "--trace-movc", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=40, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(firmware.read_bytes()).hexdigest())
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "2C4B" and row["mapped"] == "7310"]
+                    self.assertEqual(len(reads), 1)
+                    self.assertEqual(reads[0]["value"], "38")
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    active = [line for line in lines if line.startswith(
+                        "[CC3-DECISION]") and "PC=2054" in line and
+                        int(line.split("flags26=")[1][:2], 16) & 0x80]
+                    self.assertEqual(bool(active), inhibited)
+                    edges = [int(line.split("tick=")[1].split()[0])
+                             for line in lines if line.startswith("[CC3-PIN]")]
+                    self.assertTrue(edges)
+                    self.assertEqual(any(tick > 2900000 for tick in edges),
+                                     not inhibited)
+
     def test_experimental_p46_low_changes_idle_fault_source_path(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
@@ -2370,6 +6069,221 @@ class VariantTraceTests(unittest.TestCase):
             pc_hits = (output / "pc-hits.txt").read_text().splitlines()
             self.assertNotIn("23CE", pc_hits)
             self.assertNotIn("23F4", pc_hits)
+
+    def test_79b0_79ba_movc_cells_independently_write_upper_85_86(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for donor in (None, "85", "86"):
+                with self.subTest(donor=donor):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_UPPER_85_86": "1"})
+                    if donor:
+                        address = "79B0" if donor == "85" else "79BA"
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            f"532F:{address}:40")
+                    output = Path(directory) / (donor or "native")
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--trace-movc", "--stop-ticks", "120000",
+                         "--seconds", "10", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["upper_85_86_trace_enabled"])
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and
+                             row["mapped"] in ("79B0", "79BA")]
+                    self.assertEqual({row["mapped"] for row in reads},
+                                     {"79B0", "79BA"})
+                    self.assertTrue(all(row["value"] == "FF" and
+                                        row["count"] >= 30 for row in reads))
+                    rows = re.findall(r"\[UPPER-85-86\].*",
+                                      (output / "emulator-trace.log").read_text())
+                    for address in ("85", "86"):
+                        selected = [row for row in rows
+                                    if f"addr={address}" in row]
+                        self.assertGreaterEqual(len(selected), 30)
+                        expected = "40" if donor == address else "FF"
+                        self.assertTrue(all(f"supplied={expected}" in row
+                                            for row in selected))
+
+    def test_74e4_first_cell_reaches_ram49_and_scaled_r2_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for donor, expected49, expected_r2 in (
+                    (False, "73", "2F"), (True, "40", "25")):
+                with self.subTest(donor=donor):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_129D_PATH": "1",
+                        "MA17_TRACE_RAM4D_PATH": "1"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "12BD:74E4:40"
+                    output = Path(directory) / ("donor" if donor else "native")
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000", "--trace-movc",
+                         "--stop-ticks", "120000", "--seconds", "10",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "12BD" and row["mapped"] == "74E4"]
+                    self.assertEqual([(row["value"], row["count"])
+                                      for row in reads], [("73", 8)])
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    path = [dict(re.findall(r"(\w+)=(\w+)", line))
+                            for line in lines if line.startswith("[129D-PATH]")
+                            and "PC=12C0" in line]
+                    self.assertEqual(len(path), 8)
+                    self.assertEqual({row["RAM49"] for row in path}, {expected49})
+                    scaled = [dict(re.findall(r"(\w+)=(\w+)", line))
+                              for line in lines if line.startswith("[RAM4D-PATH]")
+                              and "PC=233B" in line and "RAM4D=19" in line]
+                    self.assertEqual(len(scaled), 6)
+                    self.assertEqual({row["R2"] for row in scaled}, {expected_r2})
+
+    def test_7ae0_constant_table_reaches_cc3_through_f87f(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = (("native", False, False, "04", "77", 1228, 4900),
+                 ("donor", True, False, "03", "66", 1211, 4832),
+                 ("native_read_ff", False, True, "04", "77", 1228, 4900),
+                 ("donor_rescue", True, True, "04", "77", 1228, 4900))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, donor, rescue, ram4f, ram5a, schedule, width in cases:
+                with self.subTest(name=name):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC10_CH2": "400", "MA17_ADC10_CH3": "160",
+                        "MA17_ADC10_STEP_CH3": "800000:204",
+                        "MA17_ADC_CH7": "63", "MA17_TRACE_XRAM_F87F": "1"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:7AE0:80"
+                    if rescue:
+                        environment["MA17_OVERRIDE_XRAM_READ_AT"] = (
+                            "480D:F87F:FF")
+                    output = Path(directory) / name
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000", "--trace-movc",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["xram_f87f_trace_enabled"])
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and row["mapped"] == "7AE0"]
+                    self.assertTrue(reads and reads[0]["count"] > 400)
+                    self.assertEqual({row["value"] for row in reads}, {"FF"})
+                    self.assertEqual(report["engine_ram_observation"]["4F"][-1]
+                                     ["after"], ram4f)
+                    self.assertEqual(report["engine_ram_observation"]["5A"][-1]
+                                     ["after"], ram5a)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["iram14_15_median"], schedule)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     width)
+                    log = (output / "emulator-trace.log").read_text()
+                    stored = re.findall(r"\[F87F-TABLE-READ\] "
+                                        r"PC=480D stored=([0-9A-F]{2})", log)
+                    self.assertEqual(len(stored), 512)
+                    self.assertEqual(set(stored),
+                                     {"FF", "A0", "80"} if donor else {"FF"})
+                    self.assertEqual("[XRAM-READ-OVERRIDE] PC=480D" in log,
+                                     rescue)
+
+    def test_forced_7bbe_7c36_donors_reach_p5_through_ram69_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        donors = {
+            "A": VARIANTS / "tipo 1.6 alcool27c256.bin",
+            "S88": VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"}
+        cases = (
+            ("1", None, None, "66", 5868.0, 5880.5),
+            ("1", "A", None, "9A", 5908.0, 5908.0),
+            ("1", "S88", None, "6E", 5885.0, 5884.0),
+            ("1", None, "9A", "66", 5908.0, 5908.0),
+            ("1", "A", "66", "9A", 5868.0, 5879.0),
+            ("2", None, None, "66", 5868.0, 5880.0),
+            ("2", "S88", None, "6E", 5885.0, 5884.0))
+        with tempfile.TemporaryDirectory() as directory:
+            for mode, donor, ram69, final69, p50, p51 in cases:
+                with self.subTest(mode=mode, donor=donor, ram69=ram69):
+                    base = "7BBE" if mode == "1" else "7C36"
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "20",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_OVERRIDE_RAM57": mode})
+                    if donor:
+                        environment.update({
+                            "MA17_OVERRIDE_MOVC_MATRIX_ROM": str(donors[donor]),
+                            "MA17_OVERRIDE_MOVC_MATRIX_BASE": base})
+                    if ram69:
+                        environment["MA17_OVERRIDE_RAM69"] = ram69
+                    output = Path(directory) / f"{mode}-{donor}-{ram69}"
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000", "--trace-movc",
+                         "--stop-ticks", "2400000", "--seconds", "25",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["ram57_override_hex"], mode)
+                    self.assertEqual(report["movc_matrix_size"],
+                                     120 if donor else None)
+                    reads = sum(row["count"] for row in
+                                report["movc_observation"]["reads"]
+                                if int(base, 16) <= int(row["mapped"], 16)
+                                < int(base, 16) + 120)
+                    self.assertEqual(reads, 650)
+                    self.assertEqual(report["engine_ram_observation"]["69"][-1]
+                                     ["after"], final69)
+                    for pin, expected in (("P5.0", p50), ("P5.1", p51)):
+                        self.assertEqual(report["output_latches"][pin]
+                                         ["median_low_width_ticks"], expected)
+                    self.assertEqual("[RAM69-OVERRIDE]" in
+                                     (output / "emulator-trace.log").read_text(),
+                                     ram69 is not None)
 
     @unittest.skipUnless(os.environ.get("MA17_RUN_SLOW") == "1",
                          "set MA17_RUN_SLOW=1 for the 12.3M-tick idle step")
@@ -2639,6 +6553,139 @@ class VariantTraceTests(unittest.TestCase):
                                       for line in second_guard}, {expected_b})
                     self.assertEqual(any("PC=186D" in line for line in gates),
                                      enabled)
+
+    def test_752a_donor_reaches_cc3_on_natural_tps_release(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        donor_rom = VARIANTS / "tipo 1.6 alcool27c256.bin"
+        for firmware in (REFERENCE, donor_rom):
+            self.assertEqual(int.from_bytes(firmware.read_bytes()[0x707C:0x707E],
+                                            "big"), 0x752A)
+        with tempfile.TemporaryDirectory() as directory:
+            for donor, ram7b, final_b, zero_entries, pulses, entry107 in (
+                    ("control", "73", "0E", 2, 127, "00CA"),
+                    ("cell752b", "93", "12", 12, 117, "0000"),
+                    ("cell752c", "76", "0E", 4, 125, "0000"),
+                    ("curve", "95", "12", 12, 117, "0000")):
+                with self.subTest(donor=donor):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update(
+                        MA17_ADC_CH0="180", MA17_ADC_CH1="130",
+                        MA17_ADC_CH2="140", MA17_ADC_CH3="34",
+                        MA17_ADC_CH4="90", MA17_ADC_CH5="110",
+                        MA17_ADC_CH6="247", MA17_ADC_CH7="63",
+                        MA17_ADC10_STEP_CH0="3274600:160",
+                        MA17_ADC10_STEP_CH6="3274600:380",
+                        MA17_TRACE_78XX_PATH="1")
+                    if donor == "curve":
+                        environment.update(
+                            MA17_OVERRIDE_MOVC_MATRIX_BASE="752A",
+                            MA17_OVERRIDE_MOVC_MATRIX_ROM=str(donor_rom))
+                    elif donor == "cell752b":
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:752B:95"
+                    elif donor == "cell752c":
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "5333:752C:9C"
+                    output = Path(directory) / str(donor)
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "4000000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_matrix_base_hex"],
+                                     "752A" if donor == "curve" else None)
+                    self.assertEqual(report["engine_ram_observation"]["7B"][-1]
+                                     ["after"], ram7b)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["dptr"] == "752A"]
+                    read_count = 797 if donor == "cell752b" else 798
+                    self.assertEqual({(row["address"], row["count"])
+                                      for row in reads},
+                                     {("752B", read_count),
+                                      ("752C", read_count)})
+                    lines = (output / "emulator-trace.log").read_text().splitlines()
+                    consumers = [line for line in lines
+                                 if line.startswith("[78XX-CONSUMER]")
+                                 and "PC=1CB7" in line]
+                    self.assertEqual(len(consumers), 386)
+                    self.assertEqual(sum("RAM7A=00" not in line
+                                         for line in consumers), 69)
+                    self.assertIn(f"RAM7A=8C RAM7B={ram7b}", consumers[-1])
+                    final = [line for line in lines
+                             if line.startswith("[78XX-CONSUMER]")
+                             and "PC=1CDF" in line]
+                    self.assertIn(f"B={final_b}", final[-1])
+                    entries = [line for line in lines
+                               if line.startswith("[CC3-ENTRY]")]
+                    self.assertEqual(len(entries), 129)
+                    self.assertEqual(sum("IRAM14_15=0000" in line
+                                         for line in entries), zero_entries)
+                    self.assertIn(f"IRAM14_15={entry107}", entries[107])
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], pulses)
+
+    def test_752a_donor_repeats_on_s88_tps_release(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        sun = VARIANTS / "tipo 1.6 alcool27c256 SUN 8817.bin"
+        donor_rom = VARIANTS / "tipo 1.6 alcool27c256.bin"
+        with tempfile.TemporaryDirectory() as directory:
+            for donor, ram7b, final_b, zeros, pulses in (
+                    (False, "73", "0E", 4, 125),
+                    (True, "95", "12", 12, 117)):
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith("MA17_")}
+                environment.update(
+                    MA17_ADC_CH0="180", MA17_ADC_CH1="130",
+                    MA17_ADC_CH2="140", MA17_ADC_CH3="34",
+                    MA17_ADC_CH4="90", MA17_ADC_CH5="110",
+                    MA17_ADC_CH6="247", MA17_ADC_CH7="63",
+                    MA17_ADC10_STEP_CH0="3274600:160",
+                    MA17_ADC10_STEP_CH6="3274600:380",
+                    MA17_TRACE_78XX_PATH="1")
+                if donor:
+                    environment.update(
+                        MA17_OVERRIDE_MOVC_MATRIX_BASE="752A",
+                        MA17_OVERRIDE_MOVC_MATRIX_ROM=str(donor_rom))
+                output = Path(directory) / str(donor)
+                run = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/trace_ma17.py"),
+                     "--firmware", str(sun), "--trace-movc",
+                     "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                     "--stop-ticks", "4000000", "--seconds", "30",
+                     "--output-dir", str(output)],
+                    capture_output=True, text=True, env=environment,
+                    timeout=35, check=False)
+                self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                report = json.loads((output / "execution.json").read_text())
+                self.assertEqual(report["firmware_sha256"],
+                                 hashlib.sha256(sun.read_bytes()).hexdigest())
+                self.assertEqual(report["engine_ram_observation"]["7B"][-1]
+                                 ["after"], ram7b)
+                lines = (output / "emulator-trace.log").read_text().splitlines()
+                consumers = [line for line in lines
+                             if line.startswith("[78XX-CONSUMER]")
+                             and "PC=1CB7" in line]
+                self.assertEqual(sum("RAM7A=00" not in line
+                                     for line in consumers), 69)
+                self.assertIn(f"RAM7A=8C RAM7B={ram7b}", consumers[-1])
+                final = [line for line in lines
+                         if line.startswith("[78XX-CONSUMER]")
+                         and "PC=1CDF" in line]
+                self.assertIn(f"B={final_b}", final[-1])
+                entries = [line for line in lines
+                           if line.startswith("[CC3-ENTRY]")]
+                self.assertEqual(sum("IRAM14_15=0000" in line
+                                     for line in entries), zeros)
+                self.assertEqual(report["cc3_observation"]
+                                 ["cc3_pin_model_low_starts"], pulses)
 
     def test_750c_curve_natural_read_changes_iram79_without_cc3_effect(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
@@ -4686,6 +8733,223 @@ class VariantTraceTests(unittest.TestCase):
                                      ["cc3_pin_model_median_low_width_ticks"],
                                      5137)
 
+    def test_78bd_natural_adc5_branch_and_donor_reach_f801(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        donor = VARIANTS / "tipo 1.6 alcool27c256.bin"
+        original_hash = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            for use_donor, expected in ((False, "72"), (True, "9A")):
+                with self.subTest(use_donor=use_donor):
+                    environment = {
+                        key: value for key, value in os.environ.items()
+                        if not key.startswith(("MA17_ADC", "MA17_OVERRIDE_",
+                                               "MA17_TRACE_", "MA17_P4_"))}
+                    environment.update(
+                        MA17_ADC_CH0="40", MA17_ADC_CH6="95",
+                        MA17_ADC_CH3="4", MA17_ADC_CH5="200",
+                        MA17_ADC_CH7="63", MA17_TRACE_78XX_PATH="1")
+                    if use_donor:
+                        environment.update(
+                            MA17_OVERRIDE_MOVC_MATRIX_BASE="78BD",
+                            MA17_OVERRIDE_MOVC_MATRIX_ROM=str(donor))
+                    output = Path(directory) / str(use_donor)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"], original_hash)
+                    self.assertEqual(report["movc_matrix_pointer_slot_hex"],
+                                     "7084" if use_donor else None)
+                    reads = report["movc_observation"]["reads"]
+                    self.assertEqual(sum(row["count"] for row in reads
+                                         if 0x78BD <= int(row["mapped"], 16)
+                                         < 0x78D1), 1736)
+                    trace = (output / "emulator-trace.log").read_text()
+                    branch = [line for line in trace.splitlines()
+                              if line.startswith("[78XX-PATH]") and
+                              "PC=3E1A" in line]
+                    self.assertEqual(len(branch), 369)
+                    writes = [line for line in trace.splitlines()
+                              if line.startswith("[78XX-PATH]") and
+                              "PC=3E33" in line]
+                    self.assertEqual(len(writes), 429)
+                    self.assertIn(f"A={expected}", writes[-1])
+                    consumers = [line for line in trace.splitlines()
+                                 if line.startswith("[78XX-CONSUMER]") and
+                                 "PC=1CB7" in line]
+                    self.assertGreater(len(consumers), 200)
+                    self.assertIn(f"X01={expected} XFB=FF RAM7A=00",
+                                  consumers[-1])
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 1861)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     2372)
+
+    def test_78bd_donor_reaches_nonzero_iram7a_consumer_after_tps_release(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        donor = VARIANTS / "tipo 1.6 alcool27c256.bin"
+        reference_hash = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            for use_donor, expected_x01, expected_b, expected_pulses, \
+                    candidate, published in (
+                    (False, "72", "0C", 129, "E2", "E2"),
+                    (True, "9A", "10", 119, "5A", "00")):
+                with self.subTest(use_donor=use_donor):
+                    environment = {
+                        key: value for key, value in os.environ.items()
+                        if not key.startswith(("MA17_ADC", "MA17_OVERRIDE_",
+                                               "MA17_TRACE_", "MA17_P4_"))}
+                    for channel, value in enumerate(
+                            (180, 130, 140, 4, 90, 200, 247, 63)):
+                        environment[f"MA17_ADC_CH{channel}"] = str(value)
+                    environment.update(
+                        MA17_ADC10_STEP_CH0="3274600:160",
+                        MA17_ADC10_STEP_CH6="3274600:380",
+                        MA17_TRACE_78XX_PATH="1")
+                    if use_donor:
+                        environment.update(
+                            MA17_OVERRIDE_MOVC_MATRIX_BASE="78BD",
+                            MA17_OVERRIDE_MOVC_MATRIX_ROM=str(donor))
+                    output = Path(directory) / str(use_donor)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "4000000", "--seconds", "25",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"], reference_hash)
+                    reads = report["movc_observation"]["reads"]
+                    self.assertEqual(sum(row["count"] for row in reads
+                                         if 0x78BD <= int(row["mapped"], 16)
+                                         < 0x78D1), 2988)
+                    trace = (output / "emulator-trace.log").read_text()
+                    consumers = [line for line in trace.splitlines()
+                                 if line.startswith("[78XX-CONSUMER]")
+                                 and "PC=1CB7" in line]
+                    self.assertEqual(len(consumers), 386)
+                    self.assertEqual(sum("RAM7A=00" not in line
+                                         for line in consumers), 69)
+                    self.assertIn(f"X01={expected_x01} XFB=FF "
+                                  f"RAM7A=8C RAM7B=66", consumers[-1])
+                    final_result = [line for line in trace.splitlines()
+                                    if line.startswith("[78XX-CONSUMER]")
+                                    and "PC=1CDF" in line]
+                    self.assertIn(f"B={expected_b}", final_result[-1])
+                    for pc, value in (("1EA9", candidate),
+                                      ("1ED3", published)):
+                        rows = [line for line in trace.splitlines()
+                                if line.startswith("[78XX-MATH]")
+                                and f"PC={pc}" in line
+                                and 3296000 <= int(line.split("tick=")[1]
+                                                   .split()[0]) < 3297000]
+                        self.assertEqual(len(rows), 1, (pc, rows))
+                        self.assertIn(f"R2={value} R3=00", rows[0])
+                        if use_donor and pc == "1ED3":
+                            self.assertIn("R4=00", rows[0])
+                            self.assertIn("X08=61 XEF=00", rows[0])
+                    entries = [line for line in trace.splitlines()
+                               if line.startswith("[CC3-ENTRY]")]
+                    self.assertEqual(len(entries), 129)
+                    self.assertEqual(sum("IRAM14_15=0000" in line
+                                         for line in entries[105:115]),
+                                     10 if use_donor else 0)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"],
+                                     expected_pulses)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 1921)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     4464)
+
+    def test_7895_donor_reduces_cc3_events_after_tps_release(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        donor = VARIANTS / "tipo 1.6 alcool27c256.bin"
+        reference_hash = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            for use_donor, x01, pulses, zero_schedules, candidate, \
+                    at_107, at_119 in (
+                    (False, "72", 127, 2, "CA", "00CA", "0141"),
+                    (True, "9A", 115, 14, "44", "0000", "00D5")):
+                with self.subTest(use_donor=use_donor):
+                    environment = {
+                        key: value for key, value in os.environ.items()
+                        if not key.startswith(("MA17_ADC", "MA17_OVERRIDE_",
+                                               "MA17_TRACE_", "MA17_P4_"))}
+                    for channel, value in enumerate(
+                            (180, 130, 140, 34, 90, 110, 247, 63)):
+                        environment[f"MA17_ADC_CH{channel}"] = str(value)
+                    environment.update(
+                        MA17_ADC10_STEP_CH0="3274600:160",
+                        MA17_ADC10_STEP_CH6="3274600:380",
+                        MA17_TRACE_78XX_PATH="1")
+                    if use_donor:
+                        environment.update(
+                            MA17_OVERRIDE_MOVC_MATRIX_BASE="7895",
+                            MA17_OVERRIDE_MOVC_MATRIX_ROM=str(donor))
+                    output = Path(directory) / str(use_donor)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "4000000", "--seconds", "25",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"], reference_hash)
+                    reads = report["movc_observation"]["reads"]
+                    self.assertEqual(sum(row["count"] for row in reads
+                                         if 0x7895 <= int(row["mapped"], 16)
+                                         < 0x78A9), 3160)
+                    trace = (output / "emulator-trace.log").read_text()
+                    consumers = [line for line in trace.splitlines()
+                                 if line.startswith("[78XX-CONSUMER]")
+                                 and "PC=1CB7" in line]
+                    self.assertEqual(len(consumers), 386)
+                    self.assertEqual(sum("RAM7A=00" not in line
+                                         for line in consumers), 69)
+                    self.assertIn(f"X01={x01} XFB=FF RAM7A=8C",
+                                  consumers[-1])
+                    entries = [line for line in trace.splitlines()
+                               if line.startswith("[CC3-ENTRY]")]
+                    self.assertEqual(len(entries), 129)
+                    self.assertEqual(sum("IRAM14_15=0000" in line
+                                         for line in entries[105:]),
+                                     zero_schedules)
+                    self.assertIn(f"IRAM14_15={at_107}", entries[107])
+                    self.assertIn(f"IRAM14_15={at_119}", entries[119])
+                    candidate_rows = [line for line in trace.splitlines()
+                                      if line.startswith("[78XX-MATH]")
+                                      and "PC=1EA9" in line
+                                      and 3367000 <= int(line.split("tick=")[1]
+                                                         .split()[0]) < 3368000]
+                    self.assertEqual(len(candidate_rows), 1)
+                    self.assertIn(f"R2={candidate} R3=00",
+                                  candidate_rows[0])
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_low_starts"], pulses)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     4404)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 1921)
+
     def test_current_adc_path_blocks_746c_when_ram22_bit5_is_set(self):
         if not (ROOT / "build" / "emu8051-tty").exists():
             self.skipTest("built Fiat emulator is required")
@@ -6059,6 +10323,699 @@ class VariantTraceTests(unittest.TestCase):
                     self.assertEqual(sum(row["count"] for row in reads), 230)
                     self.assertEqual({row["value"] for row in reads},
                                      {"0D" if name == "s88" else "05"})
+
+    def test_adc1_7b45_row_boundary_changes_ram31_and_p5_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((47, None, "85", "3F", 7306),
+                 (47, "0D", "85", "32", 5792),
+                 (50, None, "8E", "32", 5792),
+                 (50, "0D", "8E", "2E", 5326))
+        with tempfile.TemporaryDirectory() as directory:
+            for adc1, donor, ratio, ram31, p5 in cases:
+                with self.subTest(adc1=adc1, donor=donor):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": str(adc1),
+                                        "MA17_ADC_CH7": "63"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_7B45"] = donor
+                    output = Path(directory) / f"{adc1}_{donor}"
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1000", "--stop-ticks", "2400000", "--seconds",
+                         "20", "--trace-movc", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["sensor_ram_observation"]["61"][-1]
+                                     ["after"], f"{adc1:02X}")
+                    self.assertEqual(report["sensor_ram_observation"]["64"][-1]
+                                     ["after"], "5A")
+                    self.assertEqual(report["engine_ram_observation"]["7D"][-1]
+                                     ["after"], ratio)
+                    self.assertEqual(report["engine_ram_observation"]["31"][-1]
+                                     ["after"], ram31)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], p5)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "5289" and row["mapped"] == "7B45"]
+                    self.assertEqual(sum(row["count"] for row in reads), 230)
+                    self.assertEqual({row["value"] for row in reads}, {"05"})
+
+    def test_adc4_divisor_changes_7d_axis_and_modeled_p5_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((60, "C8", "1E", 3493),
+                 (90, "85", "3F", 7306),
+                 (120, "64", "6F", 12869))
+        with tempfile.TemporaryDirectory() as directory:
+            for adc4, ratio, ram31, p5 in cases:
+                with self.subTest(adc4=adc4):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": "47",
+                                        "MA17_ADC_CH4": str(adc4),
+                                        "MA17_ADC_CH7": "63"})
+                    output = Path(directory) / str(adc4)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1000", "--stop-ticks", "2400000", "--seconds",
+                         "20", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["sensor_ram_observation"]["61"][-1]
+                                     ["after"], "2F")
+                    divisor_write = report["sensor_ram_observation"]["64"][-1]
+                    self.assertEqual(divisor_write["source_pc"], "0744")
+                    self.assertEqual(divisor_write["after"], f"{adc4:02X}")
+                    self.assertEqual(report["engine_ram_observation"]["7D"][-1]
+                                     ["after"], ratio)
+                    self.assertEqual(int(ratio, 16), (47 << 8) // adc4)
+                    self.assertEqual(report["engine_ram_observation"]["31"][-1]
+                                     ["after"], ram31)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], p5)
+
+    def test_adc4_zero_reaches_saturated_7d_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith(("MA17_ADC_CH", "MA17_ADC10_",
+                                              "MA17_OVERRIDE_"))}
+        environment.update({"MA17_ADC_CH1": "47", "MA17_ADC10_CH4": "0",
+                            "MA17_ADC_CH7": "63"})
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--no-kline-inject", "--crank-immediate", "--rpm", "1000",
+                 "--stop-ticks", "2400000", "--seconds", "20",
+                 "--output-dir", directory],
+                capture_output=True, text=True, env=environment,
+                timeout=30, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr[-1500:])
+            report = json.loads((Path(directory) / "execution.json").read_text())
+        self.assertEqual(report["firmware_sha256"],
+                         hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+        self.assertEqual(report["adc_10bit_input_values"][4], 0)
+        self.assertEqual(report["sensor_ram_observation"].get("64", []), [])
+        ratio_write = report["engine_ram_observation"]["7D"][-1]
+        self.assertEqual((ratio_write["after"], ratio_write["source_pc"]),
+                         ("FF", "404B"))
+        self.assertEqual(report["engine_ram_observation"]["31"][-1]["after"],
+                         "10")
+        self.assertEqual(report["output_latches"]["P5.0"]
+                         ["median_low_width_ticks"], 1861)
+
+    def test_adc4_p5_width_is_mediated_by_ram31_at_timer1_read(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((60, "1E", 5797), (90, "3F", 6381),
+                 (120, "6F", 6605))
+        with tempfile.TemporaryDirectory() as directory:
+            for adc4, natural31, cc3 in cases:
+                with self.subTest(adc4=adc4):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": "47",
+                                        "MA17_ADC_CH4": str(adc4),
+                                        "MA17_ADC_CH7": "63",
+                                        "MA17_OVERRIDE_RAM31": "3F"})
+                    output = Path(directory) / str(adc4)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1000", "--stop-ticks", "2400000", "--seconds",
+                         "20", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["ram31_override_hex"], "3F")
+                    self.assertEqual(report["engine_ram_observation"]["31"][-1]
+                                     ["after"], natural31)
+                    self.assertEqual(report["engine_ram_observation"]["69"][-1]
+                                     ["after"], "9A")
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 7306)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     cc3)
+
+    def test_adc4_cc3_width_is_mediated_by_ram7f_at_1e98(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((60, "31", 3493), (90, "7A", 7306),
+                 (120, "96", 12869))
+        with tempfile.TemporaryDirectory() as directory:
+            for adc4, natural7f, p5 in cases:
+                with self.subTest(adc4=adc4):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": "47",
+                                        "MA17_ADC_CH4": str(adc4),
+                                        "MA17_ADC_CH7": "63",
+                                        "MA17_OVERRIDE_RAM7F_AT_1E98": "7A"})
+                    output = Path(directory) / str(adc4)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--no-kline-inject", "--crank-immediate", "--rpm",
+                         "1000", "--stop-ticks", "2400000", "--seconds",
+                         "20", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["ram7f_override_at_1e98_hex"],
+                                     "7A")
+                    self.assertIn("[RAM7F-OVERRIDE] PC=1E98", (output /
+                                  "emulator-trace.log").read_text())
+                    self.assertEqual(report["engine_ram_observation"]["7F"][-1]
+                                     ["after"], natural7f)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     6381)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], p5)
+
+    def test_7966_movc_cell_reaches_cc3_through_ram7f(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((None, None, "7A", 6381),
+                 ("5333:7966:80", None, "8E", 6541),
+                 ("5333:7966:80", "7A", "8E", 6381))
+        with tempfile.TemporaryDirectory() as directory:
+            for index, (donor, forced7f, natural7f, cc3) in enumerate(cases):
+                with self.subTest(donor=donor, forced7f=forced7f):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": "47",
+                                        "MA17_ADC_CH4": "90",
+                                        "MA17_ADC_CH7": "63"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = donor
+                    if forced7f:
+                        environment["MA17_OVERRIDE_RAM7F_AT_1E98"] = forced7f
+                    output = Path(directory) / str(index)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"], donor)
+                    self.assertEqual(report["ram7f_override_at_1e98_hex"],
+                                     forced7f)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "5333" and row["mapped"] == "7966"]
+                    self.assertGreaterEqual(sum(row["count"] for row in reads),
+                                            500)
+                    self.assertEqual({row["value"] for row in reads}, {"4B"})
+                    self.assertEqual(report["engine_ram_observation"]["7F"][-1]
+                                     ["after"], natural7f)
+                    self.assertEqual(report["engine_ram_observation"]["31"][-1]
+                                     ["after"], "3F")
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     cc3)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 7306)
+
+    def test_796e_movc_cell_reaches_cc3_through_upper_iram9d(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        cases = ((None, None, "80", 6381),
+                 ("532F:796E:40", None, "4C", 4177),
+                 ("532F:796E:40", "80", "4C", 6381))
+        with tempfile.TemporaryDirectory() as directory:
+            for index, (donor, forced9d, writer9d, cc3) in enumerate(cases):
+                with self.subTest(donor=donor, forced9d=forced9d):
+                    environment = {key: value for key, value in os.environ.items()
+                                   if not key.startswith(("MA17_ADC_CH",
+                                                          "MA17_ADC10_",
+                                                          "MA17_OVERRIDE_"))}
+                    environment.update({"MA17_ADC_CH1": "47",
+                                        "MA17_ADC_CH4": "90",
+                                        "MA17_ADC_CH7": "63"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = donor
+                    if forced9d:
+                        environment["MA17_OVERRIDE_UPPER9D_AT_1E8B"] = forced9d
+                    output = Path(directory) / str(index)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--trace-movc", "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=30, check=False)
+                    self.assertEqual(result.returncode, 0,
+                                     result.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes())
+                                     .hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"], donor)
+                    self.assertEqual(report["upper9d_override_at_1e8b_hex"],
+                                     forced9d)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and row["mapped"] == "796E"]
+                    self.assertGreaterEqual(sum(row["count"] for row in reads),
+                                            500)
+                    self.assertEqual({row["value"] for row in reads}, {"80"})
+                    writes = [row["after"] for row in
+                              report["engine_ram_observation"]["9D"]
+                              if row["source_pc"] == "406F"]
+                    self.assertEqual(writes[-1], writer9d)
+                    self.assertEqual(report["cc3_observation"]
+                                     ["cc3_pin_model_median_low_width_ticks"],
+                                     cc3)
+                    self.assertEqual(report["output_latches"]["P5.0"]
+                                     ["median_low_width_ticks"], 7306)
+
+    @unittest.skipUnless(os.environ.get("MA17_RUN_SLOW") == "1",
+                         "set MA17_RUN_SLOW=1 for the 12.3M-tick idle gate")
+    def test_74a8_cell_changes_late_idle_position_gate_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for donor, rescue, expected_ram46, expected_carry in (
+                    (False, False, "25", "0"),
+                    (True, False, "42", "1"),
+                    (False, True, "25", "0"),
+                    (True, True, "42", "0")):
+                with self.subTest(donor=donor, rescue=rescue):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "180", "MA17_ADC_CH7": "63",
+                        "MA17_P4_6_LOW_FROM_TICK": "12200000",
+                        "MA17_TRACE_IDLE_POSITION_GATE": "1"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            "532F:74A8:42")
+                    if rescue:
+                        environment["MA17_OVERRIDE_IRAM_READ_AT"] = (
+                            "2307:46:25")
+                    output = Path(directory) / f"{donor}_{rescue}"
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--trace-movc", "--stop-ticks", "12300000",
+                         "--seconds", "60", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=75, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["iram_read_override_at_hex"],
+                                     "2307:46:25" if rescue else None)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and
+                             row["mapped"] == "74A8"]
+                    self.assertEqual([row["value"] for row in reads], ["22"])
+                    self.assertGreater(reads[0]["count"], 2000)
+                    log = (output / "emulator-trace.log").read_text()
+                    gate = [row for row in log.splitlines()
+                            if "[IDLE-POSITION-GATE]" in row and
+                            "F2D=D1" in row and
+                            int(re.search(r"tick=(\d+)", row).group(1)) >
+                            12200000]
+                    self.assertEqual(len(gate), 1)
+                    self.assertIn(f"CY={expected_carry}", gate[0])
+                    self.assertIn(f"RAM46={expected_ram46}", gate[0])
+                    subb = [row for row in log.splitlines()
+                            if "[IDLE-POSITION-SUBB]" in row and
+                            "F2D=D1" in row]
+                    self.assertEqual(len(subb), 1)
+                    self.assertIn("CY=0", subb[0])
+                    self.assertEqual("[IDLE-POSITION-STEP]" in log,
+                                     not donor or rescue)
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertEqual("231C" in hits, not donor or rescue)
+                    overrides = re.findall(
+                        r"\[IRAM-READ-OVERRIDE\] PC=2307 addr=46 "
+                        r"stored=([0-9A-F]{2}) supplied=25", log)
+                    self.assertEqual(overrides[0] if overrides else None,
+                                     expected_ram46 if rescue else None)
+
+    def test_74a8_curve_index_tracks_iram63_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc3, ram63, index, fraction, result in (
+                    (4, "04", "00", "00", "22"),
+                    (20, "14", "00", "00", "22"),
+                    (40, "28", "01", "B0", "26"),
+                    (60, "3C", "02", "90", "29"),
+                    (80, "50", "03", "20", "2A"),
+                    (100, "64", "03", "A0", "2B"),
+                    (130, "82", "04", "A0", "2F"),
+                    (160, "A0", "05", "E0", "34"),
+                    (175, "AF", "06", "90", "36"),
+                    (190, "BE", "07", "50", "39"),
+                    (205, "CD", "08", "30", "3D"),
+                    (220, "DC", "09", "00", "42")):
+                with self.subTest(adc3=adc3):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": str(adc3),
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_P4_7_FORCE_LOW": "1",
+                        "MA17_TRACE_RAM46_TABLE": "1"})
+                    output = Path(directory) / str(adc3)
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--trace-movc", "--stop-ticks", "120000",
+                         "--seconds", "10", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["sensor_ram_observation"]["63"]
+                                     [-1]["after"], ram63)
+                    reads = report["movc_observation"]["reads"]
+                    for pc, address in (("532F", 0x74A8 + int(index, 16)),
+                                        ("5333", 0x74A9 + int(index, 16))):
+                        self.assertTrue(any(row["pc"] == pc and
+                                            row["mapped"] == f"{address:04X}"
+                                            for row in reads))
+                    log = (output / "emulator-trace.log").read_text()
+                    entries = re.findall(r"\[RAM46-TABLE\].*PC=48E9.*", log)
+                    writes = re.findall(r"\[RAM46-TABLE\].*PC=48FF.*", log)
+                    self.assertGreaterEqual(len(entries), 30)
+                    self.assertGreaterEqual(len(writes), 30)
+                    self.assertTrue(all(f"R5={index} R6={fraction}" in row
+                                        for row in entries))
+                    self.assertTrue(all(f"R2={result}" in row
+                                        for row in writes))
+
+    def test_74a8_movc_and_p47_gate_ram46_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for p47_low, donor, expected in (
+                    (False, False, "25"), (True, False, "22"),
+                    (False, True, "42"), (True, True, "42")):
+                with self.subTest(p47_low=p47_low, donor=donor):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM46_TABLE": "1"})
+                    if p47_low:
+                        environment["MA17_P4_7_FORCE_LOW"] = "1"
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = (
+                            "532F:74A8:42")
+                    output = Path(directory) / f"{p47_low}_{donor}"
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--trace-movc", "--stop-ticks", "120000",
+                         "--seconds", "10", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["ram46_table_trace_enabled"])
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and
+                             row["mapped"] == "74A8"]
+                    self.assertEqual([row["value"] for row in reads], ["22"])
+                    self.assertGreaterEqual(reads[0]["count"], 30)
+                    log = (output / "emulator-trace.log").read_text()
+                    rows = re.findall(r"\[RAM46-TABLE\].*PC=48FF.*", log)
+                    self.assertGreaterEqual(len(rows), 30)
+                    self.assertEqual(set(re.findall(r"R2=([0-9A-F]{2})",
+                                                    "\n".join(rows))),
+                                     {expected})
+                    self.assertIn("PC=48E9 DPTR=700A", log)
+                    self.assertIn("P4_LATCH=", rows[0])
+
+    def test_p47_floor_at_850_rpm_is_masked_at_p53_output(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for p47_low, expected in ((False, "25"), (True, "22")):
+                with self.subTest(p47_low=p47_low):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "40", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM46_TABLE": "1",
+                        "MA17_TRACE_P53_GATE": "1"})
+                    if p47_low:
+                        environment["MA17_P4_7_FORCE_LOW"] = "1"
+                    output = Path(directory) / str(p47_low)
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "850",
+                         "--stop-ticks", "2400000", "--seconds", "20",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=25, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["rpm_observation"]["ram47_changes"]
+                                     [-1]["after"], "22")
+                    log = (output / "emulator-trace.log").read_text()
+                    writes = re.findall(r"\[RAM46-TABLE\].*PC=48FF.*", log)
+                    self.assertGreaterEqual(len(writes), 200)
+                    self.assertEqual(set(re.findall(r"R2=([0-9A-F]{2})",
+                                                    "\n".join(writes))),
+                                     {expected})
+                    p53 = re.findall(r"\[P53-GATE\].*PC=2211.*", log)
+                    self.assertEqual(len(p53), 230)
+                    self.assertTrue(all(int(re.search(r"F22=([0-9A-F]{2})",
+                                                      row).group(1), 16) & 0x20
+                                        for row in p53))
+                    self.assertTrue(all(int(re.search(r"P5_latch=([0-9A-F]{2})",
+                                                      row).group(1), 16) & 0x08
+                                        for row in p53))
+
+    def test_7302_7309_rpm_branch_tracks_reference_gap(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for rpm, p47_low, reference, measured, reaches_7309 in (
+                    (850, False, "25", "22", False),
+                    (850, True, "22", "22", True),
+                    (900, False, "25", "24", True)):
+                with self.subTest(rpm=rpm, p47_low=p47_low):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_RAM46_TABLE": "1"})
+                    if p47_low:
+                        environment["MA17_P4_7_FORCE_LOW"] = "1"
+                    output = Path(directory) / f"{rpm}_{p47_low}"
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", str(rpm),
+                         "--trace-movc", "--stop-ticks", "1200000",
+                         "--seconds", "15", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=20, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["rpm_observation"]["ram47_changes"]
+                                     [-1]["after"], measured)
+                    log = (output / "emulator-trace.log").read_text()
+                    writes = re.findall(r"\[RAM46-TABLE\].*PC=48FF.*", log)
+                    self.assertEqual(set(re.findall(r"R2=([0-9A-F]{2})",
+                                                    "\n".join(writes))),
+                                     {reference})
+                    reads = report["movc_observation"]["reads"]
+                    self.assertTrue(any(row["pc"] == "2304" and
+                                        row["mapped"] == "7302" for row in reads))
+                    self.assertEqual(any(row["pc"] == "2313" and
+                                         row["mapped"] == "7309" for row in reads),
+                                     reaches_7309)
+                    for pc, address in (("2394", "7358"),
+                                        ("239D", "7318")):
+                        self.assertTrue(any(row["pc"] == pc and
+                                            row["mapped"] == address
+                                            for row in reads))
+
+    def test_f8a2_counter_gates_79a8_reader_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for adc6, reached in ((95, True), (180, False)):
+                with self.subTest(adc6=adc6):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": str(adc6), "MA17_ADC_CH7": "63",
+                        "MA17_TRACE_XRAM_F8A2": "1"})
+                    output = Path(directory) / str(adc6)
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--stop-ticks", "6000000", "--seconds", "30",
+                         "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertTrue(report["xram_f8a2_trace_enabled"])
+                    hits = set((output / "pc-hits.txt").read_text().splitlines())
+                    self.assertIn("45F8", hits)
+                    self.assertIn("2016", hits)
+                    self.assertEqual("142E" in hits, reached)
+                    self.assertEqual("204F" in hits, reached)
+                    self.assertEqual("2027" in hits, reached)
+                    log = (output / "emulator-trace.log").read_text()
+                    self.assertEqual("[F8A2-WRITE] tick=5702714 PC=204F "
+                                     "value=00->01" in log, reached)
+                    self.assertEqual("[F8A2-READ] PC=2016 value=01" in log,
+                                     reached)
+                    self.assertEqual("PC=2011 C=1 F0=1 F23=2F" in log,
+                                     reached)
+
+    def test_79ad_movc_cell_changes_late_cc3_pulse_in_g(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("built Fiat emulator is required")
+        with tempfile.TemporaryDirectory() as directory:
+            for donor, rescue, expected_pair, expected_width in (
+                    (False, False, "3A00", 233),
+                    (True, False, "0E00", 57),
+                    (False, True, "3A00", 233),
+                    (True, True, "3A00", 233)):
+                with self.subTest(donor=donor, rescue=rescue):
+                    environment = {key: value for key, value in
+                                   os.environ.items() if not key.startswith("MA17_")}
+                    environment.update({
+                        "MA17_ADC_CH0": "120", "MA17_ADC_CH1": "130",
+                        "MA17_ADC_CH2": "100", "MA17_ADC_CH3": "4",
+                        "MA17_ADC_CH4": "90", "MA17_ADC_CH5": "40",
+                        "MA17_ADC_CH6": "95", "MA17_ADC_CH7": "63"})
+                    if donor:
+                        environment["MA17_OVERRIDE_MOVC_AT"] = "532F:79AD:40"
+                    if rescue:
+                        environment["MA17_OVERRIDE_XRAM_READ_AT"] = (
+                            "2027:F8A3:FF")
+                    output = Path(directory) / f"{donor}_{rescue}"
+                    run = subprocess.run(
+                        [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                         "--firmware", str(REFERENCE), "--no-kline-inject",
+                         "--crank-immediate", "--rpm", "1000",
+                         "--trace-movc", "--stop-ticks", "6000000",
+                         "--seconds", "30", "--output-dir", str(output)],
+                        capture_output=True, text=True, env=environment,
+                        timeout=35, check=False)
+                    self.assertEqual(run.returncode, 0, run.stderr[-1500:])
+                    report = json.loads((output / "execution.json").read_text())
+                    self.assertEqual(report["firmware_sha256"],
+                                     hashlib.sha256(REFERENCE.read_bytes()).hexdigest())
+                    self.assertEqual(report["movc_override_at_hex"],
+                                     "532F:79AD:40" if donor else None)
+                    self.assertEqual(report["xram_read_override_at_hex"],
+                                     "2027:F8A3:FF" if rescue else None)
+                    reads = [row for row in report["movc_observation"]["reads"]
+                             if row["pc"] == "532F" and row["mapped"] == "79AD"]
+                    self.assertEqual([(row["value"], row["count"])
+                                      for row in reads], [("FF", 1436)])
+                    pc_hits = (output / "pc-hits.txt").read_text().splitlines()
+                    self.assertIn("45EF", pc_hits)
+                    self.assertIn("45F8", pc_hits)
+                    self.assertIn("2027", pc_hits)
+                    self.assertIn("2036", pc_hits)
+                    log = (output / "emulator-trace.log").read_text()
+                    overrides = re.findall(
+                        r"\[XRAM-READ-OVERRIDE\] PC=2027 addr=F8A3 "
+                        r"stored=([0-9A-F]{2}) supplied=FF", log)
+                    self.assertEqual(overrides, ["40" if donor else "FF"]
+                                     if rescue else [])
+                    pairs = re.findall(r"\[CC3-ENTRY\].*PC=5469.*"
+                                       r"R2_R3=([0-9A-F]{4})", log)
+                    self.assertEqual(pairs, [expected_pair])
+                    edges = [(int(tick), int(value), pc) for tick, pc, value in
+                             re.findall(r"\[CC3-PIN\] tick=(\d+) "
+                                        r"PC=([0-9A-F]{4}) value=(\d)", log)]
+                    widths = [next_tick - tick for (tick, value, pc),
+                              (next_tick, next_value, _) in zip(edges, edges[1:])
+                              if pc == "54B3" and value == 0 and next_value == 1]
+                    self.assertEqual(len(widths), 1)
+                    self.assertLessEqual(abs(widths[0] - expected_width), 2)
+                    self.assertEqual(report["cc3_observation"][
+                        "iram14_15_median"], 1096)
+                    self.assertEqual(report["output_latches"]["P5.0"][
+                        "median_low_width_ticks"], 1861)
 
     def test_coolant_adc_crosses_second_lambda_guard_boundary(self):
         if not (ROOT / "build" / "emu8051-tty").exists():

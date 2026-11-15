@@ -454,9 +454,11 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
                 tick, source_pc, address, cpu.mExtData[address],
                 cpu.mLowerData[0x2D], cpu.mSFR[0xC8 - 0x80]);
     }
-    static constexpr std::array<uint8_t, 9> sensor_addresses{
-        0x60, 0x61, 0x62, 0x63, 0x65, 0x66, 0x6F, 0x70, 0xA8};
-    static std::array<uint8_t, 9> previous_sensor_values{};
+    // SAB80C517 User's Manual, On-Chip RAM: direct 64h is lower IRAM;
+    // Fiat 4044h uses it as the divisor when deriving the 7B3Eh axis byte.
+    static constexpr std::array<uint8_t, 10> sensor_addresses{
+        0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x6F, 0x70, 0xA8};
+    static std::array<uint8_t, 10> previous_sensor_values{};
     for (size_t index = 0; index < sensor_addresses.size(); ++index) {
         const uint8_t address = sensor_addresses[index];
         const uint8_t value = address < 0x80 ? cpu.mLowerData[address]
@@ -477,10 +479,12 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
     // Fiat 47BEh/47CCh write lower IRAM 79h/7Bh; SAB80C517 User's Manual,
     // On-Chip RAM, distinguishes these direct bytes from upper IRAM.
     // Fiat 49ADh can write lower IRAM 4Dh after the 744Eh curve lookup.
-    static constexpr std::array<uint8_t, 24> engine_addresses{
+    // SAB80C517 User's Manual, On-Chip RAM: Fiat 406Fh writes upper
+    // IRAM 9Dh through @R1; 1E8Bh reads it through @R1, not as an SFR.
+    static constexpr std::array<uint8_t, 25> engine_addresses{
         0x31, 0x34, 0x35, 0x48, 0x49, 0x4D, 0x4E, 0x4F, 0x57, 0x59, 0x5A,
         0x68, 0x69, 0x6A, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7F,
-        0x87, 0xA4, 0xC7};
+        0x87, 0x9D, 0xA4, 0xC7};
     static std::array<uint8_t, engine_addresses.size()> previous_engine_values{};
     for (size_t index = 0; index < engine_addresses.size(); ++index) {
         const uint8_t address = engine_addresses[index];

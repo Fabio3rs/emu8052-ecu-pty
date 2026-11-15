@@ -28,7 +28,8 @@ python3 -m unittest discover -s tests -p 'test_compare_ma17_variants.py' -v
 
 Saídas: `build/ma17-analysis/variants/comparisons.json`, `differences.svg`,
 `matrix_differences.svg`, `matrix_deltas.json`, `candidate_tables.json`,
-`pointer_regions.json`, `calibration_catalog_expanded.json` e
+`pointer_regions.json`, `pointer_catalog_coverage.json`,
+`calibration_catalog_expanded.json` e
 `diagnostic_tables.json`. No mapa das seis matrizes, cada célula tem tooltip
 com offset, byte original, byte da variante e diferença aritmética **bruta
 u8**; vermelho é aumento, azul é redução e branco é igualdade. A cor não
@@ -38,6 +39,49 @@ Os intervalos JSON são
 contextos mostram até oito bytes antes e depois das extremidades. A matriz
 compara bytes no **mesmo offset**. Um número alto não distingue, sozinho,
 recalibração de deslocamento de código ou mudança de revisão.
+
+## Síntese verificável da campanha
+
+| Medida | Resultado | Evidência reproduzível |
+| --- | ---: | --- |
+| Imagens 27C256 | 6 arquivos, 5 hashes únicos | `comparisons.json`; `A` e `A+` são idênticas |
+| Comparações binárias | 15 pares | `python3 tools/compare_ma17_variants.py` |
+| Entradas curadas | 137 | `docs/MA17_CALIBRATION_CATALOG.json` |
+| Alvos do diretório `7002h..70E9h` | 116 | `pointer_regions.json`; 104 diretos, 8 contidos, 4 não classificados |
+| Intervalos não apontados ainda sem função | 3 | `unclassified_nonpointer_intervals` no catálogo |
+| Offsets divergentes em `6E00h..7FFFh` | 2399, todos cobertos | `test_catalog_covers_changed_data_pages` |
+| Round-trip das seis ROMs | 32768 bytes e zero divergências em cada uma | `python3 -m unittest tests.test_roundtrip_8051` |
+
+As 137 entradas incluem matrizes, curvas, limites, constantes e regiões
+sem função demonstrada; **não** são 137 mapas físicos identificados.
+Na ROM G, o assembly modular classifica 23.420/32.768 bytes (71,47%) como
+instruções, 4.120 (12,57%) como dados explícitos e 5.228 (15,95%) como
+`FFh` implícitos. Essa é uma medida de cobertura estrutural do round-trip;
+não mede a fração da lógica ou das funções físicas compreendida. O relatório
+`build/ma17-analysis/modular/report.json` registra ainda 79 bytes em duas
+regiões `DB` ambíguas, que não devem ser promovidas a código só por serem
+decodificáveis como instruções.
+Há consumidores indicados em 135 entradas e campos de evidência dinâmica
+em 114, mas parte dos ensaios antigos antecede a correção ADC descrita
+acima. Os papéis digitais de, por exemplo, `7310h`, `7ED9h` e `7581h`
+possuem testes causais. A função elétrica de CC3/P1.3 e P5.0/P5.1,
+as unidades físicas das matrizes e a execução completa da família A
+permanecem abertas. Nenhuma calibração recebeu aqui validação física
+direta em ECU real.
+
+### Revalidação da campanha em 15/11/2026
+
+`python3 tools/compare_ma17_variants.py` regenerou os relatórios em
+`build/ma17-analysis/variants/`: seis imagens, 15 pares, 137 entradas
+expandidas com seis versões e hashes por entrada, e cobertura do diretório
+em 104 alvos diretos, oito subvistas e quatro alvos provisórios. Os hashes
+atuais das seis ROMs coincidem com `rom_sha256` do catálogo; nem as ROMs
+nem os `.inc` apresentam modificações no `git status`.
+`python3 -m unittest tests.test_roundtrip_8051` passou 25 testes;
+`python3 -m unittest tests.test_compare_ma17_variants.CompareVariantsTests`
+passou 52; `ctest --test-dir build --output-on-failure` passou 162.
+O ensaio completo da família A em um perfil de hardware validado e a
+identificação elétrica de CC3/P1.3 e P5.0/P5.1 seguem abertos.
 
 ## Inventário
 
@@ -64,8 +108,261 @@ O arquivo homônimo na raiz tem 60 bytes ASCII e não foi usado como ROM.
 A coincidência entre `SUN` e a soma de 16 bits é verificável; isso não
 comprova que a ECU calcule ou valide essa soma.
 O catálogo estruturado em `docs/MA17_CALIBRATION_CATALOG.json` contém
-64 entradas curadas nesta revisão; elas não equivalem a 64 funções físicas
+137 entradas nesta revisão; elas não equivalem a 137 funções físicas
 confirmadas nem esgotam os 116 alvos do diretório de ponteiros.
+Uma auditoria dos campos `confidence.physical_function` encontra 126 entradas
+marcadas `unknown`, três `not_applicable` (protocolo ou diretório) e oito
+classificações provisórias: quatro `probable RPM axis`, duas `unverified`
+e duas `scanner_hypothesis`. Nenhuma função de atuador está confirmada
+fisicamente apenas por esta classificação.
+O campo genérico `dynamic_evidence` aparece em 113 entradas; as outras 23
+também registram evidências em campos mais específicos, muitas vezes de
+execução isolada. Esses números descrevem a documentação, não confirmam
+funções físicas nem acesso natural a todas as curvas.
+O arquivo `pointer_catalog_coverage.json` cruza cada slot desse diretório
+com as entradas curadas: 104 slots apontam diretamente para uma entrada,
+8 são subvistas contidas em uma entrada maior e 4 permanecem sem
+classificação curada. Esses 4 intervalos provisórios são byte a byte
+iguais nas seis ROMs; isso não prova que sejam inativos ou que tenham
+função conhecida. As cinco subvistas/curvas alteradas que pareciam
+ausentes numa comparação só pelo campo `pointer_slot` estão cobertas
+por entradas maiores (`74EEh`, `7581h`, `7662h`, `7743h`).
+
+`python3 tools/compare_ma17_variants.py` também gera
+`build/ma17-analysis/variants/provisional_pointer_catalog.json` com uma
+entrada para cada um desses 4 slots. O registro contém os seis hashes,
+endereços, bytes brutos e estatísticas simples, além de marcar dimensões,
+consumidor e função como desconhecidos. O fim do intervalo é somente o
+próximo alvo do diretório: pode incluir bytes sem uso ou parte de outra
+estrutura. A regressão
+`test_provisional_pointer_catalog_preserves_all_unclassified_bytes`
+confere slots, ponteiros, hashes e bytes contra as ROMs originais. Assim,
+o relatório permite escolher alvos para análise sem apresentar os 13
+intervalos como tabelas de calibração já demonstradas.
+
+O slot `706Ah→7958h` contém `47 03 04 04 EE FF 9A 24` nas seis
+ROMs: cabeçalho de RPM, três incrementos e três valores interpolados.
+G/S88 chamam `52F2h` em `15B2h`; A/A+/S37/S36 têm o carregamento do
+mesmo ponteiro em `15FDh` e chamam o auxiliar relocado `53B5h`.
+No G original emulado, fornecer `40h` apenas ao `MOVC 532Fh/795Dh`
+(byte bruto `FFh`) mudou `R2=FFh→40h`, o valor limitado em `15C3h`
+de `05h→01h` e a primeira gravação de RAM `59h` de `05h→01h`.
+Os dois ensaios de 6 milhões de ticks mantiveram as medianas modeladas
+de P5.0/P5.1/CC3 em `1861/1861/4373` ticks. A inspeção dos pulsos
+individuais mostrou, porém, que as três primeiras larguras baixas de
+`P1.3/CC3` passaram de `5381/5380/5380` para `4373/4372/4372` ticks.
+Fornecer os valores nativos de RAM `59h/5Ah` apenas às leituras em
+`1D5Ch/1D5Eh` não restaurou as larguras. As leituras anteriores
+`MOV R7,59h`/`MOV R5,5Ah` em `1C99h/1C9Bh` alimentam a multiplicação
+em `1C9Dh`; fornecer `05h/00h` nesse ponto restaurou exatamente as
+três larguras nativas. Fornecer cada byte isoladamente deslocou uma
+parte diferente do par `R3:R2` publicado em `1ED3h`. Essa é uma
+mediação digital demonstrada no perfil G emulado; `P1.3` é o pino
+modelado do processador, sem ligação elétrica confirmada ao bico da ECU.
+Capturas em `build/ma17-analysis/variants/curve7958_{dual,early}_*_g/`.
+Com ADC fixo, a doação alterou também os primeiros pulsos a 750 e
+1.500 RPM; a 3.000 RPM, os três primeiros passaram de
+`5381/5381/5381` para `4373/4373/4373` ticks. O resgate em
+`1C99h/1C9Bh` restaurou os três valores nativos a 3.000 RPM, enquanto
+o mesmo fornecimento no controle nativo foi neutro para esses pulsos.
+As medianas de janelas longas podem ocultar esse efeito de partida.
+Capturas em `build/ma17-analysis/variants/curve7958_rpm*_g/`.
+Com RPM fixo em 1.000, o contraste também persistiu ao mudar apenas
+`ADC1=130→40`: os primeiros pulsos nativos `6309/6308/6308` passaram a
+`5301/5300/5300` ticks no braço doador; o resgate em 1C99h/1C9Bh
+restaurou as larguras e o controle nativo foi neutro. Em ensaios
+separados, `ADC3=40` produziu `6405/6404/6404` contra
+`4765/4764/4764`, e `ADC6=180` produziu `6901/6900/6900` contra
+`3973/3972/3972`. Restaurar `RAM59h:5Ah` nas leituras de
+`1C99h/1C9Bh` para os valores nativos estabilizados (`06:00` e
+`06:7C`, respectivamente) recuperou exatamente os três primeiros
+pulsos em ambos os casos. Os controles nativos conservaram essas
+larguras, embora a intervenção constante também alcance a primeira
+leitura durante o boot, quando os valores armazenados ainda diferem.
+Os números são ticks do harness Fiat, não tempos elétricos medidos na ECU.
+
+Dois slots adjacentes também saíram do conjunto provisório. `7060h→78FDh`
+contém cinco linhas idênticas `80 80 81 82`; `7062h→7911h` contém
+20 zeros. O código G usa índices de linha de `7054h→7824h` (RAM `70h`)
+e coluna de `7056h→782Bh` (RAM `47h`), formando matrizes 5×4.
+Em três boots G com ROM inalterada, doar `40h` apenas à leitura `MOVC`
+do primeiro byte de `78FDh` mudou a RAM superior `B1h` de `00h` para
+`D0h`, sem mudar RAM `58h`; doar `40h` apenas à leitura de `7911h`
+mudou RAM `58h` de `00h` para `30h`, mantendo `B1h=00h`.
+São destinos internos distintos. O valor `30h` decorre da interpolação,
+não de uma cópia direta do byte `40h`, e a função física segue aberta.
+O leitor de RAM superior `B1h` em `1893h` foi alcançado em 16 passagens
+de um boot G a 1.000 RPM: `B1h=00h` saltou de `1894h` diretamente para
+`189Ah`; com a célula `78FDh` fornecida como `40h`, `B1h=D0h` alcançou
+`1897h` antes de voltar a `189Ah` porque `2Ch.6=0` no estado observado.
+O byte `58h=30h` da outra intervenção ficou disponível, mas as cópias
+`18FDh/1906h→RAM[3Ch]` não foram alcançadas nos três braços, nem em
+suas extensões a 6 milhões de ticks. As medianas modeladas de P5.0,
+P5.1 e CC3 ficaram iguais nessas extensões; nenhuma função elétrica
+foi estabelecida por esses ensaios.
+
+O slot `705Eh→78F9h` contém quatro valores idênticos nas seis ROMs:
+`00 13 2A 3A`. Em G, o interpolador recebe segmento/fração de RPM do
+slot `7056h→782Bh`. O resultado participa da subtração `RAM[6Fh]-R2`
+em `3D25h`, se `2Eh.6` e `28h.1` estiverem limpos, e `3D28h` grava o
+carry em `RAM[25h].3`. Em boot G a 1.000 RPM, fornecer `80h` apenas ao
+retorno de `MOVC 532Fh/78F9h` (byte original `00h`) mudou o primeiro
+`R2` de `00h` para `80h` e o byte `25h` de `17h` para `1Fh` após a
+comparação. Num estado posterior com `28h.1=1`, a mesma intervenção
+mudou `R2`, mas a comparação foi ignorada. `25h.3` é RAM interna;
+nenhum pino ou atuador foi identificado por esse resultado.
+
+O slot `7068h→7952h` contém `63 02 5E 2F 10 22` nas seis ROMs.
+O cabeçalho seleciona RAM baixa `63h`, os dois bytes seguintes são
+incrementos e `7956h/7957h` são valores interpolados. No código G,
+`1277h` lê a curva e `1282h` compara o resultado com `RAM[47h]`,
+derivada de RPM. Em 33 passagens de um boot G a 1.000 RPM,
+fornecer `80h` apenas ao `MOVC 532Fh/7956h` em vez do byte original
+`10h` mudou a comparação de `A=10h<28h` para `A=80h≥28h` e o ramo
+de `12DEh` para `128Ah`. A ROM e seu hash permaneceram iguais.
+`RAM[63h]` é um valor digital processado de ADC3 nesse perfil;
+a associação ao sensor e ao pino físico não está comprovada.
+
+O slot `70D6h→79C4h` saiu do conjunto provisório: `47 04` seleciona
+RAM baixa `47h` e quatro segmentos; `79C6h..79C9h` são incrementos e
+`79CAh..79CDh` são valores interpolados, iguais nas seis ROMs. No G
+emulado, `35C2h` gravou `F8:E1h`; fornecer `40h` apenas ao retorno de
+`MOVC 532Fh/79CAh` (byte original `83h`) mudou a primeira gravação
+`03h→C0h`. O `MOVX` em `35D1h` lê o mesmo endereço para ajustar `R2`.
+`F8:E1h` é XRAM endereçada pela página `P2`, não um pino. O efeito
+posterior e a função física seguem sem identificação.
+
+O slot `7006h→741Ch` saiu do conjunto provisório após a inspeção do
+consumidor G em `15D5h` e do homólogo A em `161Ch`: ambos usam o
+interpolador de bytes adjacentes (`5329h` na G, `53ECh` na A), com
+resultado em `R2` antes de uma multiplicação. Os dez bytes
+`741Ch..7425h` valem `40h` nas seis ROMs. Em opcodes isolados das seis,
+índices `00h` e `08h` leem somente esse bloco e devolvem `R2=40h`;
+o índice sintético `09h` lê também `7426h`, início da próxima curva.
+O teste `ConstantCurve741cInterpolatesAdjacentBytesAtBoundary` fixa
+essa fronteira. `JB 2Fh.0` pula a leitura quando o bit vale 1; ela
+ocorre com `2Fh.0=0`. A faixa natural de `R5` nesse ramo, o efeito
+posterior do produto e qualquer ligação física continuam pendentes.
+Em três boots originais G de 2,4 milhões de ticks com roda 60-2 imediata
+e sem K-Line, a curva foi lida naturalmente. A 1.000 RPM com
+`ADC0/6=40/95` ou `180/247`, `ADC3=80`, houve 21 pares por caso,
+com primeiros índices `00h` e `03h`. A 4.000 RPM com `ADC0/6=180/247`
+e `ADC3=4`, houve 11 pares, todos de índice `00h`. Os endereços ficaram
+em `741Ch..7420h`; nenhum chegou ao bloco seguinte nesses cenários.
+As capturas estão em `build/ma17-analysis/variants/constant_741c_*/`;
+o teste `test_constant_741c_curve_natural_indices_stay_in_bounds_in_two_states`
+reexecuta dois deles. A faixa global do índice permanece desconhecida.
+
+O slot `7016h→74E4h` contém dez bytes idênticos nas seis ROMs:
+`73 5A 40 40 40 40 40 40 40 40`. O código G/S88 em `12B2h`
+carrega o ponteiro e chama `5238h`; A/S37 chamam `52FBh`. Em
+`12BDh`, o índice do `MOVC` é `R5 + R6.7`, sem interpolação, e
+`12BEh` grava o byte em `RAM[49h]`. O teste dos opcodes originais
+confirmou índices preparados `0/1/8/9` e mostrou que o índice
+sintético 10 lê a primeira posição da tabela seguinte (`74EEh`),
+`00h` em G/S88/S37/S36 e `10h` em A/A+. A faixa natural ainda não
+foi estabelecida. Na G a 1.000 RPM e `ADC0/2/3/6=120/100/4/95`,
+`74E4h=73h` foi lido oito vezes em 120.000 ticks. Fornecer `40h`
+somente ao retorno do `MOVC` fez `RAM[49h]` receber `40h` e mudou
+seis resultados `R2` em `233Bh`, com `RAM[4Dh]=19h`, de `2Fh` para
+`25h`. Em 2,4 milhões de ticks a diferença interna persistiu, mas
+as medianas de pulsos modelados P5.0/P5.1 e CC3 não mudaram.
+Isso não identifica o pino ou atuador físico desse cálculo. Testes:
+`SixRom74e4DirectIndexUsesR6HighBitAndBoundaryByte` e
+`test_74e4_first_cell_reaches_ram49_and_scaled_r2_in_g`;
+capturas: `build/ma17-analysis/variants/74e4_ram49_*/`.
+
+O alvo terminal `70C4h→7F8Dh` é uma exceção de cobertura parcial: a entrada
+curada termina em `7F96h`, enquanto o intervalo provisório segue até
+`8000h` e inclui bytes de outras regiões. A auditoria registra esse
+sufixo `7F96h..7FFFh` explicitamente; não o atribui à curva terminal.
+O conjunto de entradas do catálogo cobre o intervalo completo, incluindo
+a região sem função classificada; a entrada apontada por `70C4h`, sozinha,
+cobre apenas `7F8Dh..7F95h`.
+Nesse sufixo, A/A+, S88 e S37/S36 diferem de G em 6/6, 74 e 87/87
+bytes, respectivamente. A curva `7F96h..7F9Ch` e os bytes de boot
+`7FF6h..7FFFh` têm consumidores identificados; `7F9Dh..7FF5h`
+permanece sem função estabelecida.
+Regressão: `test_pointer_catalog_coverage_tracks_subviews_and_unknowns`.
+
+O início do boot dá uma pista limitada sobre a revisão A. G e A
+configuram os mesmos valores em `WDTREL`, `P1`–`P5`, `SP`, `PSW` e
+`SYSCON` em `0850h..0870h`. Entre `0850h` e `09FFh`, os 23 bytes
+divergentes são somente operandos de 12 instruções `LCALL`; os cinco
+destinos distintos mudam em `+C3h` e seus primeiros 32 bytes coincidem
+nos endereços homólogos. Em `0000h..00FFh`, só `003Eh:003Fh` difere:
+o `LJMP` do serviço de Timer 2 passa de `58BCh` para `597Fh`, também
+`+C3h`. Isso sustenta correspondência do boot inicial e da tabela de
+vetores, mas não valida periféricos, relógio, entradas ou todo o fluxo
+da revisão A. Por isso `trace_ma17.py --firmware` continua exigindo
+código idêntico ao G até `757Fh` para ensaios naturais no perfil Fiat.
+O teste `Sab80C517.SixRomResetPrefixConfiguresSamePortsAndSyscon`
+executa o reset original das seis imagens até `0883h` e confirma
+`P1=FBh`, `P2=F8h`, `P3=E7h`, `P4=EAh`, `P5=0Fh`, `SP=D0h` e
+`SYSCON=02h`. `P3` começa em `F7h`, mas o `CLR T0` comum em `0880h`
+limpa `P3.4` com `IP0` inicialmente zero no ensaio. Esse teste cobre
+somente o prefixo anterior à autoverificação de XRAM.
+Em `Sab80C517.SixRomXramSelfTestReachesCommonBootContinuation`, as seis
+ROMs também executam a autoverificação em uma CPU isolada com 64 KiB
+de XRAM emulada e chegam a `0A3Ah`. Portas, `SP`, `SYSCON` e flags
+`2Bh/2Eh` coincidem nesse ponto; `F8:FFh=FFh` em todos os casos.
+Isso amplia a equivalência observada do boot, mas não valida o mapa
+físico da XRAM nem o perfil completo da revisão A.
+O mesmo teste prossegue até `0B30h`: os opcodes `MOVC`/`MOVX` copiam
+`7FF6h..7FFFh` para dez posições `F8:xxh` usando os bytes de cada
+ROM. `PCON=00h`, `S0CON=91h`, `TMOD=11h`, `TCON=15h`, `T2CON=85h`,
+`CCEN=01h`, `IP0=39h`, `IP1=0Ch`, `IEN0=A2h` e `IEN1=30h` coincidem
+nas seis execuções isoladas. Seis bytes copiados diferem entre os
+grupos G/S88 e A/A+/S37/S36:
+
+| ROM | XRAM | G/S88 | A/A+/S37/S36 |
+| --- | --- | ---: | ---: |
+| `7FF6h` | `F8:0Fh` | `01h` | `00h` |
+| `7FF7h` | `F8:1Eh` | `48h` | `00h` |
+| `7FFCh` | `F8:3Fh` | `49h` | `4Ah` |
+| `7FFDh` | `F8:4Dh` | `20h` | `19h` |
+| `7FFEh` | `F8:8Fh` | `A1h` | `A2h` |
+| `7FFFh` | `F8:DEh` | `BFh` | `8Eh` |
+
+O mesmo teste prossegue da inicialização em `0B30h` até `11C4h`, ponto
+comum do caminho que produz estado de RPM, nas seis ROMs originais.
+Isso comprova alcançabilidade na CPU C517A isolada com XRAM emulada;
+não valida as entradas da roda fônica, o clock nem a fiação da revisão A.
+
+Os quatro bytes `7FF8h..7FFBh` coincidem. Depois do boot, a rotina
+G/S88 `4A31h..4A7Eh` (A/A+/S37/S36 `4AF4h..4B41h`) compara nove
+pares `7FF7h..7FFFh`/XRAM copiados, além de limites em `F8:40h..45h`.
+O teste `Sab80C517.SixRomTailBytesGuardXramIntegrity` executa os
+opcodes originais nas seis ROMs: cada par igual segue para `4AC5h` ou
+`4B88h`; alterar isoladamente qualquer dos nove bytes da XRAM toma
+`4A7Eh` ou `4B41h` e, com `IRAM[47h]=0`, retorna ao início `0850h`.
+No desvio, o código usa `ROM[72CAh]=96h` e `ROM[72C9h]=20h`, iguais
+nas seis imagens: `IRAM[47h]=01h` permite continuar, `96h/20h`
+(`IRAM[47h]`/`IRAM[48h]`) reinicia, e `96h/21h` permite continuar.
+Os três casos de fronteira também passaram no teste com os opcodes
+originais. Assim, uma divergência não implica sempre reinicialização.
+`7FF6h`/`F8:0Fh` não entra nessa comparação. Isso identifica uma guarda
+de integridade de estado XRAM contra valores da própria ROM. O ensaio
+é isolado e não prova que a corrupção ocorra numa execução natural;
+o significado físico dos campos e a ligação física da XRAM ainda não
+estão estabelecidos.
+
+Um trace opcional de `MOVX` nos dez destinos (`MA17_TRACE_BOOT_XRAM_FIELDS`)
+repetiu G e S88 originais a 1.000 RPM, com ADC0/2/3/5/6/7 fixos em
+40/220/80/40/95/63 e 2,4 milhões de ticks. Em ambas as ROMs, `0AABh`
+copiou os dez bytes originais e `5896h` releu os nove usados na guarda,
+com valores idênticos; `F8:0Fh` ficou fora dessa comparação. Nos seis
+destinos que diferem entre G e A, não apareceu outro PC leitor nesse
+ensaio após excluir a autoverificação XRAM (`55A2h`) e a leitura anterior
+à cópia em `092Eh` de `F8:1Eh`. Isso limita os consumidores **observados**,
+sem excluir caminhos de outros estados. Para G, relatórios com o trace
+ligado/desligado coincidiram em saídas P5, CC3, RAM e cobertura de PC.
+Uma repetição G a 4.000 RPM e ADC0/3/6=180/232/247 encontrou o mesmo
+conjunto de PCs leitores desses dez campos; a janela continuou em
+2,4 milhões de ticks.
+Regressão: `test_boot_copies_and_later_guard_reads_original_bytes`;
+capturas: `boot_xram_fields_{G,S88}_1000/` e
+`boot_xram_fields_G_4000_high_tps/`.
 
 ## Matriz de bytes divergentes
 
@@ -109,6 +406,9 @@ para estudar efeito de calibração com código inicial idêntico. Ainda falta
 demonstrar que nenhum desses trechos seja código alcançável por fluxo indireto.
 No assembly da referência, 1366 diferenças pertencem a bytes `DB` e 74
 caem na lacuna `FF` de `0x7FA5..0x7FEE`, que permanece não classificada.
+`S37` e `S36` compartilham todos os bytes de `6E00h..7FFFh`; suas cinco
+diferenças estão próximas do vetor `IEX3`, inclusive seu destino. Elas
+não representam versões distintas das calibrações nessa faixa.
 
 `A` e `S37` coincidem em `0x0000..0x6EAA` e diferem em 17 intervalos,
 todos em `0x6EAB..0x7FEF`. O maior trecho é `0x7B45..0x7E11` (717 bytes).
@@ -116,6 +416,109 @@ Entre eles há `0x7B3E` (um byte), `0x7ED9..0x7F47` (111 bytes) e
 `0x7F51..0x7F8D` (61 bytes). Esses endereços são candidatos prioritários
 para rastrear `DPTR`/`MOVC`, dimensões e consumidores antes de atribuir
 grandezas físicas.
+
+Dois desses 17 intervalos ficam **fora** dos 116 alvos do diretório de
+ponteiros e somam 374 dos 2.328 bytes divergentes A–S37 (16,1%):
+
+| Intervalo | A/A+ | S37/S36 | G/S88 | Classificação |
+| --- | --- | --- | --- | --- |
+| `6EABh..6FC9h` (287 bytes) | `CBh`×286, `D0h` | `FFh`×287 | `FFh`×287 | Não classificado; emitido como `DB` |
+| `7199h..71EFh` (87 bytes) | `FFh`×87 | `7Fh`×62, `77h`×20, `76h`, `67h`×4 | `FFh`×87 | Não classificado; emitido como `DB` |
+
+O round-trip representa os bytes alterados com `DB`; nenhum slot
+`7002h..70E9h` aponta a esses intervalos. Isso não exclui leituras
+indiretas nem prova que sejam preenchimento. Não há trace natural de
+A/S37 que identifique consumidor ou função, portanto os dois registros
+permanecem fora da contagem de tabelas curadas, em
+`unclassified_nonpointer_intervals` no catálogo JSON. A disposição
+e os hashes de todas as ROMs são conferidos por
+`test_unclassified_nonpointer_intervals_preserve_variant_bytes`.
+Uma auditoria de endereço efetivo `MOVC` em 1.820 relatórios encontrou
+1.369 com a observação habilitada: 1.090 da G e 279 da S88. Nenhuma
+leitura alcançou os dois intervalos acima nem `722Ch`; os outros 451
+relatórios não observavam `MOVC`. O comando
+`python3 tools/audit_ma17_opaque_reads.py` produz
+`build/ma17-analysis/variants/opaque_read_audit.json` e distingue
+`MOVC @A+DPTR`, `MOVC @A+PC` e endereços espelhados pelo mapeamento da
+EPROM. A regressão sintética é
+`test_counts_mapped_dptr_and_pc_reads_separately_from_untraced_files`.
+Esse corpus contém apenas G/S88, portanto a ausência de leitura nele
+não exclui acesso nas revisões A/S37/S36 nem em estados não ensaiados.
+
+Na página `7200h..72FFh`, 15 bytes diferem entre G/S88 e a família A:
+`722Ch`, `7292h..7294h` e `72DFh..72E9h`. Os últimos onze já compõem
+limites da máquina de estados A descrita adiante. A seleção serial
+homóloga G/S88 `4CA0h..4D0Eh` e A/S37 `4D63h..4DD1h` usa
+`DPTR=7200h` e lê `7290h+estado` por `MOVC`; `7292h..7294h` são
+`89 13 BC` em G/S88 e `04 94 38` na família A. Um teste com os
+opcodes originais das seis ROMs preparou estados 2, 3 e 4 e confirmou
+cada byte em `IRAM[45h]` e depois em `S0BUF` pelo escritor serial
+`4C78h`/`4D3Bh`. Isso prova a rota digital, sem afirmar em qual etapa
+de uma sessão física cada byte é transmitido. **`7294h` tem dois
+consumidores conhecidos:** é também o índice zero do bloco de limites
+da matriz `7294h..7299h`. Um artefato antigo de round-trip da A
+classificava `4D63h` como `DB`; a execução atual do pipeline, sem
+`--entry` adicional, emite a rotina como código e remonta 32.768 bytes
+com hash idêntico (`build/ma17-analysis/variants/roundtrip_alcohol_serial_control/`).
+A execução com `--entry 0x4D63` produziu as mesmas métricas
+(`code_bytes=23615`, `data_bytes=4374`, `unclassified_bytes=4779`),
+portanto o artefato anterior estava desatualizado. `722Ch=00h` em G/S88
+e `9Ch` na família A, preservado como `DB` no round-trip. O único
+`MOV A,#2Ch; MOVC` literal encontrado em G/A executa com `DPTR=7300h`
+e lê `732Ch`; ainda pode haver índice indireto para `722Ch` em estados
+não ensaiados. Esse byte permanece sem consumidor confirmado no catálogo
+`opaque_722c`. Catálogo:
+`serial_handshake_bytes_7290` e `matrix_conditional_threshold_7294`.
+
+Uma checagem de fluxo dos opcodes G descartou dois outros candidatos
+aparentes para `722Ch`. Em `4A05h`, `DPTR=7300h` e `R2=06h`; as seis
+chamadas a `5887h` não alteram esses registradores. Se o salto alcançar
+`4A8Ch`, seu `MOVC A,@A+DPTR` lê `7306h`. O caminho que carrega
+`DPTR=7200h` em `4A83h` salta por cima desse `MOVC`. Na ramificação
+iniciada em `3607h`, o `MOVC` de `3643h` usa `DPTR=7200h`, mas a condição
+anterior fixa `R7=01h`, produzindo índice `CCh` e leitura de `72CCh`.
+Essas exclusões reduzem os candidatos estáticos; não demonstram ausência
+de leitura indireta em outras rotinas ou estados.
+O interpolador compartilhado em `532Bh` também não fornece um caminho
+direto conhecido: seus `MOVC` variáveis em `534Bh/5350h` recebem `DPTR`
+da rotina `5238h`, que decodifica um ponteiro big-endian. Os nove
+chamadores diretos G carregam slots `70CEh`, `7060h`, `7062h`, `7064h`,
+`7066h`, `705Ch`, `7082h`, `7088h` ou `7036h`; seus destinos
+originais estão entre `7859h` e `7E16h`. Mesmo somando o índice de oito
+bits, esses acessos não alcançam `722Ch`. A conclusão cobre os chamadores
+diretos inspecionados, sem substituir uma análise de todos os estados.
+O scanner de referência em `ECUMonomotronic.cpp` lê apenas quatro bytes
+de chave depois de `55h` e comenta o quarto como `BCh`, enquanto a
+sequência bruta G/S88 tem cinco bytes `46 85 89 13 BC` e o documento
+`BOSCH_MONOMOTRONIC_PROTOCOL.md` reconhece essa possibilidade.
+Em boot completo emulado de G e S88, a injeção de 5 baud fez cada ROM
+escrever `55 46 85 89 13 BC` na PTY, em ordem; sem resposta do scanner,
+o bloco foi transmitido novamente. Cada `write` retornou 1. O teste
+`test_g_s88_full_boot_transmits_five_serial_key_bytes` reproduz a primeira
+sequência. Capturas: `build/ma17-analysis/serial_five_key_probe_{g,s88}/`.
+Isso confirma os cinco bytes no **perfil Fiat emulado**, mas ainda não
+é uma captura elétrica da ECU real nem valida o perfil A em boot completo.
+O cliente local `test_pty.py` lia quatro chaves e descartava um byte
+pendente antes de enviar `~Key2`. Após passar a ler a quinta chave no
+modo PTY, `./run_test.sh` registrou `Key5=BC`, respondeu `7Ah` ao
+`Key2=85h`, recebeu os pacotes de identificação e terminou o handshake
+com sucesso. O cliente para porta física continua aceitando quatro
+chaves porque essa sequência não foi medida no hardware real.
+
+Auditoria de cobertura dos **dados** `6E00h..7FFFh`: 2.399 offsets
+divergem em pelo menos uma das seis ROMs, e todos estão dentro de
+intervalos do catálogo ou dos registros explicitamente não classificados.
+Os 22 offsets antes ausentes foram descritos em três entradas:
+`6E00h..6E17h` contém duas strings ASCII de identificação (nove bytes
+alterados entre famílias, vistas na resposta PTY da G); `7000h:7001h`
+guarda `56B4h` em G/S88 e `5777h` na família A, um deslocamento de
+`+C3h` cujo leitor ainda é desconhecido; `72DFh..72E9h` contém onze
+limites/constantes da máquina de estados A, já exercitados por testes
+isolados de opcodes originais. A regressão
+`test_catalog_covers_changed_data_pages` confere a cobertura byte a
+byte e os seis dumps. **Cobertura não atribui função física:** a
+auditoria exclui o código `0000h..6DFFh` e mantém os intervalos
+sem consumidor comprovado como desconhecidos.
 
 ## Diretório e três tabelas candidatas
 
@@ -129,6 +532,20 @@ em ordem de endereço serve apenas como limite superior **provisório**; a
 com limite provisório, `A`/`A+` alteram 31 e `S37`/`S36` alteram 17,
 sempre em comparação com `G`. O par anterior, em `0x7000`, vale `56B4h`
 em `G`/`S88` e `5777h` nas demais; seu papel ainda não foi demonstrado.
+Nenhuma das seis imagens contém a sequência literal
+`MOV DPTR,#7000h` (`90 70 00`); G carrega `DPTR=7002h` em `4773h` e o
+leitor big endian em `523Bh` acessa o primeiro slot desse diretório.
+Numa nova execução G/S88, ROM original, 1.500 RPM, ADC0/6=160/380,
+2,4 milhões de ticks e `MOVC` ativo, `7002h` foi lido 471/467 vezes,
+enquanto `7000h:7001h` não foi lido. Uma auditoria de 1.435 relatórios
+com `MOVC` do corpus local G/S88 também não encontrou leitura efetiva
+desses dois bytes; o corpus mistura versões do emulador e não contém
+boot completo da família A. Isso restringe o uso **observado** do par,
+sem excluir cálculo dinâmico de `DPTR`, outro estado ou leitor externo.
+Reproduzir: `python3 tools/audit_ma17_directory_prefix.py --output
+build/ma17-analysis/variants/directory_prefix_audit.json`; teste:
+`test_directory_prefix_audit_detects_effective_movc_reads`. Capturas:
+`build/ma17-analysis/variants/directory7000_current_{g,s88}/`.
 O alinhamento dos alvos demonstra ausência de deslocamento desses 116
 inícios, mas não garante equivalência dos algoritmos que os consomem.
 
@@ -138,8 +555,24 @@ por tabelas maiores (`74F8h`, `7502h`, `7617h`, `76F8h`, `77D9h`).
 Todos os bytes divergentes dessas regiões antes de `7F9Dh` estão
 cobertos pelo catálogo. Os 87 bytes divergentes restantes ficam na
 cauda `7F9Fh..7FFFh`, cujo intervalo candidato herdado de `7F8Dh`
-inclui preenchimento e identificação, não uma tabela comprovada.
-O teste `test_curated_catalog_covers_changed_pointer_data_before_rom_tail`
+inclui uma região sem classificação funcional e constantes de boot,
+não uma tabela única.
+Eles se separam em 81 posições de `7F9Fh..7FEFh` e seis bytes de
+`7FF6h..7FFFh` copiados no boot. Em `7F9Dh..7FEFh` (83 bytes), G/A/A+
+são `FFh` contínuos; S37/S36 preservam dois `FFh` e usam 81 `00h`;
+S88 preserva oito `FFh`, depois `11h`×4, `06h`×3, `11h`, `10h`,
+`11h`×65 e `FFh`. As seis imagens compartilham
+`7FF0h..7FF5h = FF FF FF 07 45 FF`. Esse padrão de lacuna é
+compatível com preenchimento ou edição, mas uma leitura indireta
+ainda não foi excluída; portanto permanece **não classificado** como
+função, embora seus bytes estejam agora registrados no catálogo. O teste
+`test_unclassified_rom_tail_gap_has_variant_specific_raw_patterns`
+confere cada byte e o tamanho das seis ROMs.
+Nos rastros G/S88 `experiments_opcode86_fixed/gate63_tps_40_95/`
+(2,4 milhões de ticks por ROM), `MOVC` leu os bytes de boot em
+`7FF6h..7FFFh`, mas nenhuma posição de `7F9Dh..7FEFh`. Isso limita
+apenas a trajetória testada; acesso por outro estado continua possível.
+O teste `test_catalog_accounts_for_changed_pointer_tail_as_unknown_and_boot`
 protege essa fronteira; cobertura de bytes não confirma função física.
 
 Das 115 regiões com limite provisório, 75 têm conteúdo igual nas seis
@@ -195,15 +628,29 @@ as demais linhas dessas três fatias mudam por completo quando diferem.
 `/usr/bin/python3 tools/plot_ma17_matrices.py --matrix 0x7581 --variant S88`
 gera PNG, CSV por célula e resumo JSON em
 `build/ma17-analysis/variants/matrix_plots/`. A mesma interface aceita
-os seis inícios de `MATRICES` em `tools/compare_ma17_variants.py` e as
-variantes `A`, `A+`, `S88`, `S37`, `S36`. Os mapas de calor usam a mesma
+os seis inícios de `MATRICES` em `tools/compare_ma17_variants.py`, mais
+`7B46h`, `7BBEh`, `7C36h`, `7CAEh`, `7D26h` e `7D9Eh`, além das curvas
+de 15 células `7E9Dh`, `7EACh` e `7EBBh`; aceita `G`,
+`A`, `A+`, `S88`, `S37` e `S36` nos dois lados da comparação.
+Os mapas de calor usam a mesma
 escala 0–255 para as duas ROMs; o terceiro painel mostra a diferença
-**assinada** de bytes e o quarto a média bruta por linha. CSV e JSON
+**assinada** de bytes e o quarto a média bruta por linha ou o valor de
+cada célula nas curvas de uma linha. CSV e JSON
 registram endereços e hashes, permitindo conferir a imagem com a ROM.
+Nas curvas `7E9Dh/7EACh/7EBBh`, quando os dois lados usam os mesmos
+segmentos `7570h`, as colunas recebem o início bruto em `RAM47h`;
+quando os segmentos diferem, o gráfico mantém índices e CSV/JSON
+registram separadamente os dois conjuntos de limites.
 
 Em [7581h, G/S88](../build/ma17-analysis/variants/matrix_plots/matrix_7581_g_vs_s88.png),
 as duas silhuetas têm a mesma forma: todas as 225 células de S88 valem
-exatamente G+21. Já [7F15h, G/A](../build/ma17-analysis/variants/matrix_plots/matrix_7f15_g_vs_a.png)
+exatamente G+21. Em [7ED9h, G/A](../build/ma17-analysis/variants/matrix_plots/matrix_7ed9_g_vs_a.png)
+e [7F51h, G/A](../build/ma17-analysis/variants/matrix_plots/matrix_7f51_g_vs_a.png),
+as 60 células de A e A+ seguem, respectivamente,
+`min(255, G+34)` e `min(255, G+38)`. A saturação explica por que
+o mapa de diferenças não é uniforme nos valores altos. O resumo JSON
+registra `saturated_add_delta`; o teste confere cada byte nas ROMs originais.
+Já [7F15h, G/A](../build/ma17-analysis/variants/matrix_plots/matrix_7f15_g_vs_a.png)
 mostra um platô de valores altos em G que recua na versão A; o delta
 varia de −156 a +27 e 59/60 células mudam. Em
 [7F15h, G/S37](../build/ma17-analysis/variants/matrix_plots/matrix_7f15_g_vs_s37.png),
@@ -213,7 +660,31 @@ em A/A+, as duas matrizes internas diferem em nove células, enquanto
 em G/S88 diferem nas 60. Isso é evidência de convergência das duas
 calibrações selecionáveis em S37/S36, não prova de qual estado é
 atingido em uso normal nem de função física idêntica após o lookup.
-Todos os eixos dos gráficos continuam em índices e bytes brutos.
+Uma comparação **interna** de A/A+ mostra algo mais específico:
+`7F15h` é igual a `7ED9h` nas primeiras 51 células; nas nove finais
+(última linha, colunas 1–9), cada byte de `7F15h` vale `7ED9h−34`.
+O [mapa A: 7ED9h versus 7F15h](../build/ma17-analysis/variants/matrix_plots/matrix_7ed9_a_vs_7f15_a.png)
+isola essa faixa. As duas tabelas usam o mesmo eixo bruto `upper IRAM[AFh]`;
+a última linha começa em `FBh` (251), conforme `7B3Eh`. O padrão é
+compatível com uma correção por estado selecionado naquela faixa, mas
+não estabelece quando `RAM57h=1` ocorre naturalmente nem qual saída física
+esse valor controla. Para reproduzir:
+`/usr/bin/python3 tools/plot_ma17_matrices.py --reference-variant A --reference-matrix 0x7ED9 --matrix 0x7F15 --variant A`.
+Para `7ED9h`, `7F15h` e `7F51h`, o gráfico agora anota em cada coluna
+o início nominal em RPM derivado de `7B32h` e do fator 25 observado no
+modelo Fiat. Cada painel superior também anota o início **bruto** de
+sua linha e a origem `IRAM[7Dh]` ou `upper IRAM[AFh]`, obtidos de
+`7B3Eh`. O CSV e o JSON registram as mesmas coordenadas. As colunas
+do mapa de calor mantêm **largura visual igual**, mesmo quando os
+intervalos de RPM diferem; linhas e valores das células seguem brutos.
+[7ED9h, G/A com eixo nominal](../build/ma17-analysis/variants/matrix_plots/matrix_7ed9_g_vs_a.png)
+mostra esse formato. Para `7581h`, `7662h` e `7743h`, os eixos
+continuam em índices brutos porque sua escala ainda não foi validada.
+Em [7F15h, G/S37](../build/ma17-analysis/variants/matrix_plots/matrix_7f15_g_vs_s37.png),
+as linhas homólogas começam em bytes diferentes de `7Dh`; o painel de
+diferenças compara **células de ROM por índice**, não resultados sob a
+mesma tensão ou o mesmo estado do sensor. A regra de soma saturada é uma
+relação entre bytes, não uma escala física validada.
 
 ### Alvo terminal `70C4h→7F8Dh`
 
@@ -240,6 +711,18 @@ como regressão no teste dos opcodes originais.
 Os trechos
 seguintes comparam `R3` com upper IRAM `83h`, consultam `7F96h`, somam
 um valor a upper `8Ch` e chegam à escrita de lower `69h` em G.
+O contador `07h` no cabeçalho faz o decodificador devolver `R3` entre
+`00h` e `06h`. Nesse ramo, a comparação grava `R3` em `83h`, mantém
+um valor anterior menor, ou incrementa esse valor menor em uma unidade;
+portanto o `MOVC` com `DPTR=7F96h` só alcança `7F96h..7F9Ch`.
+O teste `TerminalCurveLookupStaysWithinSevenBytes` executa os opcodes
+originais G/A para as 256 entradas, cinco valores prévios de `83h`
+(`00h`, `01h`, `06h`, `07h`, `FFh`) e dois estados de `82h`, confirmando
+`A≤06h` e `DPTR=7F96h` imediatamente antes do `MOVC`. Saltos anteriores
+para o mesmo opcode usam outro `DPTR`; a prova não cobre possíveis
+entradas anômalas com registradores preparados externamente nem outros
+leitores indiretos de `7F9Dh..7FF5h`. Esses bytes continuam sem função
+atribuída.
 O teste `TerminalSegmentHeaderSelectsDifferentIramSource` confirma a
 troca da fonte e essa faixa de diferenças em `R3`; não
 demonstra a frequência natural dessa rota nem sua função física.
@@ -407,8 +890,35 @@ interpolação. Na ROM `G`, `7B32h` declara dez segmentos do eixo `47h` e
 `534Bh/5350h` somam `R0=10` e leem a próxima linha. Assim, os 60 bytes
 em `7ED9h..7F14h` formam uma matriz **6 linhas × 10 colunas** para
 esse consumidor. A seleção da fatia via `RAM[57h]`, a escala numérica
-e a grandeza física da saída ainda exigem análise; a orientação precisa
+do segundo eixo e a grandeza física da saída ainda exigem análise; a orientação precisa
 ser verificada separadamente nas revisões com código diferente.
+
+Para o primeiro eixo, o scanner propõe `RPM=25×IRAM[47h]`. Treze
+execuções com as ROMs G e S88 intactas, roda 60−2 e perfil Fiat de
+11,88 MHz registraram a escrita em `0EA5h/0EA7h`: G produziu
+`47h=1Eh/28h/3Ch/45h/50h/78h/A0h` para
+750/1.000/1.500/1.725/2.000/3.000/4.000 RPM; S88 produziu
+`1Eh/78h` para 750/3.000 RPM. Nesses pontos, o fator 25 coincide
+exatamente com a entrada simulada, inclusive no caso intermediário
+1.725 RPM. Em torno desse ponto, G deu `44h` a 1.713 RPM,
+`45h` a 1.724 e 1.738 RPM e `46h` a 1.749 RPM. Logo, o fator
+25 descreve a escala dos pontos nominais testados, mas não se deve
+aplicar truncamento ou arredondamento simples à RPM solicitada para
+prever cada transição de byte. A validação cobre o relógio e os pulsos **modelados**; não
+mede o oscilador ou a entrada elétrica de uma ECU real. Teste:
+`VariantTraceTests.test_rpm47_matches_crank_rate_in_g_and_s88_profiles`.
+
+Os bytes originais de `7B32h` são `47 0A 06 08 0C 18 23 29 28 28
+2F 01`: endereço IRAM, dez segmentos e dez incrementos. Executando
+`527Ch..52CCh` da ROM G isoladamente para cada entrada `47h=00h..FFh`,
+`R3` muda de segmento nos valores brutos `08h`, `10h`, `1Ch`, `34h`,
+`57h`, `80h`, `A8h`, `D0h` e `FFh`. O primeiro segmento começa em
+`00h`. Multiplicar esses inícios por 25 dá coordenadas **nominais**
+de 0, 200, 400, 700, 1.300, 2.175, 3.200, 4.200, 5.200 e 6.375 RPM
+para as dez colunas; 6.375 RPM está fora da faixa de 300–6.000 RPM do
+gerador atual. São fronteiras do algoritmo e uma conversão candidata
+do eixo, sem calibração física da roda ou do oscilador. Teste:
+`Sab80C517.FiatRpm7b32SegmentsAllRawValues`.
 
 Na revisão `A/A+`, o consumidor homólogo começa em `32ADh`: consulta
 `70AAh→7B32h` e `70ACh→7B3Eh` por `533Ch`, calcula o deslocamento da
@@ -423,6 +933,61 @@ em `A/A+` e `7Dh` em `S37/S36` (e G/S88). O código da revisão A escreve
 `AFh` por caminhos adicionais, inclusive `3302h..3326h` com comparação
 de `46h` e `47h`. Portanto, transferir a interpretação de compensação
 de alimentação de G para A/A+ seria incorreto sem rastrear `AFh`.
+
+O teste `Sab80C517.SixRom7b3eSecondAxisSegmentsAllRawValues` executou
+o leitor original de cada revisão para cada byte `00h..FFh` do eixo
+selecionado. Os seis inícios de linha em valor bruto são
+`0,141,188,220,243,251` em G/A/A+;
+`0,133,180,212,235,243` em S88; e
+`0,119,166,198,221,229` em S37/S36. Em A/A+ apenas o seletor de
+IRAM muda (`7Dh→AFh`); em S88/S37/S36 ele permanece `7Dh`, mas o último
+incremento de `7B3Eh` sobe de `05h` para `0Dh`/`1Bh`. Assim, mesmo
+quando as células de `7ED9h` são iguais entre G e S88, seus índices
+de linha podem divergir para a mesma entrada bruta. A escala física
+de `7Dh` e a faixa natural de `AFh` continuam sem validação.
+
+Na ROM Fiat G, `4044h` carrega `IRAM[61h]` e `IRAM[64h]`, chama `5367h`
+e grava `IRAM[7Dh]` em `404Bh`. A execução isolada desses opcodes com
+66 pares de entradas e divisor não nulo confirmou
+`7Dh = min(255, floor(256 × 61h / 64h))`. Com `64h=0`, os mesmos
+opcodes retornaram `7Dh=FFh` para todos os onze numeradores testados,
+incluindo zero. Esse é um resultado digital da rotina, não prova que
+`64h=0` ocorra durante operação normal.
+Em execução completa a 1.000 RPM, ADC1 bruto 40/80/160 produziu
+`61h=28h/50h/A0h`, `64h=5Ah` e `7Dh=71h/E3h/FFh`. São contagens
+digitais; a conversão para tensão física depende da entrada e do
+circuito ainda não validados. Teste:
+`Sab80C517.Fiat4044StoresSaturatedQ8RatioInIram7d`.
+
+Com a ROM G intacta, 1.000 RPM, ADC1=47 e estímulo ADC4 de 10 bits em
+zero, `64h` permaneceu zero durante 2,4 milhões de ticks; `404Bh`
+gravou `7Dh=FFh`. `31h` terminou em `10h` e a largura baixa mediana
+modelada de P5.0 foi 1.861 ticks. A regressão
+`test_adc4_zero_reaches_saturated_7d_in_g` reproduz esse cenário.
+Alcançabilidade no emulador não demonstra que a entrada ADC4 física
+atinja zero na ECU.
+
+O cálculo local é homólogo nas seis ROMs: G/S88 executam
+`4044h→5367h`, e A/A+/S37/S36 executam `4101h→542Ah`.
+Com `64h=0` e numeradores `00h`, `01h`, `2Fh` e `FFh`, os opcodes
+originais das seis imagens gravaram `7Dh=FFh`. O teste
+`Sab80C517.SixRomZeroDivisorSaturatesIram7d` fixa endereços, chamadas
+e resultados. A/A+ selecionam `AFh`, não `7Dh`, no cabeçalho da matriz
+`7B3Eh`; portanto essa saturação não demonstra uma mudança de linha
+nessas duas revisões.
+
+Com `64h=5Ah`, a primeira fronteira de linha (`7Dh=141` na G e
+`7Dh=133` na S88) corresponde a ADC1 bruto 50 e 47, respectivamente,
+quando `61h` acompanha ADC1. Na ROM G original a 1.000 RPM e ADC7=63,
+ADC1=47 deu `7Dh=85h`, `31h=3Fh` e P5.0 baixo mediano de 7.306 ticks.
+Entregar somente `0Dh` no retorno do `MOVC` original em `5289h/7B45h`
+deu `31h=32h` e 5.792 ticks, preservando `7Dh` e a ROM G. Com ADC1=50,
+o mesmo contraste foi `31h=32h`/5.792 contra `2Eh`/5.326 ticks.
+Cada braço consultou `7B45h` 230 vezes; o trace manteve o byte original
+`05h` como valor da ROM. Este ensaio isola a contribuição digital desse
+byte no perfil Fiat emulado; não identifica tensão, bico ou bobina física.
+Teste: `VariantTraceTests.test_adc1_7b45_row_boundary_changes_ram31_and_p5_in_g`.
+Capturas: `build/ma17-analysis/variants/adc1_7b45_{47,50}_{control,donor}/`.
 
 Um teste de execução **isolada** das ROMs originais começa em `32ADh`
 e para após a escrita de `31h` em `32D4h`. Com `47h=28h`, `57h=0`
@@ -444,6 +1009,55 @@ o limite de 10 levam a `FFh`. O teste anterior confirmou que `00h` e
 `FFh` geram resultados distintos em `31h` na ROM A. Outros caminhos,
 inclusive `34C4h` e `34D5h..34F0h`, também escrevem `AFh`; portanto
 essa janela não define sua distribuição durante operação completa.
+
+Um segundo produtor está em `3473h..34B3h`, byte a byte igual nas quatro
+ROMs da família A. O `JB F1` em `3479h` testa `PSW.1` (bit `D1h`),
+**não** `B.1` (bit `F1h`). Com `PSW.F1=0`, `46h=28h` e `AFh=55h`,
+`47h=34h` preserva `AFh`, enquanto `47h=35h` o zera: o limite
+consultado é `ROM[734Dh]=0Ch`. Com `PSW.F1=1`, a rotina usa
+`ROM[734Eh]=0Ah`; no mesmo estado preparado, `47h=28h` grava `FFh`
+e `47h=29h` preserva `55h`. O teste
+`Sab80C517.AlcoholCodeUpperAfRpmComparisonUsesTwoRomBounds` executa
+os opcodes originais nas quatro ROMs e para antes da guarda seguinte
+em `34B3h`. A frequência e a ordem dessas escritas no boot natural
+continuam desconhecidas.
+
+No teste contínuo `3473h→34B3h→34CFh`, ainda com `46h=28h`,
+`47h=35h` e `PSW.F1=0`, o zero em `AFh` sobreviveu até a saída
+`3562h` quando `22h.1=1`, `@B3h.4=0`, `2Fh.0=1` e `B.0=1`.
+Limpar apenas `22h.1` desviou para `34C4h`, que substituiu `AFh`
+por `FFh` antes de sair em `35CFh`. Os opcodes das quatro ROMs
+produziram o mesmo contraste no teste
+`Sab80C517.AlcoholCodeUpperAfZeroSurvivesOnlyOpenGate`.
+Esse ensaio demonstra a guarda local em estado preparado; não prova
+que o zero alcance a matriz em uma execução natural.
+
+Para testar o consumidor, executei em seguida `32ADh..32D6h` nos
+mesmos opcodes, retendo apenas `AFh` e igualando `47h=35h`,
+`7Dh=20h`, `57h=0` e os demais estados da etapa. A/A+ gravaram
+`31h=BAh` com `AFh=00h` e `31h=37h` com `AFh=FFh`.
+S37/S36 gravaram `31h=98h` nos dois braços, coerente com o cabeçalho
+`7B3Eh` que usa `7Dh` nessas revisões. O mesmo teste de regressão fixa
+os quatro resultados. A transição entre as etapas foi preparada pelo
+teste; a sequência de chamadas natural e a função física seguem abertas.
+
+O grafo estático do assembly A situa as duas etapas na mesma rotina:
+`31B4h` salta a `3296h`, o consumidor começa em `32ADh` e um caminho
+posterior alcança o produtor em `3473h`. Na janela `3296h..34D4h`,
+há caminho estático `32ADh→3473h`, mas nenhum `3473h→32ADh`.
+Logo, `AFh` atualizado ali só pode afetar uma consulta posterior após
+nova entrada ou outro caminho externo; o teste em duas etapas simula
+essa possibilidade, sem provar que ela ocorra no boot real. O arquivo
+`build/ma17-analysis/variants/alcohol_af_matrix_path.json` registra
+o filtro de PCs. O grafo não modela a pilha de retorno das chamadas;
+regressão: `ControlFlowGraphTests.test_alcohol_monolithic_assembly_maps_matrix_and_af_writer`.
+
+Antes desse cálculo, o trecho de inicialização `0C48h..0C58h` das
+quatro ROMs A grava `upper IRAM[AFh]=FFh` e `lower IRAM[7Dh]=C0h`.
+Os opcodes originais executados isoladamente confirmam ambos os bytes
+em `Sab80C517.AlcoholCodeStartupSeedsUpperAfAndIram7d`. Esse é o
+estado semeado pelo trecho, não uma medição do primeiro acesso natural
+à matriz; escritas intermediárias ainda podem alterá-lo.
 
 O caminho adicional de `34D5h..34F2h` soma `B0h` a `AFh` somente quando
 `AFh≠FFh`, `26h.5=0` e `2Dh.5=1`, saturando em `FFh`. Um teste isolado
@@ -585,6 +1199,32 @@ matrizes as células alteradas contribuem causalmente para `31h` e P5
 de `57h=1/2`, nem execução do código A/S37. Capturas:
 `build/ma17-analysis/variants/matrix_7f_donor/`.
 
+Um ensaio separou a diferença **interna da ROM A** entre `7ED9h` e
+`7F15h`: o código G e `57h=1` ficaram fixos, e a matriz doadora foi
+`A:7F15h`. As três células da última linha efetivamente lidas que
+diferem do banco `A:7ED9h` foram substituídas apenas no retorno de
+`MOVC`: `7F48h=0Ah→2Ch`, `7F4Ah=0Ch→2Eh` e `7F4Bh=15h→37h`.
+As 462 leituras da matriz ocorreram nos dois casos. O resultado final
+`31h` mudou de `10h` para `32h` e a largura baixa mediana modelada de
+P5.0 de 1.861 para 5.792 ticks; a mediana de CC3 permaneceu em 1.422.
+Assim, a faixa de `−34` bytes visível no
+[mapa comparativo A:7ED9h/A:7F15h](../build/ma17-analysis/variants/matrix_plots/matrix_7ed9_a_vs_7f15_a.png)
+tem efeito digital causal no caminho G testado. A seleção natural de
+`57h=1`, o comportamento completo do código A e a ligação física de
+P5.0 ainda não estão comprovados. Capturas:
+`build/ma17-analysis/variants/7f15_a_bank{1_donor,0_cells}/`;
+regressão: `AlcoholBankPairTests.test_last_row_bank_delta_reaches_ram31_and_modeled_p5`.
+Uma auditoria dos opcodes originais das seis ROMs encontrou os únicos
+`MOV 57h,#imediato` em `0B0Fh` (`00h`), no reinício cíclico
+`3B94h` em G/S88 ou `3BC2h` em A/A+/S37/S36 (`00h`), e em
+`601Dh` (`5Ah`, rotina de diagnóstico). Há ainda `MOV 57h,B` em
+`6078h` no mesmo fluxo de diagnóstico. Nos traces completos atuais
+G/S88 com dois degraus TPS, sem override e com hash do executável,
+não houve transição de `57h`. Isso reduz a plausibilidade de seleção
+natural de bancos 1/2 no caminho do motor ensaiado; escritas indiretas
+e outros estados operacionais ainda impedem concluir inacessibilidade.
+Regressão: `AlcoholBankPairTests.test_six_roms_direct_immediate_ram57_writers_are_zero_in_engine_code`.
+
 Em ensaio **isolado do próprio código A/S37** (`32ADh..32D5h`), o
 diretório `70A2h/70A4h/70A6h` foi selecionado por `57h=0/1/2`, sem
 alterar as ROMs. Dentro da ROM A, `7F15h` difere de `7ED9h` apenas
@@ -603,6 +1243,128 @@ equivalentes: com `47h=10h` e `AFh=FFh`, o mesmo código A produz
 pares de `47h/AFh` e fixa esse primeiro par divergente. Trata-se de
 execução parcial iniciada no consumidor; não demonstra quando a ECU
 seleciona os modos 1/2 em operação normal.
+
+Uma continuação isolada executa o código original de A e S37 em
+`043Bh..0521h` após os resultados `31h=9Ah/78h` acima, mantendo
+`36h:37h=011Dh` e varrendo `RAM[69h]` de `00h` a `FFh` com o restante
+do estado inicial igual. A primeira divergência é em `69h=12h`:
+`34h:35h=FFFFh` na A e `12FEh` na S37. Em `69h=FFh`, ambas convergem
+em `C0FEh`, embora `22h.7` seja `0/1`. Isso demonstra dependência
+local da recarga em algumas entradas e convergência em outras. O trecho
+consumidor `043Bh..0521h` é idêntico nas duas ROMs; fornecer apenas o
+`31h` da outra variante depois da interpolação permuta `FFFFh/12FEh`
+em `69h=12h`. Isso isola `31h` como mediador local, mas não mostra que
+`69h=12h` ocorra naturalmente nem identifica a saída física.
+No subintervalo `69h=80h..A5h`, as recargas divergem em **todos** os
+20 valores `80h..93h` e convergem em `94h..A5h`. O cruzamento de
+`31h` também permuta o resultado em `69h=89h`. A ROM G já exibiu
+valores de `69h` nessa faixa em outros ensaios; isso não valida a
+distribuição natural de `69h` nem o perfil elétrico das ROMs A/S37.
+
+O produtor de `69h` em G/S88 `3AE4h..3B07h` é byte a byte igual ao
+trecho A/A+/S37/S36 `3B12h..3B35h`. Todas têm
+`ROM[72A2h]=80h` e `ROM[72A7h]=A5h`. Executar os opcodes originais
+das seis imagens em isolamento confirmou: com `2Bh.4=0`, `69h` recebe
+`min(IRAM superior[8Ch],A5h)` nos exemplos `70h/89h/B0h`;
+com `2Bh.4=1`, recebe `80h` para `8Ch=89h/B0h`. Portanto, o produtor
+possui um caminho **possível** para `69h=80h`, dentro da faixa
+discriminante da recarga. Não foi estabelecido quando a flag `2Bh.4`
+está ativa nas variantes A/S37 em execução completa.
+
+A origem da flag aparece no processamento serial: G/S88
+`5058h..5095h` e A/A+/S37/S36 `511Bh..5158h` validam o contador em
+XRAM `B9h` e o terminador `03h`, depois leem o **ID do frame** em
+XRAM `BAh` para `R2`. Com
+`R2=38h`, comparam `ROM[728Dh]=64h` a `RAM[47h]`; se
+`47h<=64h`, escrevem `42h=08h` e ligam `2Bh.4`. Em teste isolado
+dos seis códigos desde a validação do frame, `47h=64h` liga a flag;
+`65h`, contador inválido ou terminador inválido levam a `42h=04h`
+sem ligá-la. O frame `09h` alcança a instrução que a limpa. O scanner
+de referência expõe `04h` como pedido de teste de atuador, mas não
+expõe `38h`: os dois IDs não devem ser confundidos. O significado de
+`38h` permanece desconhecido fisicamente. Em uma sessão PTY com a ROM G
+original, 1.000 RPM e pedido `38h` após o handshake, o trace observou
+`5058h→5078h→508Ah→5091h`: `RAM[2Bh]` passou de `20h` para `30h` e
+`RAM[42h]` para `08h` no tick 8.926.104. No tick 8.929.751,
+`3B06h` escreveu `RAM[69h]=9Ah→80h` com a flag ativa. A ECU respondeu
+com frames `DBh` (dado `80h`) e `09h`; o significado físico desse retorno
+não foi identificado. A cobertura foi obtida com `MA17_TRACE_SERIAL38=1`
+e `MA17_TRACE_PC=1`, parada em 25 milhões de ticks. O efeito digital
+confirma a rota serial nesta sessão emulada, sem provar sua função no veículo.
+O ACK `09h` limpou `2Bh.4` em `5096h` no tick 9.038.753, e `3B06h`
+restaurou `69h=80h→9Ah` no tick 9.042.366. Enquanto `69h=80h`, dois
+pulsos baixos completos de cada latch P5.0/P5.1 mediram 1.484 ticks;
+os pulsos imediatamente anteriores mediram 1.484/1.485. Os registros
+de P5 mudaram `32h:33h/34h:35h` de `12FEh/8BFFh` para `2FFEh/A8FFh`
+durante a flag e depois restauraram o par anterior. Os intervalos entre
+bordas baixas consecutivas de P5.0 incluíram 59.400, 57.915, 59.400 e
+60.886 ticks na transição: há um deslocamento de fase candidato, apesar
+da largura baixa estável. O ensaio pareado abaixo testa a repetição
+sem `38h`; a atribuição ao Timer 1 e a uma saída física segue aberta.
+
+Execute `python3 tools/probe_ma17_serial38.py` para repetir automaticamente
+o controle e o pedido; o script inicia emulador e cliente no mesmo espaço
+PTY e requer a `.venv` com as dependências do `test_pty.py`.
+Um par de execuções com esse script repetiu o ensaio
+com atraso de cliente de 5 s, mesma ROM G e janela de 8–10 milhões de
+ticks. O controle só com handshake teve 134 eventos de latch P5,
+`69h=9Ah`, recargas `12FEh/8BFFh` e períodos entre bordas baixas
+próximos de 59.400 ticks nos dois bits. O pedido `38h`
+teve 134 eventos,
+`69h=80h` transitoriamente, recargas `2FFEh/A8FFh` e períodos extremos
+próximos de 57.915/60.885 ticks nos dois bits. As larguras
+baixas permaneceram próximas de 1.484 ticks. Ambos tiveram 603 eventos
+no caminho Timer 1, nos PCs `0223h/0252h/0286h/0298h`; somente o ensaio
+com `38h` registrou o par `2FFEh/A8FFh` nesses eventos. O relatório
+reproduzível
+está em `build/ma17-analysis/variants/serial38_probe.json`; o par associa
+a troca serial a uma mudança transitória de fase e recarga no modelo,
+mas ainda não isola o bit `2Bh.4` do tráfego serial nem identifica os
+pinos físicos. Pequenas variações no agendamento mudam alguns períodos
+isolados entre execuções; o contraste de recarga e fase se repetiu.
+No terceiro braço, o mesmo pedido `38h` atingiu `5091h` e o produtor
+`3B06h` escreveu `69h=80h`, mas `MA17_OVERRIDE_RAM69=9A` forneceu `9Ah`
+em `043Bh` antes do cálculo do Timer 1. As recargas ficaram apenas em
+`12FEh/8BFFh`; ambos os bits P5 voltaram a períodos próximos de
+59.400 ticks. Isso demonstra mediação digital pelo valor consumido em
+`043Bh` no modelo. A intervenção escreve a própria `RAM[69h]` e
+persiste até outra escrita do firmware, portanto não é uma substituição
+puramente transitória do operando; a identidade física de P5 continua aberta.
+
+Para repetir a sessão em dois terminais que compartilhem `/dev/pts`, inicie
+o emulador abaixo e use o caminho `PTY pronto em:` que ele anunciar no
+segundo comando. `--frame38-probe` confirma apenas a troca de frames;
+as linhas `[SERIAL38-PATH]` e `[ENGINE-RAM]` confirmam o ramo e o efeito.
+
+```sh
+MA17_TRACE_SERIAL38=1 MA17_TRACE_RAM69=1 MA17_CRANK_RPM=1000 \
+  MA17_STOP_TICKS=25000000 ./build/emu8051-tty \
+  FiatTipo_MA17_dump_27c256.bin --8052
+.venv/bin/python test_pty.py /dev/pts/X --frame38-probe
+```
+
+Sem injeção K-Line, o harness Fiat atual executou as ROMs originais G
+(`a3473435…40f8e1f`) e S88 (`bfa59928…fdcbe28`) por 2,4 milhões
+de ticks a 1.000 RPM, com a sonda opcional `MA17_TRACE_RAM69=1`.
+Cada ROM teve 230 amostras no produtor `3B06h`, sem atingir o limite
+de 2.000 eventos do probe. `2Bh.4` estava limpa em todas: flags
+`20h/28h`. Os valores observados em `69h` foram `9Ah/9Ch/A2h` em G
+e `89h/90h/99h/9Ch/A2h` em S88. Assim, S88 alcançou `89h` sem a
+flag serial nesse cenário, mas nada disso demonstra os valores naturais
+das ROMs A/S37. Os relatórios estruturados estão em
+`build/ma17-analysis/variants/ram69_serial_flag_current_{g,s88}/execution.json`;
+`ram69_producer_observation` distingue contagem, flag, valores e limite
+de amostras.
+
+Reprodução a partir da raiz do projeto (adicione `--firmware
+'firmwares_modificados_ma17_tipo/tipo 1.6 alcool27c256 SUN 8817.bin'`
+e troque o diretório de saída para `..._s88` no segundo ensaio):
+
+```sh
+MA17_TRACE_RAM69=1 python3 tools/trace_ma17.py --no-kline-inject \
+  --crank-immediate --rpm 1000 --stop-ticks 2400000 --seconds 30 \
+  --output-dir build/ma17-analysis/variants/ram69_serial_flag_current_g
+```
 
 Para verificar que o efeito de `7F15h` não depende só do ponto basal,
 repetiu-se a troca G←A com `RAM[57h]=1`, `ADC7=63` e 2,4 milhões de
@@ -625,21 +1387,21 @@ RPMs, sem o sufixo, precedem a correção do escopo do seletor forçado e
 não servem como evidência de ausência de acesso à matriz.
 
 O catálogo curado [MA17_CALIBRATION_CATALOG.json](MA17_CALIBRATION_CATALOG.json)
-registra 43 estruturas prioritárias com hash de cada ROM, ponteiro quando há,
+registra 137 estruturas com hash de cada ROM, ponteiro quando há,
 intervalo, formato conhecido, consumidor na gasolina, diferenças por imagem,
 evidência estática/dinâmica, confiança e perguntas abertas. Um teste confronta
 endereços, hashes e contagens de diferenças diretamente com os seis dumps.
 O comando de comparação também gera `calibration_catalog_expanded.json`:
-43 entradas × seis versões, cada uma com endereço, hash, bytes originais
+137 entradas × seis versões, cada uma com endereço, hash, bytes originais
 e lista das células divergentes em relação a G. Cada delta e percentual
 usa aritmética de bytes *u8* brutos; percentual fica nulo quando o byte
 de G é zero. Essas diferenças não pressupõem escala física ou sinal.
 O gerador recusa ROM cujo tamanho, hash, ponteiro ou contagem divirja
 do catálogo curado; o teste automatizado verifica uma diferença da
 tabela `7426h` e um caso com denominador zero em `7D26h`.
-O inventário automático registra 116 regiões apontadas, incluindo outras
-candidatas ainda não curadas, sem função física atribuída. Atualmente há
-**zero funções físicas confirmadas** para essas 43 estruturas; os eixos
+O inventário automático registra 116 regiões apontadas: 104 com cobertura
+direta no catálogo, oito contidas em estruturas catalogadas e quatro ainda
+provisórias. A cobertura de ponteiros não estabelece função física. Os eixos
 `47h`, `6Fh`, `7Dh`, `62h`, `63h` e `4Eh` possuem vínculo
 de código com variáveis internas, mas suas escalas e efeitos finais ainda
 exigem prova.
@@ -652,11 +1414,41 @@ Executar os opcodes originais das seis ROMs com `R5=3`, `R6=0` confirmou
 os três ponteiros no `MOVC` e os bytes retornados em `R2`. Em rastros
 completos G/S88, a curva `744Eh` foi lida naturalmente durante os ensaios
 de ADC3; não se observou ainda acesso natural às outras duas curvas.
-O processamento posterior pode gravar `4Dh` em G, mas a origem completa
-de `R5/R6` e a função física dessas curvas seguem abertas. Os deltas
+O processamento posterior pode gravar `4Dh` em G. A origem usual de
+`R5/R6` na curva `744Eh` foi rastreada abaixo; o ramo alternativo e a
+função física das curvas seguem abertos. Os deltas
 entre ROMs estão no catálogo curado, e o teste
 `Sab80C517.PostCoolantCurveSelectorUsesThreePointerSlots` conserva a
 seleção das três curvas como regressão de leitura digital.
+
+Dentro de cada ROM da família A, `744Eh..7457h` e `7458h..7461h`
+são dez bytes iguais. Um teste com código original, `R5=9`, `R6=0` e
+`XRAM[6Ch]=B0h` produziu o mesmo `4Dh` para os dois ponteiros:
+`99h` em A e `7Fh` em S37. Essa equivalência tem uma borda: o
+interpolador também lê a célula seguinte. Com `R5=9` e `R6=80h`,
+ele usa `7458h` ou `7462h` como segunda célula e obtém `R2=5Bh/5Ah`
+em A, `41h/40h` em S37; esses valores chegam a `4Dh` no estado isolado.
+O último índice com fração não nula ainda não foi visto em um fluxo
+natural da família A. As regressões
+`AlcoholPostCoolantEqualCurvesGiveEqualIsolatedOutput` e
+`AlcoholPostCoolantIndexNineFractionCrossesCurveBoundary` guardam as
+duas condições sem atribuir função física às curvas.
+Varreduras isoladas de todos os 256 bytes possíveis em `RAM[63h]`, nas
+quatro ROMs A/A+/S37/S36, executaram o decodificador original
+`4830h..483Ch`: `R5` nunca passou de 9 e, quando foi 9, `R6` era zero.
+O escritor original `46B6h..46C6h`, varrido com os 256 valores de
+`RAM[62h]`, também zerou a fração no seu índice terminal `R5=5` antes
+de publicar `R5|R6` em `XRAM[F8:91h]`. Assim, esses dois produtores
+locais não geraram a combinação `R5=9,R6≠0` que distingue as bases.
+Outros escritores de `XRAM[91h]`, as guardas de seleção e um boot A
+validado continuam fora desses ensaios. Regressões:
+`AlcoholCodeRam63SegmentClampsIndexNineFraction` e
+`AlcoholAirSegmentWriterKeepsTerminalXram91FractionZero`.
+O boot original das seis ROMs deixa `F8:91h=AAh` no marco `PC0A3Ah`
+após o autoteste de XRAM; em `PC0B30h`, depois da limpeza de partida,
+o byte está `00h`. `SixRomXramSelfTestReachesCommonBootContinuation`
+confere os dois valores. A janela do autoteste não é uma calibração de
+controle nem prova que o ramo alternativo leu esse byte antes da limpeza.
 
 O [manual SAB80C517](../SAB80C517.PDF), seção Timer 2, identifica
 `T2CON.1` como `T2I1`: com `T2I1:T2I0=10/11`, o Timer 2 usa contador
@@ -668,8 +1460,347 @@ nenhuma célula de `7430h` ou `7458h`. Todas as amostras do probe
 lambda nesse cenário deram `T2I1=0`. O teste
 `test_post_coolant_curve_744e_is_naturally_read_with_t2i1_clear`
 fixa hashes, acessos e estado do bit. Isso limita a seleção observada
-nesse perfil; não exclui outra configuração de Timer 2 em hardware.
+nesse perfil. Uma auditoria das instruções classificadas nos seis
+assemblies remontáveis encontrou somente cinco escritas em `T2CON` por
+ROM: `MOV #85h` em 0AF6h, `ORL #85h` em 3B6Ch (G/S88) ou 3B9Ah
+(A/A+/S37/S36), `MOV #00h` em 4ABCh ou 4B7Fh e 6320h, e `MOV #11h`
+em 6334h. Os bytes são `75 C8 85`, `43 C8 85`, `75 C8 00`,
+`75 C8 00`, `75 C8 11`; nenhum liga o bit 1. Também não há escrita
+direta em `T2I1` entre essas instruções classificadas. A inicialização
+`MOV #85h` limpa o bit, e o `ORL #85h` posterior apenas o preserva.
+Assim, a seleção de `7430h`, `7516h`, `7534h`, `743Ah` e `7444h`
+dependente de `T2I1=1` está comprovada em execução isolada, mas sua
+entrada natural não aparece no código identificado nem nos rastros
+testados. Código ainda não classificado ou outro modo de entrada da ROM
+impedem declarar esses ramos impossíveis.
 Capturas: `post_coolant_t2i1_natural_{g,s88}/`.
+
+**Leitura da primeira célula não equivale a seleção do banco.** Em
+partidas atuais G/S88 a 1.000 RPM, ADC3=220 e ADC7=63, por 2,4 milhões
+de ticks, `5333h` leu `7430h` 20 vezes em cada ROM com `DPTR=7426h`,
+`A=0Ah`; leu também `7534h` 582/581 vezes com `DPTR=752Ah`, `A=0Ah`.
+Ambas são leituras da célula seguinte na interpolação de curvas
+precedentes. `477Dh` registrou `4Eh=09h` e o ramo de substituição em
+`47A3h` não foi visitado; aqui o índice é 9 e a fração `R6=00h`.
+O interpolador multiplica a diferença entre células por essa fração,
+explicando por que o byte seguinte é consultado mas não contribui para
+o resultado nesse estado. Nenhuma das quatro capturas selecionou `DPTR=7430h` ou
+`7534h` nesses eventos. Fornecer apenas os respectivos primeiros bytes
+da A (`40h` e `62h`) nesses dois `MOVC` não mudou `IRAM[4Dh]`, `79h`,
+`7Bh` ou as medianas de CC3 nas duas ROMs; o log confirmou ambas as
+substituições e os hashes originais permaneceram iguais. O teste de
+regressão também compara cada uma das 149 bordas CC3 por tick e nível:
+controle e doação são idênticos em G e S88 nesse estado. Portanto os
+acessos observados não demonstram efeito funcional dessas células neste
+estado nem entrada natural nos ramos `T2CON.1=1`.
+Capturas: `curve_boundary_{current,donor}_{g,s88}/`.
+Regressão: `python3 -m unittest tests.test_ma17_curve_boundary`.
+
+O auditor de fronteira agora aceita também as 39 curvas catalogadas com
+dez células: `python3 tools/audit_ma17_matrix_boundaries.py --curve
+--exclude-overrides`. No corpus atual, 1.236 relatórios passaram pelos
+filtros de ROM e intervenção, 792 tinham `MOVC` habilitado, e 14 curvas
+originais apresentaram leitura da posição imediatamente seguinte.
+`curve_boundary_audit_corpus.json` preserva PC, DPTR, ROM, contagem e
+exemplo de captura e reconhece o próximo item mesmo quando ele tem
+outro formato, como `799Eh→79A8h`. Com filtro adicional para o
+SHA-256 `2f06ac4d…26ecac32` do emulador após o novo probe, restam
+dois relatórios, ambos com `MOVC`; o arquivo
+`curve_boundary_audit_current.json` registra a leitura de fronteira
+`799Eh→79A8h` em G/S88. Nas capturas a 1.000 RPM descritas acima,
+`7458h` foi lido 582/581 vezes a partir de `DPTR=744Eh`, sem seleção
+observada de `DPTR=7458h`. O corpus sem intervenções também não mostra
+seleção direta de `7430h`, `7534h`, `74B2h` ou `7B14h`, embora leia
+suas primeiras células a partir de bases anteriores. Em contraste,
+`79BAh` tem tanto leituras de fronteira vindas de `79B0h` quanto
+leituras com sua própria base. Esses resultados delimitam o corpus;
+não provam que os bancos sem seleção observada sejam inacessíveis.
+
+Na ROM G, `4773h` carrega `7002h→73D4h`; a rotina `5279h` lê o endereço
+`63h` do cabeçalho e converte `IRAM[63h]` em segmento `R5` e fração
+`R6` no nibble alto. `477Fh..47ABh` pode substituir esse par por um
+valor de `XRAM[91h]` quando `IRAM[62h]>ROM[7264h]=6Eh`, há uma das
+flags `28h.3/.4/.5` ou `29h.3`, e `XRAM[9Eh]` é não zero. Nesse ramo,
+`R5=(XRAM[91h]+4)&0Fh` e `R6=XRAM[91h]&F0h`. Em duas partidas G de
+2,4 milhões de ticks a 1.000 RPM, `ADC0/6=40/95`, `ADC5=40`,
+`ADC7=63`, `ADC3=20/80` produziram respectivamente
+`IRAM[63h]=14h/50h`, `R5:R6=00h:00h/03h:20h` em `477Fh`, preservados
+em `47ACh`, `491Fh` e `532Fh`. O leitor `532Fh` acessou `744Eh=15h`
+ou `7451h=33h`. `47A3h` não apareceu nos conjuntos completos de PCs
+e `IRAM[62h]` estava abaixo do limiar `6Eh` no ponto amostrado. Isso
+identifica o eixo **digital usual** nesses estados G, sem validar a
+escala em °C nem o caminho alternativo nas demais revisões. Regressão:
+`test_post_coolant_curve_744e_axis_comes_from_iram63_segment`; capturas
+em `post_coolant_axis_adc3_{20,80}/`.
+
+Ao elevar apenas `ADC2` para 220 no mesmo boot G, `IRAM[62h]=DCh`
+ultrapassou `ROM[7264h]=6Eh` e o fluxo alcançou `4793h`. A segunda
+guarda ainda desviou para `47ACh`: `28h.3/.4/.5` e `29h.3` estavam
+zerados nas amostras, e `47A2h` (leitura `MOVX` de `XRAM[91h]`) nem
+`47A3h` apareceram no conjunto completo de
+PCs. Com `ADC3=20`, `R5:R6` continuou `00h:00h` e o leitor acessou
+`744Eh=15h`. Três ensaios adicionais com `ADC2=220` e TPS
+`40/95`, `120/180` e `180/247` também entraram em `4793h` sem chegar
+à leitura de `XRAM[91h]`; `ADC2=160`, TPS `180/247`, teve o mesmo
+resultado. O teste acima cobre `ADC2=220`, e os artefatos restantes
+estão em `post_coolant_axis_alt_{idle,mid,wide,wide160}/`. Assim, o
+limiar do ar é alcançável nesse modelo, mas a substituição do eixo
+depende de flags cuja origem ainda deve ser rastreada.
+
+Uma execução isolada dos **opcodes originais** em `477Fh..47ABh`
+preparou `IRAM[62h]=80h`, `XRAM[F8:9Eh]=01h`,
+`XRAM[F8:91h]=A3h` e `R5:R6=03h:20h`. Com `28h.3=0`, o salto em
+`479Bh` evitou `MOVX` em `47A2h` e conservou o par. Com `28h.3=1`,
+o código leu `A3h` e chegou a `47ACh` com `R5:R6=07h:A0h`, de acordo
+com `R5=(A3h+4)&0Fh` e `R6=A3h&F0h`. O teste
+`Sab80C517.FiatPostCoolantAxisCanSwitchToXram91WhenAirAndFlagsPermit`
+fixa a fórmula e a guarda. Esse estado foi preparado; a origem natural
+da flag e a função física de `XRAM[91h]` continuam desconhecidas.
+
+Os limites brutos de `ADC3` deram um terceiro resultado. Com `ADC2=220`,
+`ADC10_CH3=12` (byte alto `03h`) ou `ADC3=232` (`E8h`), a ROM G ligou
+respectivamente `28h.4` em `464Ah` ou `28h.3` em `4656h`. Nas duas
+partidas de 2,4 milhões de ticks, `IRAM[62h]=DCh` e `XRAM[F8:9Eh]=78h`
+abriram as guardas: `47A2h` leu `XRAM[F8:91h]=34h` e `47ACh` recebeu
+`R5:R6=08h:30h`. Porém, os mesmos bits desviaram em `490Bh` para o
+valor fixo `ROM[727Fh]=2Eh`, lido por `MOVC` em `4912h` **511 vezes por
+ensaio**. `491Fh` e todas as células `7430h..7461h` ficaram sem acesso.
+Assim, a origem alternativa do par é naturalmente alcançável no modelo,
+mas **não foi eixo ativo da curva `744Eh`** nesses estados. O prefixo
+do leitor e `727Fh=2Eh` coincidem nas seis ROMs; o salto seguinte muda
+com o layout da revisão. Testes:
+`test_coolant_bound_flags_reach_xram91_but_bypass_744e` e
+`test_post_coolant_fallback_constant_and_reader_are_homologous`.
+Capturas: `post_coolant_axis_bounds_{low,high}/`. A função física do
+valor `2Eh` e o significado da condição de falha seguem abertos.
+
+O byte de substituição `XRAM[F8:91h]` também tem produtor rastreável.
+`45F9h` carrega `708Eh→73C0h`; o cabeçalho `62 06` seleciona
+`IRAM[62h]` e seis incrementos cumulativos (`31 1A 18 20 0F 18`).
+Após `5279h`, `4608h` escreve `R5|R6` em `F8:91h` quando `T2I1=0`.
+Em três boots G idênticos exceto por `ADC2=120/160/220`, com
+`ADC3=232` e 1.000 RPM, `IRAM[62h]=78h/A0h/DCh` e a escrita de
+`4608h` publicou `B0h/F1h/34h` perto do tick 13.800. A leitura de
+`47A2h` converteu esses bytes em `R5:R6=04h:B0h/05h:F0h/08h:30h`.
+O teste de RAM em `55A1h` e a limpeza em `0A51h` também escrevem
+`F8:91h` no boot; o rastro distingue esses eventos do produtor de
+controle em `4608h`. O diretório `708Eh`, os oito bytes da tabela e
+o escritor são homólogos nas seis ROMs após normalizar a chamada
+`5279h→533Ch`. Regressões:
+`test_air_segment_73c0_and_xram91_producer_are_homologous` e
+`test_air_segment_73c0_writes_xram91_before_fault_lookup`; capturas
+`xram_f891_adc2_{120,160,220}/`. O scanner chama `62h` de temperatura
+do ar; a ligação ADC2→`62h` é digital, e a identidade física e a escala
+do sensor ainda não foram verificadas.
+
+No mesmo perfil G, um teste cruzado isolou `MOVC PC52A2h/73C6h`
+(`0Fh` original, `1Fh` injetado) da leitura `MOVX PC47A2h/F8:91h`.
+Sem injeção, `F8:91h=34h`, `R5:R6=08h:30h` e a mediana de
+`RAM[14h:15h]` na entrada de CC3 foi 1.505 ticks. Só fornecer `14h`
+em `47A2h` preservou `F8:91h=34h`, mudou `R5:R6` para `08h:10h` e
+manteve 1.505 ticks. Só trocar a largura em `73C6h` publicou
+`F8:91h=14h`, produziu `08h:10h` e baixou a mediana para 1.491 ticks.
+Com essa largura trocada, fornecer `34h` em `47A2h` restaurou
+`08h:30h`, mas a mediana continuou 1.491 ticks. O efeito em CC3
+ocorre antes ou fora dessa leitura específica de `F8:91h`; o produtor
+em `5279h` também entrega `R5:R6` diretamente à chamada em `4612h`:
+o interpolador em `5329h..5348h` usa esses registradores, e `461Ch`
+publica seu `R2` em `XRAM[F8:02h]` quando `T2I1=0`. A continuação
+desse caminho até `RAM[14h:15h]` ainda precisa ser demonstrada.
+Os ponteiros `708Ah→73C8h` e `708Ch→73CEh` designam duas curvas de seis
+bytes iguais nas seis ROMs. `RAM[2Fh].5` escolhe a primeira quando vale
+um; ambas recebem índice `R5` e fração `R6` do segmentador de `RAM[62h]`
+em `708Eh→73C0h`. Executar os opcodes originais das seis ROMs desde
+`4609h` (G/S88) ou `46C6h` (A/A+/S37/S36), com `R5=1`, `R6=0` e
+`T2I1=0`, leu `73C9h=85h` ou `73CFh=83h` e publicou o mesmo byte em
+`F8:02h`. O teste `Sab80C517.Pointer708a708cBranchesFeedXramF802`
+confirma a seleção e a escrita. A frequência natural de cada ramo,
+o alcance do último índice e a função física de `F8:02h` seguem abertos.
+O rastro posterior mostrou que `XRAM[F8:02h]` ficou em `97h` com
+`73C6h=0Fh` e com a leitura substituída por `1Fh`, descartando uma
+mudança desse byte como explicação neste estado. O outro consumidor
+observado de `F8:91h` foi `MOVX PC564Ah`, dentro da rotina chamada em
+`129Dh`, `154Fh` e `15D2h`. Um segundo cruzamento confirmou a mediação
+por **essa** leitura: fornecer `14h` só em `564Ah`, mantendo `73C6h=0Fh`
+e `F8:91h=34h`, reduziu a mediana CC3 para 1.491 ticks; fornecer `34h`
+só em `564Ah`, com `73C6h` substituído por `1Fh` e `F8:91h=14h`,
+restaurou 1.505 ticks. As larguras baixas modeladas de CC3 foram
+6.009/5.953 ticks conforme a leitura efetiva em `564Ah`. A cadeia
+digital passa, portanto, pelo byte produzido em `4608h` e consumido
+em `564Ah` **neste perfil emulado**. O restante do caminho dessa rotina
+até `RAM[14h:15h]` e o circuito de saída ainda precisam ser traçados.
+Teste: `test_73c6_cc3_effect_is_mediated_by_f891_read_at_564a`;
+capturas: `xram_f891_564a_{read14,width_read34}/`.
+Lendo o endereço de retorno na pilha 8051, o mesmo boot mostrou três
+chamadores de `564Ah`: `129Dh→12A0h`, `154Fh→1552h` e
+`15D2h→15D5h`. Substituir `34h→14h` somente no primeiro reduziu a
+mediana CC3 de 1.505 para 1.491 ticks; as outras duas substituições
+isoladas mantiveram 1.505. Com `73C6h` experimental e `F8:91h=14h`,
+fornecer `34h` apenas na chamada de `129Dh` restaurou 1.505 ticks.
+Assim, a influência observada passa especificamente pela chamada em
+`129Dh`. Logo após ela, o código consulta `7300h` e os ponteiros
+`7008h/7004h`, e publica resultados em `RAM[49h]`, RAM **superior**
+`[87h]` (escrita indireta `@R0`) e `RAM[4Ah:4Bh]`.
+No rastro estável de 21 passagens, fornecer `F8:91h=14h` só nessa
+chamada mudou `R5:R6=08h:30h→08h:10h`, RAM superior `[87h]` de
+`5Bh→5Ah` e `RAM[4Ah:4Bh]` de `91h:91h→8Ah:8Ah`. `RAM[49h]`
+permaneceu `40h` nas passagens estáveis. O diretório `7008h` aponta
+para a curva de dez bytes `7426h`; `7004h` aponta para a curva de dez
+bytes `7412h`, idêntica nas seis ROMs. A primeira produz o byte em
+RAM superior `[87h]`, a segunda os bytes em `4Ah:4Bh`. Ambas são
+candidatas intermediárias. O isolamento por `MOVC` distinguiu seus
+efeitos no perfil testado: substituir somente `742Fh=60h` por `5Ah` na leitura
+`5333h` produziu RAM superior `[87h]=5Ah`, manteve `4Ah:4Bh=91h:91h`
+e reduziu a mediana CC3 para 1.491 ticks. Substituir somente
+`741Bh=BEh` por `98h` produziu `4Ah:4Bh=8Ah:8Ah`, manteve `[87h]=5Bh`
+e CC3 em 1.505 ticks. No cruzamento inverso, fornecer `F8:91h=14h`
+na chamada `129Dh` e `742Fh=6Ah` restaurou `[87h]=5Bh` e CC3 em
+1.505 ticks, enquanto `4Ah:4Bh` continuou `8Ah:8Ah`. As larguras
+baixas modeladas de CC3 acompanharam 6.009/5.953 ticks. Isso apoia
+a mediação pela curva `7426h→RAM superior [87h]` **nesse estado
+emulado**, sem estabelecer a função física da curva nem a fiação do pino.
+O código de `1562h` usa `[87h]` antes de `1644h`, que publica
+`R3:R2` em `RAM[59h:5Ah]`; `1D60h` carrega esse par, e `1ED3h`
+publica `R3:R2` em `RAM[14h:15h]`. No mesmo par de ensaios,
+o byte baixo mais frequente de `59h:5Ah` na entrada de `1D4Bh`
+foi `9Dh→8Fh` (99 visitas por braço); em `1DD8h`, `R2` foi
+`9Dh→8Fh` (100 visitas), e em `1ED3h`, `R2` foi `E1h→D3h`
+(100 visitas). As regressões verificam essas etapas e a mediana
+de `RAM[14h:15h]`. Isso sustenta a cadeia digital de calibração até
+o agendamento CC3; a unidade física e a carga ligada ao pino seguem
+sem identificação.
+Na ROM S88, que preserva `7008h→7426h` e os dez bytes da curva,
+o mesmo perfil de 1.000 RPM/ADC2=220/ADC3=232 repetiu a mediação:
+`742Fh=60h→5Ah` apenas no `MOVC` mudou RAM superior `[87h]`
+de `5Bh→5Ah`, o `R2` predominante em `1DD8h` de `51h→44h`,
+a mediana de entrada CC3 de 1.429→1.416 ticks e a largura baixa
+modelada de 5.705→5.653 ticks. Fornecer `F8:91h=14h` só para a
+chamada de `129Dh` reproduziu esses resultados; fornecer também
+`742Fh=6Ah` no `MOVC` restaurou `[87h]=5Bh`, `R2=51h`, 1.429 e
+5.705 ticks, mantendo `4Ah:4Bh=8Ah:8Ah`. Isso repete a causalidade
+digital em uma segunda imagem, com valores absolutos próprios da S88.
+Regressão: `test_7426_cc3_mediation_repeats_in_s88`; capturas:
+`s88_7426_{base,cell,read14,rescue}/`.
+O contraste entre revisões também foi testado sem trocar código: A/A+
+guardam `6Ah 70h` em `742Eh:742Fh`, contra `5Ah 60h` em G/S88.
+Fornecer apenas esses dois bytes como retorno dos `MOVC` originais
+`532Fh/742Eh` e `5333h/742Fh` manteve `R5:R6=08h:30h` e
+`RAM[4Ah]=91h`, mas elevou RAM superior `[87h]` de `5Bh→6Bh` nas
+duas ROMs receptoras. Em G, o `R2` predominante em `1DD8h` passou
+`9Dh→F1h`, a mediana de entrada CC3 `1.505→1.589` ticks e a largura
+baixa modelada `6.009→6.345`. Em S88, foram `51h→A0h`,
+`1.429→1.508` e `5.705→6.021`. Os hashes das ROMs G/S88 ficaram
+intactos; o teste verificou os dois overrides. É um efeito causal
+dessas células no perfil de borda `ADC3=232`, não uma medida de
+combustível, de tempo físico do injetor ou do funcionamento natural de A.
+Regressão: `test_a_cells_change_cc3_in_g_and_s88_at_fixed_adc_state`;
+capturas: `7426_A_cells_{G,S88}/`.
+Com `ADC3=80`, o caminho consultou outro par da mesma curva:
+`7429h:742Ah=1Ah:1Dh` em G/S88, versus `2Ah:2Dh` em A/A+.
+Nos rastros de G e S88, todas as amostras de `477Fh` tinham
+`RAM[28h]=00h` e `RAM[63h]=50h`; a chamada de `129Dh` usou
+`R5:R6=03h:20h`, compatível com o eixo `IRAM[4Eh]` sem o desvio
+de `F8:91h`. Fornecer só as duas células A/A+ elevou RAM superior
+`[87h]` de `1Ah→2Ah`, mantendo `RAM[4Ah]=0Fh`. Em G, o `R2`
+predominante em `1DD8h` mudou `1Bh→6Fh`, a mediana de entrada CC3
+`863→947` ticks e a largura baixa modelada `3.441→3.777`.
+Em S88, os números foram `F1h→40h`, `821→900` e `3.273→3.589`.
+Esse segundo cenário mostra efeito da diferença de calibração também
+sem as flags de falha `28h` no ponto observado. Os tempos não são
+unidades físicas do bico nem identificam a ligação elétrica de CC3.
+Regressão: `test_a_cells_change_cc3_with_clear_coolant_fault_flags`;
+capturas: `7426_normal_adc3_80_{base,G_donor,S88_base,S88_donor}/`.
+Com os mesmos ADCs e flags `28h=00h` observadas, a resposta persistiu
+em 750 e 1.500 RPM. As leituras `MOVC` permaneceram em
+`7429h/742Ah`, 17 vezes por endereço a 750 RPM e 13 vezes a 1.500;
+o resultado estável em RAM superior `[87h]` foi `1Ah→2Ah` nos quatro
+contrastes, enquanto os tempos absolutos dependeram da ROM e da rotação:
+
+| ROM | RPM | Mediana `RAM[14h:15h]`, original → células A | CC3 baixo modelado, original → células A |
+| --- | ---: | ---: | ---: |
+| G | 750 | 1.044 → 1.146 ticks | 4.165 → 4.573 ticks |
+| G | 1.500 | 644 → 704 ticks | 2.565 → 2.804 ticks |
+| S88 | 750 | 900 → 987 ticks | 3.589 → 3.937 ticks |
+| S88 | 1.500 | 721 → 788 ticks | 2.873 → 3.141 ticks |
+
+As larguras baixas medianas de `P5.0` e `P5.1` permaneceram iguais
+entre controle e doação nos três RPMs: G `1.863/1.861/1.824` ticks
+em 750/1.000/1.500; S88 `1.863/1.921/1.823`. Os testes verificam
+ambos os canais. Essa separação temporal no modelo favorece investigar
+CC3 e P5 por caminhos distintos, ainda sem atribuir cargas físicas.
+O teste `test_a_cells_effect_persists_at_750_and_1500_rpm` fixa
+hashes, endereços lidos, flags, saída da curva e tempos; capturas:
+`7426_rpm_{G,S88}_{750,1500}_{base,donor}/`. O resultado reforça o
+efeito digital da diferença de calibração em três rotações, sem definir
+a função física de CC3.
+
+Com os mesmos ADCs, a leitura de `7429h/742Ah` continuou em 2.000,
+3.000 e 4.000 RPM (12, 11 e 10 vezes por endereço, respectivamente).
+Nos pontos observados em `477Fh`, `RAM[28h]=00h`; `129Dh` continuou
+com `R5:R6=03h:20h`, e a doação das células A mudou RAM superior
+`[87h]` de `1Ah→2Ah`, sem mudar `RAM[4Ah]=0Fh`:
+
+| ROM | RPM | Mediana `RAM[14h:15h]`, original → células A | CC3 baixo modelado, original → células A |
+| --- | ---: | ---: | ---: |
+| G | 2.000 | 534 → 582 ticks | 2.124 → 2.316 ticks |
+| G | 3.000 | 399 → 434 ticks | 1.584 → 1.724 ticks |
+| G | 4.000 | 337 → 365 ticks | 1.325 → 1.437 ticks |
+| S88 | 2.000 | 633 → 691 ticks | 2.520 → 2.752 ticks |
+| S88 | 3.000 | 536 → 585 ticks | 2.133 → 2.328 ticks |
+| S88 | 4.000 | 515 → 561 ticks | 2.025 → 2.209 ticks |
+
+As larguras medianas de P5.0/P5.1 continuaram iguais dentro de cada
+par controle/doação. Os hashes originais também permaneceram iguais.
+Regressão: `test_a_cells_effect_persists_at_2000_to_4000_rpm`;
+capturas: `7426_highrpm_{G,S88}_{2000,3000,4000}_{base,donor}/`.
+O resultado amplia o contraste digital aos seis RPMs planejados, sem
+identificar a carga física de CC3/P1.3 ou dos dois pinos P5.
+
+Com rotação fixa de 1.000 RPM e `ADC2=220`, outra varredura de `ADC3`
+selecionou pares diferentes da curva `7426h`: `7427h/7428h` para
+`ADC3=40` (`R5:R6=01h:B0h`) e `742Bh/742Ch` para `ADC3=160`
+(`05h:E0h`). Em ambos os estados, as amostras no PC `477Fh` tinham
+`RAM[28h]=00h`. Doar apenas o par da A/A+ consultado em cada estado
+elevou RAM superior `[87h]` em `10h` e manteve `RAM[4Ah]`:
+
+| ROM | ADC3 | `[87h]` | Mediana `RAM[14h:15h]` | CC3 baixo modelado | P5.0/P5.1 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| G | 40 | `08h→18h` | 740→809 | 2.948→3.225 | 1.861→1.861 |
+| G | 160 | `36h→46h` | 1.155→1.241 | 4.609→4.953 | 1.861→1.861 |
+| S88 | 40 | `08h→18h` | 704→770 | 2.804→3.069 | 1.921→1.921 |
+| S88 | 160 | `36h→46h` | 1.097→1.179 | 4.377→4.705 | 1.921→1.921 |
+
+Todos os tempos são ticks emulados. A intervenção é digital em G/S88;
+não representa a execução natural de A/A+ nem comprova a ligação física
+de CC3 ou dos pinos P5. Regressão:
+`test_a_cells_effect_at_two_other_adc3_segments`; capturas:
+`7426_adc3_sweep_{G,S88}_{40,160}_{base,donor}/`.
+Regressão: `test_7426_output_mediates_f891_cc3_effect_in_g`;
+capturas: `path_129d_{742f_5a,741b_98,read14_742f_6a}/`.
+Regressão de rastro no teste da chamada `129Dh`;
+capturas: `path_129d_{base,read14}/`.
+Regressão: `test_f891_cc3_effect_uses_129d_caller_of_564a`;
+capturas: `xram_f891_564a_return_{12A0,1552,15D5}/` e
+`xram_f891_564a_return_12A0_restore/`.
+Isso **não** identifica o pino CC3 como bico nem estabelece a função
+física de `73C6h`. Teste:
+`test_73c6_width_and_f891_read_have_separate_cc3_effects`.
+Capturas: `xram_f891_{adc2_220,73c6_wider,read_14,width_read_34}/`.
+
+Para isolar o efeito desse byte na condição `ADC3=E8h`, quatro execuções
+G mantiveram a ROM e os ADCs idênticos: controle, substituição `MOVC`
+por seu próprio `2Eh` (controle simulado), por `00h` e por `80h`, somente
+em `PC4912h/727Fh`. As leituras brutas ainda registraram `2Eh` e o hash
+da ROM não mudou. A primeira escrita de `49ADh` em `IRAM[4Dh]` foi
+`2Eh/2Eh/19h/80h`. O `00h` é elevado ao limite `ROM[7279h]=19h` pela
+rota `4951h` condicionada por `P4.7`; a função física desse pino segue
+desconhecida. Nas 229 visitas estáveis a `233Bh`, `R2` virou
+`45h/45h/25h/BAh` e alcançou `2580h`. A mediana da entrada CC3 ficou
+em 1.505 ticks e a largura baixa mediana modelada de `P5.0` em 1.861
+ticks nos quatro braços. A regressão
+`test_post_coolant_727f_fallback_reaches_4d_and_fixed_point` fixa o
+efeito interno e os controles; capturas `post_coolant_727f_{base,sham,zero,high}/`.
+Não há efeito temporal dessas duas saídas demonstrado neste estado.
 
 No mesmo estado G, uma doação controlada substituiu **somente os
 retornos `MOVC` do intervalo de dez bytes `744Eh..7457h`** pelos bytes
@@ -702,6 +1833,146 @@ nessa condição, a alteração interna de `R2` não mudou esses dois
 estados XRAM. A regressão acima verifica a sequência; capturas em
 `post_coolant_744e_xram_{baseline,donor_a}/`.
 
+Em outro estado, o efeito da mesma curva alcançou a saída **modelada**
+`CC3/P1.3`. Com G a 3.000 RPM, ADC0/6=40/95, ADC3/5/7=20/40/63 e
+2,4 milhões de ticks, doar apenas os dez retornos `MOVC` de `744Eh`
+da ROM A mudou `RAM[4Dh]` de `19h` para `2Fh` e elevou os pulsos CC3
+observados de 103 para 228; a largura baixa mediana mudou de 1.129
+para 1.150 ticks. Substituir somente a leitura `MOV R2,4Dh` em `22F3h`
+por `2Fh` no G original reproduziu 228 pulsos e 1.150 ticks; substituir
+essa leitura por `19h` no braço doador restaurou 103 pulsos e 1.129
+ticks. As bordas dos braços correspondentes diferiram no máximo dois
+ticks, e o hash da ROM ativa permaneceu G nos quatro casos. O controle
+leu `ROM[7310h]` 123 vezes, ativou `26h.7` depois do tick 1.156.306 e
+parou de gerar bordas CC3; a doação A não leu `7310h` e manteve
+`26h.7=0` nas decisões rastreadas. Forçar `R2=2Fh` suprimiu as leituras
+de `7310h`; forçar `R2=19h` na doação restaurou as 123 leituras.
+Isso confirma `4Dh→R2` como mediador digital da alcançabilidade desse
+ramo e dos pulsos nesse cenário; não identifica a função física da curva
+nem confirma CC3 como o bico. O limiar físico conhecido de cut-off acima
+de 1.500 RPM continua distinto dessa comparação emulada a 3.000 RPM.
+Regressão: `test_744e_ram4d_read_mediates_cc3_pulse_count_at_3000_rpm`;
+capturas `post_coolant_744e_3000_{control,donor_a,control_r2_2f,donor_r2_19}/`.
+Decisões `1F9Bh..2054h` e `2D04h..2D51h` foram capturadas em
+`post_coolant_744e_3000_decision_{control,donor_a}/`.
+
+Um sweep pareado com os mesmos ADCs e 2,4 milhões de ticks mostrou
+dependência de RPM, sem localizar ainda o ponto exato de transição:
+
+| RPM solicitado | Pulsos CC3 G / doação A | Leituras de `7310h` G / doação A |
+| ---: | ---: | ---: |
+| 1.500 | 51 / 51 | 121 / 121 |
+| 2.000 | 68 / 68 | 122 / 122 |
+| 2.500 | 86 / 118 | 122 / 85 |
+| 3.000 | 103 / 228 | 123 / 0 |
+
+Reinicializações independentes e o mesmo hash G foram usados em cada
+braço. Regressão: `test_744e_donor_cc3_branch_effect_depends_on_rpm`;
+capturas `post_coolant_744e_{1500,2000,2500,3000}_{control,donor_a}/`.
+O resultado descreve apenas essa combinação de ADC e harness Fiat; não
+mede o limiar físico de cut-off nem a função da curva em outras condições.
+
+O caminho intermediário foi isolado em G a 3.000 RPM. O código após
+`2593h` grava `F8:31h` em `2796h`; o trace observou `07h→36h→54h`
+no controle e `07h→60h→7Eh` com a doação A. Substituir somente a
+leitura de `RAM[4Dh]` em `22F3h` trocou também esses valores gravados,
+apoiando a cadeia `744Eh→4Dh→R2→F8:31h`. Em `2A8Ch..2A91h`, o
+firmware lê `F8:31h` e calcula `(R3−0Ah)−F8:31h`. Perto do tick 266
+mil, `R3−0Ah=76h`: o controle subtrai `54h` sem carry; o doador
+subtrai `7Eh` com carry e toma `JC 2A45h`. Fornecer `7Eh` só na
+leitura de `F8:31h` em `2A8Ch` ao controle reproduziu 228 pulsos CC3,
+zero leituras de `7310h` e ausência de `2C49h`; fornecer `36h` à
+mesma leitura no doador restaurou 103 pulsos, 123 leituras e `2C49h`.
+Uma substituição em outro leitor de `F8:31h`, `33A9h`, não trocou o
+ramo neste ensaio. Isso identifica a comparação em `2A8Fh` como
+mediadora do estado digital, sem estabelecer o significado elétrico de
+CC3 ou a escala física de `744Eh`. Regressão:
+`test_744e_f831_comparison_changes_branch_reachability`; capturas
+`post_coolant_744e_3000_{xram31_*,branch_*,control_xram31_60,donor_xram31_36,control_xram31_2a8c_60,donor_xram31_2a8c_36}/`.
+
+O desvio em `2A91h` muda a alcançabilidade de uma transição posterior.
+No controle, `2B42h` apareceu uma vez no tick 1.146.773 com
+`24h=8Eh`, `27h=04h`; os opcodes seguintes ligam `27h.3` e
+`24h.5`. A primeira entrada em `2C49h` ocorreu no tick 1.146.823
+com `24h=AAh`, `27h=0Eh`, e o `MOVC` leu `7310h`. Com a doação A,
+nenhum dos dois PCs foi alcançado nos primeiros 2,4 milhões de ticks.
+Forçar `F8:31h=7Eh` na leitura
+`2A8Ch` no G também impediu ambos nessa janela; forçar `36h` na
+doação restaurou ambos. Assim, a sequência
+`F8:31h→2A91h→2B42h→27h.3/24h.5→2C49h`
+tem evidência estática e dinâmica no cenário testado. O estado que
+leva de cada passagem por `2A45h` à entrada eventual em `2B42h`
+ainda requer rastreamento temporal mais fino. Capturas:
+`post_coolant_744e_3000_flags_{control,donor_a}/`.
+No controle, `F8:39h` passou de `20h` para `2Fh` no tick 1.146.722 e
+para `2Eh` no tick 1.146.760; `2B38h` leu então um byte com
+`ACC.6=0`, `ACC.5=1` e seguiu para `2B42h`. O doador não entrou em
+`2B38h` durante os 2,4 milhões de ticks e conservou `F8:39h=0Fh`
+até depois de 2,2 milhões de ticks. Essas diferenças mostram o estado
+acumulado antes do gate; não isolam `F8:39h` como causa independente.
+Capturas: `post_coolant_744e_3000_xram39_{control,donor_a}/`.
+
+A extensão das mesmas partidas até **5 milhões de ticks** mostrou
+que a doação A **atrasa**, mas não elimina, essa sequência:
+
+| Primeira ocorrência | G, tick | G com curva A, tick | Atraso, ticks |
+| --- | ---: | ---: | ---: |
+| `2AC7h` (`24h=0Ah`) | 317.153 | 2.344.920 | 2.027.767 |
+| `2AF9h` (`24h=0Ch` logo depois) | 839.577 | 2.866.953 | 2.027.376 |
+| `2B42h` (`27h.3`/`24h.5` logo depois) | 1.146.773 | 3.174.451 | 2.027.678 |
+| `2C49h` (entrada da leitura `7310h`) | 1.146.823 | 3.174.501 | 2.027.678 |
+
+As diferenças de atraso entre as quatro etapas ficaram abaixo de 500
+ticks, indicando que a maior mudança está no início dessa progressão
+de estado, não no tempo entre suas etapas. `26h.7` foi observado ligado
+nos ticks 1.156.306/3.183.656; a última borda CC3 ocorreu nos ticks
+1.155.750/3.175.552. Em 5 milhões de ticks, G e doação A tiveram
+103/307 pulsos CC3 modelados e 377/179 leituras de `7310h`.
+O atraso de `2B42h` equivale a cerca de 2,05 segundos na escala de
+990.000 ticks/s do harness. Isso descreve a guarda **digital** nesse
+estado; não mede a duração física do cut-off do bico. Regressão:
+`test_744e_donor_delays_guard_without_removing_it`; capturas
+`post_coolant_744e_3000_long_{control,donor_a}/`.
+
+O início tardio acompanha a queda de `F8:31h` até o valor da comparação
+em `2A8Fh`: `R3−0Ah=76h`. No G, `2796h` gravou `54h` em `F8:31h`
+no tick 265.886 e `2A91h` apresentou carry limpo no tick 266.070.
+Com a curva A, o byte desceu de `7Eh` até `76h` no tick 2.201.240;
+`2A91h` só então apresentou carry limpo, no tick 2.201.429. A
+diferença entre esses primeiros carries limpos explica grande parte
+do atraso observado, mas a entrada em `2AC7h` ocorre ainda depois:
+51.083 ticks no G e 143.491 no braço doador. O teste longo fixa esses
+marcos sem editar a ROM.
+
+O restante vem do contador de quatro bits em `F8:39h`. A rotina original
+`550Dh..5570h`, chamada em `2AB3h`, lê esse byte, atualiza o nibble
+baixo e devolve o contador em `A`; `2AB7h` só avança quando `A=0`.
+Antes da divergência, ambos já haviam contado de `0Fh` até `06h`.
+No doador, o carry em `2A91h` levou a `2A45h`, cuja escrita em
+`2A4Bh` restaurou `F8:39h` de `06h` para `0Fh` no tick 266.076.
+No G, `555Bh` continuou `06h→05h` no tick 266.120. Quando a
+comparação do doador voltou a passar, `555Bh` retomou `0Fh→0Eh`
+no tick 2.201.473. O primeiro retorno `A=0` em `2AB7h` veio nos
+ticks 317.141/2.344.908, seguido da entrada em `2AC7h`.
+Isso explica a diferença de espera restante como reinício do
+contador digital, sem atribuir unidade física ao nibble.
+Regressão: `test_744e_donor_restarts_xram39_nibble_countdown`;
+capturas `post_coolant_744e_3000_xram39_{control,donor_a}/`.
+
+No mesmo estado de ADC e 3.000 RPM, doar apenas o primeiro retorno
+`MOVC` (`PC532Fh`, `ROM[744Eh]`, `15h→2Fh`) reproduziu a doação dos dez
+bytes da curva em 5 milhões de ticks: 307 pulsos CC3 modelados, 179
+leituras de `7310h` e primeira passagem por `2B42h` nos ticks
+3.174.449/3.174.451. As 614 bordas CC3 pareadas tiveram o mesmo nível
+e diferiram em no máximo dois ticks; a última coincidiu. Doar apenas
+`ROM[744Fh]` (`1Ch→36h`) manteve o perfil G: 103 pulsos, 377 leituras
+de `7310h` e primeira passagem por `2B42h` no tick 1.146.773.
+Isso isola a primeira célula como suficiente **nesse estado digital**;
+outras células e estados ainda podem ter efeitos próprios. A relação
+com o cut-off físico acima de 1.500 RPM segue não demonstrada.
+Regressão: `test_744e_first_cell_alone_reproduces_long_guard_delay`;
+capturas `post_coolant_744e_3000_long_cell{744e,744f}/`.
+
 No bloco G/S88 `47ACh..47CEh` e no homólogo A/A+/S37/S36
 `4869h..488Bh`, cinco curvas de 10 bytes são interpoladas pelo mesmo
 leitor. `2Fh.5` e `T2CON.1` selecionam `7038h`, `7094h` ou `703Ah`
@@ -721,8 +1992,8 @@ outros fatores fixados em `80h`, o índice 3 das curvas `752Ah` e
 `750Ch` altera, respectivamente, `R1=08h→0Ah` e `B=10h→15h` de
 G/S88/S37/S36 para A/A+. O teste
 `Sab80C517.Iram79And7BCurvesFeedOriginalMultiplyChains` reproduz
-esses dois resultados nas ROMs originais. O efeito em uma saída
-temporizada permanece sem prova.
+esses dois resultados nas ROMs originais. Naquele ensaio isolado,
+o efeito em uma saída temporizada não foi medido.
 Em execução natural com 1.000 RPM, ADC2=100, ADC3=80, ADC7=63 e
 1,6 milhão de ticks, G/S88 leram `7523h/7524h` (`IRAM[79h]`) e
 `752Dh/752Eh` (`IRAM[7Bh]`) em 379/378 pares por curva. Nenhuma das
@@ -730,6 +2001,267 @@ outras três curvas do grupo foi lida nesse cenário. O teste
 `test_iram79_7b_curves_are_naturally_read_in_g_and_s88` verifica os
 endereços, valores, PCs de `MOVC` e hashes das ROMs. Capturas:
 `build/ma17-analysis/variants/iram79_7b_natural_{g,s88}/`.
+
+### Curva `752Ah` e pulso CC3 após liberação do TPS
+
+O ponteiro big endian `707Ch→752Ah` aponta para dez bytes em cada
+ROM. Num degrau **modelado** de ADC0/6=`180/247→40/95` no tick
+3.274.600, com 1.000 RPM e ADC1/2/3/4/5/7=`130/140/34/90/110/63`,
+G e S88 leram `752Bh/752Ch` 798/796 vezes cada, respectivamente.
+Doar apenas os dez bytes originais A dessa curva aos `MOVC` ativos
+mudou `RAM[7Bh]=73h→95h` nas duas revisões, mantendo cada hash da ROM.
+Em 69 passagens por `1CB7h`, `RAM[7Ah]` ficou não nula naturalmente;
+na última, `7Ah=8Ch`, `F8:01h=72h` e `F8:FBh=FFh`. O produto em
+`1CDFh` mudou `B=0Eh→12h`.
+
+Nas 129 entradas do agendador CC3, intervalos `RAM[14h:15h]=0000h`
+passaram de 2 para 12 em G e de 4 para 12 em S88. Os inícios de
+pulso **no modelo** passaram de 127→117 e 125→117, respectivamente;
+a mediana global do intervalo CC3 permaneceu 1.104 ticks em G.
+No G, a entrada 107 passou de `00CAh` para `0000h`.
+Fornecer só `752Bh=95h` no `MOVC 532Fh` deixou `7Bh=93h`, mas
+reproduziu os 12 intervalos zero e 117 inícios de pulso da curva
+completa. Fornecer só a célula adjacente `752Ch=9Ch` no `MOVC 5333h`
+deixou `7Bh=76h`, produziu 4 intervalos zero e 125 inícios.
+Assim, ambas as células contribuem à interpolação, mas têm impactos
+distintos nesse estado. Os `MOVC` brutos ainda registram os bytes G.
+Uma abertura oposta de TPS, com `RAM[7Ah]=00h`, também mudou
+`7Bh=66h→88h`, mas deixou `R1=00h` em `1CDFh` e manteve a mediana
+CC3. Isso identifica a guarda multiplicativa, sem declarar qual
+grandeza física representa `7Ah` ou `7Bh`.
+
+**Pino:** CC3/P1.3 é a saída temporizada do processador modelada
+pelo emulador; `7Ah`, `7Bh` e `F8:01h` são memória, não pinos.
+A ligação elétrica de CC3/P1.3 ao bico monoponto ou a outro terminal
+da ECU ainda não foi verificada. Capturas:
+`variants/752a_tps_step_{control,donor}/` e
+`variants/752a_{,s88_}tps_release_{control,donor}/`, além de
+`variants/752a_tps_release_cell752{b,c}/`.
+Regressões: `test_752a_donor_reaches_cc3_on_natural_tps_release` e
+`test_752a_donor_repeats_on_s88_tps_release`.
+
+### Interação das curvas `7520h` e `752Ah` sem forçar RAM
+
+Uma sequência de dois degraus ADC0/6, `40/95→180/247` no tick
+800.000 e retorno a `40/95` no tick 3.274.600, com G a 1.000 RPM,
+produziu simultaneamente `RAM[78h]=0Ch` quando `RAM[7Ah]` recebeu
+`FEh` no tick 3.295.712. `7521h/7522h` e `752Bh/752Ch` foram
+lidos 795 vezes cada. O teste fatorial forneceu os bytes A apenas
+nos dois `MOVC` da primeira curva, nos dez bytes da segunda, ou em
+ambas; o hash da ROM G permaneceu original.
+
+| Bytes fornecidos | `79h` | `7Bh` | Mediana CC3 bruta | Intervalos zero | Inícios CC3 modelados |
+|---|---:|---:|---:|---:|---:|
+| Nenhum | `5Ch` | `73h` | 1.278 ticks | 2 | 127 |
+| `7521h/7522h` | `7Eh` | `73h` | 1.342 ticks | 2 | 127 |
+| Curva `752Ah` | `5Ch` | `95h` | 1.326 ticks | 12 | 117 |
+| Ambos | `7Eh` | `95h` | 1.367 ticks | 10 | 119 |
+
+O retorno alterado de `7520h` chega ao produto em `1D4Bh..1D57h`:
+`A` em `1D57h` muda de `B4h` para `FCh` na primeira passagem após
+a liberação. Os 69 rastros tardios dessa instrução repetem a diferença.
+O efeito combinado **não é a soma simples** das duas intervenções:
+com ambas, os intervalos 117 e 118, que `752Ah` isolada zerava,
+voltam a `00CAh`. Esse resultado é digital e dependente do estado
+simulado; não atribui unidades físicas às curvas.
+
+**Pino:** as contagens são do modelo CC3/P1.3 do SAB80C517A.
+`78h`, `79h`, `7Ah` e `7Bh` são RAM interna. A conexão de P1.3
+à carga elétrica da ECU ainda precisa ser identificada.
+Capturas: `variants/tps_double_step_1000_long{,_7520,_752a,_both}/`;
+regressão: `CurvePairTests.test_two_tps_steps_make_both_multiply_factors_nonzero`.
+
+Na S88, a mesma sequência também produziu `78h=0Ch` na primeira
+escrita de `7Ah=FEh`, mas a resposta quantitativa foi diferente:
+
+| Bytes fornecidos | Mediana CC3 bruta | Intervalos zero | Inícios CC3 modelados |
+|---|---:|---:|---:|
+| Nenhum | 1.566 ticks | 2 | 127 |
+| `7521h/7522h` | 1.642 ticks | 2 | 127 |
+| Curva `752Ah` | 1.606 ticks | 12 | 117 |
+| Ambos | 1.698 ticks | 12 | 117 |
+
+O limite `ROM[7218h:7219h]=00C8h` e os opcodes `1EA9h..1ECBh`
+são iguais em G e S88. Numa passagem perto do tick 3,59 milhões,
+o candidato G em `R3:R2` era `00C8h` com `752Ah` sozinha e
+`00CAh` com ambas; a comparação exige que o candidato **supere**
+o limite. Com `XRAM[F8:08h].7=0` e `F8:EFh=0`, o empate é zerado,
+enquanto `00CAh` é preservado. Na S88, os candidatos respectivos
+foram `00C1h` e `00C3h`, ambos abaixo do limite, de modo que os
+intervalos 117/118 permaneceram zero. Os bytes da tabela são comuns
+entre G e S88; a diferença vem do estado calculado anteriormente.
+Capturas: `variants/s88_tps_double_step_{control,7520,752a,both}/`;
+regressão: `CurvePairTests.test_s88_pair_stays_below_original_cc3_bound`.
+O destino elétrico de CC3/P1.3 continua não demonstrado.
+
+Para localizar a diferença anterior ao limite, mantivemos a ROM S88
+original e entregamos as quatro células A das curvas `7520h/752Ah`
+somente nas leituras `MOVC` alcançadas. Depois substituímos, uma de
+cada vez, os retornos de `7580h` e `7B45h` pelos bytes G. O mesmo
+estímulo ADC e a mesma janela de quatro milhões de ticks foram usados.
+
+| Retorno adicional à S88 | Candidato `R3:R2` em `1EA9h` | Intervalos zero | Inícios CC3 modelados | Intervalos 117/118 |
+|---|---:|---:|---:|---:|
+| Nenhum | `00C3h` | 12 | 117 | `0000h` |
+| G `7580h=10h` | `00EAh` | 8 | 121 | `00EAh` |
+| G `7B45h=05h` | `00C3h` | 12 | 117 | `0000h` |
+| G `7581h` | `00A4h` | 16 | 113 | `0000h` |
+| G `7580h` + `7581h` | `00CAh` | 10 | 119 | `00CAh` |
+| G `7580h` + `7B45h` | `00EAh` | 8 | 121 | `00EAh` |
+
+Doar `7B46h` isoladamente conservou `00C3h` e 12 zeros; adicioná-la
+a `7580h` conservou `00EAh` e oito zeros, embora `RAM[69h]` final
+mudasse. O par `7580h+7581h` deu a mesma sequência de **131 valores**
+`IRAM[14h:15h]` nas entradas CC3 da G com as duas curvas TPS doadas;
+as medianas brutas também foram 1.367 ticks em ambas. Isso delimita
+o efeito dessas calibrações no agendador neste estado. Os demais
+estados de RAM e saídas P5 não são equivalentes, e o byte `7580h`
+isolado não explica a diferença completa. Capturas:
+`variants/s88_double_pair_{point,g7580,g7b45,g7580_g7b45,g7581,g7b46,g7580_g7581,g7580_g7b46}/`;
+regressão: `CurvePairTests.test_s88_7580_byte_restores_late_cc3_intervals`.
+
+Repetimos o mesmo estímulo TPS e as quatro células A a 1.500 e
+3.000 RPM, preservando os hashes originais das ROMs. O par de retornos
+G `7580h+7581h` na S88 igualou a sequência **capturada** de
+`IRAM[14h:15h]` da G em ambas as rotações:
+
+| RPM | Entradas CC3 capturadas | S88 original versus G: valores diferentes | S88 com `7580h+7581h` versus G | Mediana G/doação | Inícios modelados G/doação |
+|---:|---:|---:|---:|---:|---:|
+| 1.500 | 196 | 181 | 0 | 1.311 ticks | 179 |
+| 3.000 | 200 | 197 | 0 | 1.326 ticks | 356 |
+
+O trace guarda no máximo 200 entradas `CC3-ENTRY`; portanto, a
+igualdade a 3.000 RPM cobre as **200 entradas capturadas**, não todos
+os 356 pulsos modelados. A contagem de leituras `MOVC` das curvas
+também difere em uma ou mais unidades entre braços, e `RAM[69h]`
+final continua diferente. A evidência confirma uma equivalência
+local de agendamento em três rotações testadas, sem estabelecer
+equivalência global dos firmwares ou identidade elétrica do pino.
+Capturas: `variants/{s88_1500_pair_point,s88_1500_pair_g7580_g7581,g_1500_pair_both,s88_3000_pair_point,s88_3000_pair_g7580_g7581,g_3000_pair_both}/`;
+regressão: `CurvePairTests.test_s88_7580_and_7581_match_g_cc3_entries_at_other_rpms`.
+
+Sem fornecer células da variante A, as ROMs nativas G e S88 mantiveram
+o mesmo resultado central: doar à S88 apenas retornos `MOVC` G de
+`7580h` e `7581h` igualou todos os valores `CC3-ENTRY` capturados
+na janela inicial. As diferenças S88 nativa versus G foram 126/131,
+191/196 e 197/200 valores, respectivamente a 1.000, 1.500 e
+3.000 RPM; após a doação, foram 0 em cada janela. As medianas brutas
+G/doação foram 1.278, 1.274 e 1.307 ticks. A 1.000/1.500 RPM,
+as contagens de inícios CC3 modelados também coincidiram (127/189).
+
+A 3.000 RPM, a doação dupla deixou **364** inícios modelados contra
+**363** na G. Usando `MA17_TRACE_CC3_AFTER_TICK=2500000` para capturar
+o fim da execução, encontramos uma única diferença nas 152 entradas
+tardias: no tick 3.560.295, G tinha `IRAM[14h:15h]=0000h` e S88 com
+doação dupla tinha `00CFh`. O novo filtro opcional
+`MA17_TRACE_78XX_AFTER_TICK=3500000` mostrou o cálculo anterior em
+`1EA9h`: `R3:R2=00C8h` na G e `00CFh` na S88, diante do limite
+comum `ROM[7218h:7219h]=00C8h`. A G zera o agendamento quando o
+candidato empata com o limite; a S88 preserva o valor maior.
+Fornecer também os **14 retornos alcançados** da matriz G `7B46h`
+à S88 eliminou essa diferença tardia, igualou os 152 valores
+capturados e os 363 inícios modelados. Doar `7B45h=05h` não alterou
+o resultado. `RAM[69h]` final passou de `67h` para `5Fh`, igual à G,
+mas os histogramas P5.0 ainda diferiram. Assim, a equivalência é
+específica das observações CC3 neste estado, não dos estados completos
+da ECU. Capturas: `variants/{g_native_1000_pair,s88_native_1000_pair,s88_native_1000_g7580_g7581,g_native_1500_pair,s88_native_1500_pair,s88_g7580_g7581_native_1500_pair,g_native_3000_late_math_window,s88_native_3000_g7580_g7581_late_math_window,s88_native_3000_g7580_g7581_g7b46,s88_native_3000_g7580_g7581_g7b45}/`;
+regressão: `NativeCalibrationPairTests.test_7b46_closes_one_late_cc3_difference_at_3000_rpm`.
+
+Uma redução das 14 leituras `7B46h` identificou um par de células
+na mesma coluna da matriz 8×15: `7B4Fh` (linha 0, coluna 9) e
+`7B5Eh` (linha 1, coluna 9), lidas 132 vezes cada nesse cenário.
+Os bytes S88 são `68h/63h`; G contém `60h/5Bh`.
+
+| Retorno G adicional na S88 com `7580h+7581h` | `RAM[69h]` final | Candidato tardio em `1EA9h` | Entrada CC3 tardia | Inícios modelados |
+|---|---:|---:|---:|---:|
+| Nenhum | `67h` | `00CFh` | `00CFh` | 364 |
+| `7B4Fh` isolada | `62h` | `00CFh` | `00CFh` | 364 |
+| `7B5Eh` isolada | `64h` | `00CFh` | `00CFh` | 364 |
+| Ambas | `5Fh` | `00C8h` | `0000h` | 363 |
+
+As duas células juntas bastaram para igualar os 152 valores CC3
+tardios da G. As quatro células de leitura mais frequente em outra
+posição da matriz (`7BA9h/7BAAh/7BB8h/7BB9h`) não alteraram esse
+evento; as demais seis leituras também não bastaram. O resultado
+individual mostra que mudar `RAM[69h]` final **não basta**, por si,
+para restaurar a comparação em `1EA9h`. A mediação exata entre
+interpolação, estados intermediários e limite foi investigada abaixo.
+Capturas: `variants/s88_native_3000_{7b4f_only,7b5e_only,7b46_lower,7b46_upper,7b46_hot,7b46_other}/`;
+regressão: `NativeCalibrationPairTests.test_7b46_closes_one_late_cc3_difference_at_3000_rpm`.
+
+O assembly original mostra `MOV A,7Ah` em `1CD4h`, seguido de
+`MUL AB`. O vetor Timer 0 em `000Bh` leva à rotina `0630h`, que
+escreve `RAM[7Ah]` em `07B3h`. No evento tardio, essa escrita muda
+`8Dh→85h`. A ordem varia entre os braços:
+
+| Braço | Leitura `1CD4h` | Escrita `07B3h` | `A:B` em `1CDFh` | `XRAM[F8:08h]` | Candidato `1EA9h` |
+|---|---:|---:|---:|---:|---:|
+| G nativa | tick 3.551.892, `8Dh` | 3.551.998 | `C5:0D` | `72h` | `00C8h` |
+| S88 com `7580h+7581h` G | 3.552.010, `85h` | 3.551.997 | `FD:0C` | `73h` | `00CFh` |
+| S88 mais `7B4Fh+7B5Eh` G | 3.551.892, `8Dh` | 3.551.998 | `C5:0D` | `72h` | `00C8h` |
+
+Uma intervenção temporizada somente na **leitura** `MOV A,7Ah`
+confirmou a mediação imediata. Fornecer `8Dh` à S88, mantendo
+`RAM[7Ah]` armazenada em `85h`, fez `A:B=C5:0D`, candidato `00C8h`
+e agendamento `0000h`. Fornecer `85h` à G no mesmo ponto produziu
+`FD:0C`, `00CFh` e o agendamento extra `00CFh`. O override começa
+após o tick 3.551.800 e a execução termina após o evento; a ROM não
+é alterada. Isso demonstra que as duas células mudam o **momento da
+leitura em relação à atualização pelo Timer 0** neste estado. Um
+traço de PC limitado aos ticks 3.551.850–3.552.025 localiza a
+preempção: G e S88 com as duas células G passam por `1CB7h` em
+3.551.873, leem `7Ah` em `1CD4h` em 3.551.892 e entram no vetor
+`000Bh` em 3.551.897. A S88 com apenas `7580h+7581h` G passa por
+`1CB7h` em 3.551.877; entra no vetor em 3.551.896 enquanto o PC
+está em `1CCFh`, antes de alcançar `1CD4h` em 3.552.010. O caminho
+da ISR chega a `07B3h` em 3.551.995–3.551.998. Assim, as duas
+células restauram a fase do fluxo principal suficiente para ler o
+valor anterior à ISR. Numa segunda janela de 1.001 ticks,
+3.550.900–3.551.900, G e S88 com as duas células G têm PCs idênticos
+em todos os ticks; a S88 parcial já apresenta defasagem de quatro
+ticks na maior parte do trecho. A origem inicial da defasagem é
+anterior a essa janela. Na janela 3.274.000–3.275.000, G e S88 com
+as duas células G também têm PCs idênticos nos 1.001 ticks; a S88
+parcial corresponde predominantemente à G com deslocamento de
+**dois ticks na direção oposta**. A defasagem, portanto, evolui
+entre essas janelas e não é um atraso fixo por célula. O traço
+registra PCs antes
+de cada ciclo emulado; PC repetido representa ciclos da mesma
+instrução, não execuções adicionais. Capturas:
+`variants/{g_native_3000_race,s88_native_3000_race,s88_native_3000_race_lower,g_native_3000_7a85_read_window,s88_native_3000_7a8d_read}/`;
+traços de PC: `variants/{g_pcwindow,s88_pcwindow,s88_lower_pcwindow,g_prephase,s88_prephase,s88_lower_prephase,g_release_pc,s88_release_pc,s88_lower_release_pc}/`;
+regressão: `NativeCalibrationPairTests.test_7a_read_order_mediates_late_cc3_gate`.
+
+Uma janela intermediária expõe o estágio diferente do fluxo
+principal. A rotina original faz `SETB ET0` em `0578h`; o Timer0
+pendente é atendido quando o PC está em `057Ah`, antes de concluir
+o `RET` nesse endereço. Após a ISR, a execução volta a `057Ah` e
+então retorna ao chamador. G e S88 com as
+duas células G entram em
+`000Bh` no tick 3.510.947, alcançam `07B3h` no 3.511.055 e retornam
+pelo PC `057Ah` para `1CA5h` no 3.511.068. A S88 parcial entra no
+vetor no 3.510.949, alcança `07B3h` no 3.511.057 e retorna pelo mesmo
+PC para `5225h` no 3.511.070, ainda dentro da multiplicação chamada
+em `1C9Dh`. Ela então executa `5227h`, retorna a `1CA0h` e passa
+por `1CA0h–1CA4h` antes de alcançar `1CA5h` no 3.511.077.
+O assembly original confirma essas instruções. O vetor **revela**
+endereços de retorno já diferentes, não cria por si a defasagem.
+A origem do estágio diferente antes da reabilitação de `ET0` continua
+aberta. Capturas:
+`variants/{g_7a_prev_pc,s88_7a_prev_pc,s88_lower_7a_prev_pc}/`.
+
+**Comentários de sinais e pinos desta trilha:** `7580h`, `7B45h`,
+`7581h` e `7B46h` são regiões de ROM lidas por `MOVC`;
+`78h/79h/7Ah/7Bh`, `69h` e `14h:15h`
+são RAM interna. ADC0/6 são canais **modelados** usados como estímulo
+das duas pistas TPS; a associação de cada canal ao terminal físico
+do chicote ainda não foi medida. `CC3` é o periférico de compare do
+SAB80C517A e `P1.3/CC3` é o pino da **CPU** modelado para a saída
+temporizada. `P5.0/P5.1` são outros pinos de saída da CPU modelados,
+com histograma de pulsos distinto nesta comparação. A alteração de
+inícios de pulso é observação nesse modelo;
+não identifica o terminal externo da ECU, o estágio de potência nem
+autoriza chamar a saída de bico ou bobina.
 
 ### Gráfico das curvas `750Ch` e `7520h`
 
@@ -891,8 +2423,17 @@ ADC3=4 e RPM=3000. Entre 393 e 422 amostras por caso passaram por
 e `09h` no TPS alto; `R7=04h` ou `FFh`. `21h.0/.1` ficaram limpos e
 `78h=00h`. Os cinco alvos de 48 bytes apontados por `70E0h..70E8h`,
 consultados em `1A34h`, têm mínimo maior que zero nas seis ROMs; isso
-explica `R1` positivo enquanto o índice permanece dentro desses blocos,
-sem estabelecer o limite global de `R4`. O teste
+assegura apenas o valor inicial positivo de `R1` após o `MOVC`. O teste
+`FiveIram78GateTablesSelectOriginalRomBytes` executa os opcodes G de
+`19FAh..1A3Ah` com estados preparados e confirma a seleção das cinco
+curvas e as leituras nos índices `00h` e `2Fh`. A seleção depende de
+`2Fh.5/.4`, `T2I1`, `RAM[62h]`, `RAM[63h]` e bits 4/2 de upper `9Eh`.
+O caminho `70E6h` requer `62h>7Ah`; o caminho `70E4h` requer
+`63h≤26h` e os dois bits de `9Eh` ligados, após excluir o primeiro.
+As cinco curvas agora têm entradas separadas no catálogo, com saída
+digital `R1` e função física desconhecida. O teste isolado não prova
+que todos esses seletores sejam alcançados no boot natural, nem que
+`R4` sempre fique dentro dos 48 bytes. O teste
 `test_ram78_gate_stays_closed_in_two_digital_tps_states` fixa os dois
 extremos de TPS como regressão. Esses pares ADC são estímulos digitais,
 sem validação das duas trilhas físicas. Um ensaio com estímulo de 5 baud
@@ -912,6 +2453,265 @@ instrumentada em `1A38h` também não encontrou valor zero (índices
 observados 0..44), mas inclui ensaios repetidos e intervenções;
 não constitui prova de inacessibilidade global da guarda.
 
+O limite aritmético global desse caminho foi verificado separadamente.
+O cabeçalho `70DEh→79E8h` seleciona `IRAM[47h]` e fornece `B=06h`;
+os opcodes originais das seis ROMs devolveram `R3≤05h` para as
+256 entradas possíveis. A rotina `52CDh` (ou `5390h` na revisão A)
+percorre os seis incrementos `20 10 20 1E 22 70` de trás para frente;
+os limites brutos de `47h` para `R3=0..5` são **0, 32, 48, 80,
+110, 144** nas seis ROMs. O eixo recebeu entrada própria no catálogo.
+No rastro G de 3.000 RPM, o cabeçalho foi lido 230 vezes por `MOVC`.
+No perfil emulado Fiat de 11,88 MHz, `47h≈RPM/25` põe esses limites
+em aproximadamente **0, 800, 1.200, 2.000, 2.750 e 3.600 RPM**.
+Dez execuções G sem alteração da ROM, a ±25 RPM dos cinco limites
+não nulos, produziram bytes `47h` imediatamente abaixo e acima de
+cada limiar: `1Fh/21h`, `2Fh/31h`, `4Fh/51h`, `6Dh/6Fh` e `8Fh/91h`.
+São pontos nominais do modelo 60−2; o clock e a pinagem Renault não
+foram usados para converter esses bytes em RPM físicas.
+Em G `19DEh..19FAh`, o nibble de `6Ah` fica
+em `00h..0Fh` e `R4=nibble×6+R3`, logo `R4≤95` sem saturação.
+As 96 posições alcançáveis a partir de **cada** um dos cinco ponteiros
+são não nulas nas seis ROMs; parte dessas janelas excede o intervalo
+provisório de 48 bytes de cada curva. Os testes
+`Iram47SegmentDecoderBoundsR4IndexInSixRoms` e
+`test_r1_gate_lookup_windows_are_nonzero_even_with_index_spill`
+fixam esses fatos. Ainda não se provou que o índice natural ultrapasse
+`2Fh`.
+
+O resultado positivo da ROM **não** garante `R1>0` em `1B34h`:
+o acumulador assinado chamado em `1A9Dh..1AB5h` pode limpar `R1` e
+ligar `F0` quando uma soma não negativa alcança o limiar. Em opcodes
+originais isolados G `5419h` / A `54DCh` de todas as seis ROMs, com
+`R1=03h`, `R2=00h` e `R3=7Fh`, amostra `02h` preserva `R1=03h`,
+enquanto `03h` produz `R1=00h`. O teste
+`SignedAccumulatorCanClearNonzeroTableGateR1` reproduz a fronteira.
+Essa é uma rota digital plausível para a guarda `R1=0`; ela não foi
+observada nos boots citados e não identifica a função física de `78h`
+nem a ligação de qualquer pino.
+O probe `MA17_TRACE_RAM78_GATE=1` agora inclui `PC=1A3Ah`, logo após
+`MOV R1,A`, além da amostra posterior em `1B34h`. Em G a 1.000 RPM,
+`ADC0/6=40/95` e `ADC3=80`, foram 230 amostras iniciais `R1=03h` e
+209 posteriores `R1=03h`. A 6.000 RPM, `ADC0/6=180/247` e `ADC3=4`,
+foram 231 iniciais (`03h/09h/0Bh`) e 221 posteriores (`09h/0Bh`).
+Não apareceu `R1=00h` em nenhum dos dois PCs nesses rastros.
+As quantidades diferem porque nem toda passagem alcança `1B34h`;
+o relatório não pareia automaticamente as duas fases. Capturas:
+`build/ma17-analysis/variants/ram78_gate_r1_{baseline1000,high6000}/`.
+
+Um contrafactual pontual G a 6.000 RPM e 2,4 milhões de ticks separou
+três células lidas em `1A38h`, sem modificar a ROM. No controle,
+`7ADAh/7ADFh/7A1Fh` devolveram `09h/09h/0Bh` em 10/104/115 leituras;
+`R1` não zerou em `1B34h` e `1BFDh` não foi visitado. Fornecer `00h`
+somente para `7ADAh` criou dez amostras `R1=00h` em `1A3Ah`, mas
+nenhuma chegou à guarda `1B34h`. Fornecer `00h` para `7ADFh` ou
+`7A1Fh` produziu `R1=00h` em `1B34h` e 106/116 visitas a `1BFDh`.
+Todas essas visitas tinham `R6=00h`, permitindo explicar por que o
+trecho `1C19h` desvia antes da atualização de `RAM[78h]` nesse estado.
+`RAM[78h]` permaneceu `00h`; a mediana de `RAM[14h:15h]` ficou em
+1.169 ticks, a largura baixa modelada de CC3 em 4.789 ticks e a de
+P5.0 em 1.847 ticks nos quatro braços. Os bytes e hashes da ROM ativa
+permaneceram originais. O teste
+`test_r1_lookup_zero_opens_1bfd_without_ram78_at_zero_r6` reproduz os
+quatro braços; capturas em `build/ma17-analysis/variants/ram78_gate_7ada_*/`.
+Isso demonstra causalidade digital até a guarda, mas não que uma ECU
+real alcance `R1=00h` nesse perfil ou que CC3/P5.0 tenham as ligações
+físicas presumidas.
+
+O consumidor G `1C19h..1C38h` foi executado isoladamente com os bytes
+originais da ROM. `R6=00h` desvia em `1C1Ah` e deixa `78h=00h`.
+Com `R6=01h`, os três estados controlados de `2Fh.5` e `T2I1`
+selecionam `DPTR=713Fh`, `712Dh` ou `7136h`, respectivamente, antes
+da interpolação em `5314h/532Fh`; cada um escreve um valor positivo
+em `78h` antes de `1C38h`. O teste
+`Ram78ConsumerRequiresNonzeroR6AndSelectsOriginalTable` reproduz a
+seleção e a escrita. A entrada direta em `1C19h` é sintética: ela
+isola a segunda guarda, sem provar que o fluxo natural satisfaz
+simultaneamente `R1=0`, `21h.1=1` e `R6>0`.
+
+**Anotação de pinos neste fluxo:** `T2I1` é o bit `C9h` do periférico
+Timer 2 usado como seletor digital da tabela; `1C19h..1C38h` não
+escreve diretamente em latch de porta nem em `CC3`. Nas quatro
+execuções completas da intervenção anterior, as temporizações
+modeladas de P5.0 e CC3 ficaram iguais. Assim, `78h` permanece uma
+variável interna sem destino físico identificado; nenhuma ligação
+de P5.0, P5.1 ou CC3 a bobina, bico ou atuador é deduzida deste ramo.
+
+As curvas contíguas `712Dh..7147h` foram acrescentadas ao catálogo:
+são três blocos de nove bytes iguais nas seis ROMs. O contrafactual
+G em boot completo (6.000 RPM simulados, 2,4 milhões de ticks,
+`ADC0/2/3/5/6/7=180/100/4/40/247/63`) forneceu `00h` somente ao
+retorno de `MOVC 1A38h/7ADFh`, abrindo `1BFDh`. Com `R6=00h`, não
+houve escrita em `78h`; com `R6=01h` fornecido somente em `1C19h`,
+`1C36h` escreveu `78h`, o leitor `1D4Bh` observou valores não zero e
+a mediana de `RAM[14h:15h]` na entrada do agendamento CC3 mudou de
+1.169 para 1.414 ticks. Fornecer `78h=00h` somente nesse leitor
+restaurou 1.169 ticks. P5.0 manteve largura baixa modelada de 1.847
+ticks nos três braços. `test_ram78_r6_gate_reaches_cc3_input_through_1d4b`
+reproduz o contraste e a restauração; capturas em
+`build/ma17-analysis/variants/ram78_r6_*/`.
+
+**Limite do pino CC3/P1.3:** o braço `R6=01h` teve só três pulsos
+completos de CC3 modelados, contra 195 no controle e na restauração;
+portanto a mediana de largura desses três pulsos não sustenta uma
+conclusão física. O efeito comprovado é sobre o valor digital entregue
+ao agendador. As duas intervenções são necessárias neste estado e não
+demonstram que a ECU as produza naturalmente. O destino elétrico de
+CC3/P1.3 permanece não verificado.
+
+Um **degrau natural de TPS no emulador** removeu a restrição dos dois
+testes anteriores. Com G original, 6.000 RPM simulados, `ADC0/6=40/95`
+até tick 800.000 e depois `180/247`, as duas entradas de 10 bits
+mudaram juntas de `160/380` para `720/988`; `ADC2/3/5/7=100/4/40/63`
+permaneceram fixos. Sem substituição de `MOVC` ou registrador, houve
+seis visitas a `1C19h` com `R1=00h`, `R6=FFh` e `R4=7Fh`. `1C36h`
+gravou `RAM[78h]=FFh` cinco vezes. O `MOVC` original em `532Fh/5333h`
+leu `7146h/7147h=FFh` cinco vezes cada, com `DPTR=713Fh`. As leituras
+iniciais em `1A38h` vieram de células não zero: `7A1Fh=0Bh` e
+`7ADFh=09h`; a rotina acumuladora pode limpar `R1` depois da leitura.
+Um degrau inverso no mesmo tick também produziu `R6=FFh`, porém
+`R1=03h` na guarda e nenhuma visita a `1C19h`.
+
+Na primeira passagem após a escrita natural, `1D4Bh` leu `78h=FFh`
+e `R3:R2` em `1DD8h` foi `07A4h`. Repetir a abertura zerando `78h`
+somente em `1D4Bh` preservou a escrita em `1C36h`, mas mudou esse
+par para `044Dh`. A mediana global de entrada CC3 ficou em 217 ticks
+nos dois braços; os pulsos CC3 completos modelados foram 133/189 e
+P5.0 permaneceu em 1.847 ticks. Essa diferença local comprova a
+contribuição digital de `78h` no cálculo intermediário, enquanto os
+resumos globais não isolam um efeito físico em `CC3/P1.3`. A função
+elétrica de `T2I1`, `CC3/P1.3` e P5 continua em aberto. Regressão:
+`test_natural_tps_opening_reaches_ram78_curve_and_consumer`; capturas
+em `build/ma17-analysis/variants/ram78_tps_step_*/`.
+
+O fator da tabela `73E0h` também foi isolado nesse degrau natural.
+`079Ch` leu `73F4h=EEh` 110 vezes; a primeira multiplicação em
+`07A1h` reduziu `78h` de `FFh` para `EDh`. Fornecer `00h` somente como
+retorno desse `MOVC` manteve os cinco escritores `1C36h` que repõem
+`FFh`, mas a primeira passagem por `07A1h` fez `FFh→00h`. As leituras
+não zero de `78h` em `1D4Bh` caíram de 51 para cinco no rastro.
+Perto do tick 900.000, o par `R3:R2` em `1DD8h` foi `06C5h` com o
+fator original e `044Dh` com o fator fornecido. A mediana global de
+entrada CC3 continuou em 217 ticks; a contagem de pulsos completos
+modelados mudou de 133 para 183, e P5.0 ficou em 1.847 ticks.
+É uma relação causal entre a célula `73F4h`, a persistência de `78h`
+e um resultado intermediário; a carga ligada a `CC3/P1.3` continua
+sem identificação física. A regressão do degrau inclui este braço.
+
+Na S88, que usa o mesmo código de `1C19h` e os mesmos bytes em
+`73F4h`, o degrau de abertura também produziu seis visitas com
+`R1=00h/R6=FFh` e escreveu `78h=FFh` em `1C36h`. A célula `73F4h`
+foi lida 110 vezes. Fornecer `00h` apenas nesse `MOVC` mudou a primeira
+escrita em `07A1h` de `FFh→EDh` para `FFh→00h`; o par em `1DD8h` perto
+do tick 900.000 mudou de `0793h` para `04D0h`. A mediana global de
+entrada CC3 ficou em 340 ticks nos dois braços, a contagem de pulsos
+completos modelados em 133 e a largura baixa de P5.0 em 1.843 ticks.
+Assim, a contribuição digital da célula se repete em outra calibração,
+mas nenhum desses números identifica a carga elétrica de CC3/P1.3.
+Teste: `test_s88_tps_opening_73f4_factor_reaches_ram78_consumer`;
+capturas em `build/ma17-analysis/variants/ram78_s88_tps_opening_*/`.
+
+Uma perturbação pequena da mesma célula preservou a ordem esperada
+nos resultados digitais, com a ROM ativa sempre intacta:
+
+| Valor entregue por `079Ch/73F4h` | Primeiro `78h` após `07A1h` | G: `R3:R2` em `1DD8h` | S88: `R3:R2` em `1DD8h` |
+|---|---|---|---|
+| `ECh` | `EBh` | `06AFh` | `077Bh` |
+| `EEh` original | `EDh` | `06C5h` | `0793h` |
+| `F0h` | `EFh` | `06DFh` | `07B0h` |
+| `00h` | `00h` | `044Dh` | `04D0h` |
+
+Os pares `R3:R2` foram amostrados perto do tick 900.000 após o mesmo
+degrau. Nas quatro condições, a mediana global de entrada CC3 ficou
+em 217 ticks para G e 340 para S88; P5.0 ficou em 1.847/1.843 ticks.
+Isso caracteriza sensibilidade local no cálculo, sem converter os
+valores em tempo de injeção, ângulo ou outra unidade física. Capturas
+adicionais: `build/ma17-analysis/variants/ram78_factor_{g,s88}_{ec,f0}/`.
+
+Uma grade de RPM e de amplitude do mesmo degrau delimitou a guarda
+em G e S88, sem modificar `MOVC` nem registradores. Os dois canais
+partiram de `ADC0/6=40/95`; no tick 800.000 passaram juntos para
+`120/180` (abertura intermediária) ou `180/247` (abertura maior).
+`ADC2/3/5/7=100/4/40/63` ficou fixo e cada execução durou 2,4 milhões
+de ticks:
+
+| RPM simulada | Abertura | Visitas a `1C19h`, G/S88 | `R6` nas visitas | Escritas `1C36h`, G/S88 |
+|---:|---|---:|---|---:|
+| 1.000 | intermediária | 5/5 | `FF, FC, B6, 9A, 7E` | 1/1 |
+| 1.000 | maior | 5/5 | `FF` nas cinco | 2/2 |
+| 3.000 | intermediária | 5/5 | `FF, FC, B6, 9A, 7E` | 2/2 |
+| 3.000 | maior | 5/5 | `FF` nas cinco | 3/3 |
+| 6.000 | intermediária | 5/5 | `FF, FC, B6, 9A, 7E` | 3/3 |
+| 6.000 | maior | 6/6 | `FF` nas seis | 5/5 |
+
+Em todas as visitas, `R1=00h`; a primeira escrita de cada execução
+produziu `78h=FFh`. As contagens são específicas do instante do degrau
+e do horizonte de observação; elas ainda não definem um limiar físico
+de borboleta. `test_ram78_tps_step_gate_repeats_across_rpm_and_g_s88`
+cobre quatro braços representativos; capturas em
+`build/ma17-analysis/variants/ram78_envelope_{g,s88}_*/`.
+Essa grade amplia a evidência de ativação digital e não identifica a
+carga ligada ao pino `CC3/P1.3`.
+
+Na fronteira de baixa amplitude a 1.000 RPM, o estado inicial de ADC
+de 10 bits foi `ADC0/6=160/380`. Um degrau simultâneo para `189/409`
+deixou `R1=03h` em `1B34h`; para `190/410` produziu seis amostras
+`R1=00h`, cinco visitas a `1C19h` e `78h=97h` em `1C36h`, tanto em
+G quanto em S88. Os bytes internos passaram de `60h/66h/70h/6Ah =
+2Fh/66h/1Dh/D1h` para `30h/67h/1Eh/E1h`. Em G, variar só ADC0 até
+190 com ADC6=409 manteve a guarda fechada; variar só ADC6 até 410 com
+ADC0=189 abriu. Os pares de uma trilha só são sondas digitais, não
+combinações validadas no conector. O limiar `409→410` vale apenas
+nesse estado inicial e com o arredondamento ADC emulado.
+
+O caminho de bytes é `ADC6→66h` em `0744h`, `66h→70h` em `11D1h`,
+`70h→6Ah` em `1255h..125Eh` pelo ponteiro big endian `7058h→7970h`,
+e `6Ah→R4→R1` em `19DEh..1A38h` antes do acumulador `5419h`.
+A tabela `7970h..7979h`, agora catalogada, contém o seletor `0Dh`,
+oito segmentos e os incrementos `08 10 10 14 1F 28 4D 28`, iguais
+nas seis ROMs. Os testes originais de opcodes confirmam `70h=1Dh/1Eh`
+resultando em `6Ah=D1h/E1h`; a regressão de execução completa é
+`test_ram78_tps_adc10_boundary_follows_channel6_in_tested_state`.
+O trace agregado de `MOVC` nos dois lados da fronteira mostra as mesmas
+230 leituras da tabela por `527Dh/5284h/5289h`, com os mesmos endereços
+e bytes. A diferença observada entra pelo valor de `70h`, não por uma
+célula diferente da tabela. `ADC6` é o canal do modelo: ainda falta
+confirmar qual pino analógico e qual trilha do TPS o alimentam na ECU.
+Capturas: `build/ma17-analysis/variants/ram78_{tps_adc10,s88_adc10,tps_isolate}_*/`.
+
+Uma célula **diferente entre gasolina e álcool** também ganhou um
+consumidor em estado alcançado: no mesmo degrau natural a 6.000 RPM,
+`MOVC 532Fh/7520h` lê `4Dh` em G/S88, enquanto A usa `6Fh` nessa
+célula. Fornecer `6Fh` só ao `MOVC` de G ou S88 escreve `79h=6Fh`
+em `47BEh`, em vez de `4Dh`. O par em `1DD8h` perto do tick 900.000
+é G `06C5h→07DCh` e S88 `0793h→08CCh`. Se `78h` for zerado só no
+leitor `1D4Bh`, o par fica em `044Dh` em G e `04D0h` em S88 tanto
+com a célula original quanto com `6Fh`: isso identifica `78h` como
+mediador da diferença local. A mediana global de entrada CC3 ficou
+em 217/340 ticks para G/S88 e a largura baixa de P5.0 em
+1.847/1.843 ticks nos respectivos quatro braços. A ROM permaneceu
+intacta. O vínculo físico de `CC3/P1.3` com bico, bobina ou outro
+atuador segue não demonstrado. Regressão:
+`test_7520_donor_needs_natural_ram78_at_1d4b`; capturas em
+`build/ma17-analysis/variants/ram78_7520_*/`.
+
+O efeito de `7520h` chega à saída temporizada modelada em um estado
+natural a **3.000 RPM**: no evento de `058Eh` perto do tick 907.094,
+o valor de `RAM[14h:15h]` passa de `07FAh` para `0947h` em G quando
+o `MOVC` de `7520h` recebe `6Fh` de A em vez de `4Dh`. O pulso baixo
+de `P1.3/CC3` iniciado no tick 907.122 passa de **8.156 para 9.488
+ticks**. S88 repete o efeito: `08F0h→0A67h` no agendador e
+**9.140→9.885 ticks** no pino modelado. Em G, zerar `78h` apenas na
+leitura de `1D4Bh` faz ambos os braços entregarem `0506h` e pulso
+de 5.132 ticks; isso identifica `78h` como mediador também no resultado
+temporizado. As medianas de toda a execução permaneceram iguais em
+cada par (G 1.424; S88 1.592,5), ocultando esse transiente. Em
+6.000 RPM, os valores de CC3 mudaram, mas os pulsos modelados perto
+do mesmo evento ficaram em aproximadamente 4.935 ticks de uma meia
+volta de 4.950 ticks. O registro de `P1.3/CC3` continua sendo um pino
+do processador no emulador; a ligação ao bico monoponto não foi medida.
+Regressão: `test_7520_donor_changes_local_cc3_pulse_via_ram78_at_3000_rpm`;
+capturas em `build/ma17-analysis/variants/ram78_7520_3000_*/`.
+
 O diretório `709Ch/709Eh/70A0h` aponta para três matrizes de 120 bytes
 em `7B46h/7BBEh/7C36h`. O código `330Dh` em G/S88 e `3329h` em
 A/S37 obtém a linha da tabela `7B28h` (cabeçalho `AEh,08h`), extrai
@@ -924,15 +2724,67 @@ executa as duas ROMs com cada seletor e verifica os endereços lidos
 em `532Fh/5333h`. Em um boot natural a 1.000 RPM, somente a primeira
 matriz foi lida, uma vez, em `7B46h/7B47h`: `99h/99h` em G e
 `A1h/A1h` em S88. Nas **360 células**, S88 usa G+8 módulo 256;
-o teste Python verifica a diferença uniforme. Os modos 1/2 e a
-grandeza física dessas matrizes permanecem sem observação em execução
-completa.
+o teste Python verifica a diferença uniforme. A seleção **natural**
+dos modos 1/2 e a grandeza física dessas matrizes permanecem abertas.
+
+**Leitura além do último índice nominal.** Em S88 original, 6.000 RPM,
+ADC3/5/7=`4/40/63` e TPS ADC0/6=`40/95→180/247` no tick 800.000,
+o `MOVC` em `5350h` leu `7BBEh` uma vez e `7D26h` 155 vezes.
+Esses são `7B46h+120` e `7CAEh+120`: primeiros bytes das matrizes
+seguintes, fora das respectivas grades 8×15. O par anterior em `534Bh`
+leu `7BBDh` e `7D25h`. Em G com os mesmos estímulos, esses dois
+endereços de borda não foram lidos. No código `527Ch..52CCh`, quando
+o segmento de 15 posições termina em índice `0Eh`, a saída de fração
+é zerada em `529Ah..52A2h`; no estado S88, `3356h` confirmou
+`R5=68h`, `R6=00h` e a coluna 14. A leitura extra ocorre, mas seu
+byte não contribui numericamente para a interpolação nesse estado.
+
+Doar `A0h` em vez de `A1h` somente nas duas leituras `5350h` manteve
+o sinal da subtração e preservou exatamente os resumos de RAM, P5,
+CC3, lookup e cobertura de PC. Doar `00h` somente em `7BBEh` mudou
+o sinal: o PC passou por `524Dh` na rotina de multiplicação, a primeira
+escrita de `69h` após o degrau atrasou seis ticks e o histograma P5.0
+mudou, embora a mediana permanecesse 1.843 ticks. Logo, um byte de
+borda com peso numérico zero ainda pode afetar a fase de execução
+nesse emulador. A ROM original não foi modificada. Capturas:
+`build/ma17-analysis/variants/matrix_120_step_{g,s88,s88_boundary_a0,s88_7bbe00,s88_7d26ff}/`.
+Regressão: `tests.test_ma17_matrix_boundary`.
+
+`python3 tools/audit_ma17_matrix_boundaries.py --exclude-overrides` audita
+os relatórios `execution.json` pela base em `DPTR`, em vez de atribuir
+uma leitura somente pelo endereço efetivo. No corpus local observado,
+1.145 relatórios passaram pelo filtro de hash e de campos de override;
+737 registraram `MOVC`. Destes, 14 relatórios S88 registraram
+`7B46h→7BBEh` (14 leituras) e `7CAEh→7D26h` (2.170 leituras), sempre
+em `5350h`; nenhum registrou `MOVC` com `DPTR=7BBEh` ou `DPTR=7D26h`.
+São rastros de cenários repetidos e de várias versões do emulador, não
+14 estados independentes. Restringindo ao executável SHA-256
+`af5239bd…a904c00`, foram 15 rastros com `MOVC`, dos quais 13 exibem
+as duas bordas (13 e 2.015 leituras). Os artefatos estão em
+`build/ma17-analysis/variants/matrix_boundary_audit_{all_models,current_model}.json`.
+O filtro não elimina estímulos ADC ou de pinos experimentais; ausência
+de seleção direta nesse corpus não prova inacessibilidade em toda ECU.
+Regressão da auditoria: `tests.test_audit_ma17_matrix_boundaries`.
 
 O teste isolado `Sab80C517.AlcoholCodeStartupMatrixIndexUsesBcAndUpperAe`
 executa `3329h..335Dh` nas ROMs A e S37: `BCh=03h` ou `15h` com
 `AEh=00h` dá linha 0 e colunas 3 ou 5; `BCh=03h`, `AEh=20h` dá linha 2,
 coluna 3 e `R5=33`. Isso confirma o cálculo do índice nessas revisões,
 sem estabelecer a origem natural de `AEh` nem a escala física dos eixos.
+
+Os mapas de calor de [G/S88 em `7B46h`](../build/ma17-analysis/variants/matrix_plots/matrix_7b46_g_vs_s88.png)
+mostram a mesma silhueta com `+8` em todas as 120 células S88. Em
+[G/A em `7BBEh`](../build/ma17-analysis/variants/matrix_plots/matrix_7bbe_g_vs_a.png),
+118 células diferem (`0..+93` bytes): a média por linha de G varia de
+`69,7..119,0`, e a de A de `132,5..145,6`. G tem uma depressão nas linhas
+1–2, sobretudo nas colunas 4–13, enquanto A preserva uma superfície
+mais uniforme. Essa silhueta localiza onde comparar seletores e trajetórias
+de `MOVC`; sozinha, não identifica a grandeza física. As comparações internas
+[G `7B46h/7BBEh`](../build/ma17-analysis/variants/matrix_plots/matrix_7b46_g_vs_7bbe_g.png)
+e [A `7B46h/7BBEh`](../build/ma17-analysis/variants/matrix_plots/matrix_7b46_a_vs_7bbe_a.png)
+separam mudança de banco e mudança de ROM. Cada imagem tem CSV por
+célula e JSON com hashes. Esses padrões são bytes brutos; o modo 1
+permanece sem seleção natural demonstrada.
 
 Na revisão de código A/S37, um ensaio isolado começa em `3372h`, fixa
 `R5=4`, `R6=R4=0` e usa `57h=0/1/2`. O caminho `337Eh→53E6h→52EBh`
@@ -949,6 +2801,68 @@ o DPTR, `ACC=4`, o byte da ROM e `R2` em cada caso. Isso demonstra a
 seleção e a diferença funcional nessa célula do interpolador A, sem
 executar o cálculo anterior do índice ou estabelecer uma saída física.
 
+Em execução completa da ROM G com `RAM[57h]` forçada em `1378h`, a
+1.000 RPM, `ADC0/2/3/6=40/100/20/95` e 2,4 milhões de ticks,
+os modos 1 e 2 leram respectivamente **650 células** de `7BBEh` e
+`7C36h`. Doar somente as 120 células de `7BBEh` de S88 ou A ao
+`MOVC` da G mudou o último `RAM[69h]` do produtor de `66h` para
+`6Eh` ou `9Ah`; as medianas dos pulsos baixos **modelados**
+P5.0/P5.1 foram `5868/5880,5`, `5885/5884` e `5908/5908` ticks.
+No modo 2, doar `7C36h` de S88 mudou `RAM[69h]` de `66h` para
+`6Eh` e as medianas de `5868/5880` para `5885/5884` ticks.
+O byte bruto registrado pelo `MOVC` e a ROM ativa G não mudaram.
+
+Para testar a mediação no modo 1, fornecer `9Ah` a `RAM[69h]` apenas
+no leitor Timer 1 `043Bh`, com a matriz G original, reproduziu as
+medianas `5908/5908`. Fornecer `66h` no mesmo ponto com a matriz A
+doada restaurou P5.0 para `5868` e P5.1 para `5879` ticks (controle
+`5880,5`). O pequeno resíduo em P5.1 impede afirmar equivalência
+completa. O ensaio demonstra uma rota digital da matriz até a
+temporização P5 sob **seletor forçado**; a ocorrência natural dos modos,
+a polaridade elétrica, a ligação dos pinos P5.0/P5.1 aos dois drivers
+e a função física da matriz continuam sem verificação. Teste:
+`test_forced_7bbe_7c36_donors_reach_p5_through_ram69_in_g`;
+capturas: `build/ma17-analysis/variants/7bbe_mode1_*/` e
+`build/ma17-analysis/variants/7c36_mode2_*/`.
+
+Repeti o modo 1 com o mesmo código G, ADCs e ROM intacta a 750 e
+2.000 RPM. A matriz foi lida 884/460 vezes por cenário; a doação
+`A:7BBEh` mudou o último `RAM69h`. A intervenção cruzada
+em `043Bh` trocou apenas o valor entregue ao cálculo do Timer 1:
+
+| RPM | `RAM69h` G→doadora A | P5.0/P5.1 G | P5.0/P5.1 doadora A | G com `69h` da doadora | doadora com `69h` G |
+| ---: | --- | --- | --- | --- | --- |
+| 750 | `81h→9Ch` | `6096/6094` | `6016/6016` | `6016/6016` | `6096/6096` |
+| 2.000 | `35h→8Ah` | `4790/4790` | `4760/4760` | `4760/4760` | `4790/4790` |
+
+Valores de P5 são medianas baixas modeladas em ticks; `RAM69h` armazenada
+permaneceu própria em cada braço cruzado. A mediana de `14h:15h` no
+agendador CC3 ficou em 878/390 nos dois pares de RPM. Assim, `69h`
+medeia exatamente P5.0 nesses estados, mas a direção do efeito da
+matriz em P5.0 muda entre 750/2.000 RPM e o ensaio anterior a 1.000 RPM.
+P5.1 deixa um resíduo de dois ticks em um braço a 750 RPM. Essa relação
+não é uma escala física linear. Capturas:
+`build/ma17-analysis/variants/7bbe_rpm{750,2000}_*/`;
+regressão: `Bank7bbeRpmTests.test_alcohol_donor_ram69_gate_and_p5_at_three_rpms`.
+
+Um trace do código G em `048Eh..049Bh`, com o mesmo seletor forçado,
+explica por que a resposta não mantém o mesmo sinal. A rotina desloca
+`69h` um bit à direita, subtrai `31h` e grava em `22h.7` se o resultado
+é **estritamente positivo**; zero e negativo limpam o bit. Os últimos
+eventos observados em cada cenário foram:
+
+| RPM | Matriz | `69h`, `31h` em `049Bh` | `(69h>>1)-31h` | `22h.7` | `TH1:TL1` (`35h:34h`) em `0286h` |
+| ---: | --- | --- | ---: | ---: | --- |
+| 750 | G / A doadora | `81h,27h` / `9Ch,27h` | `+25` / `+39` | `1` / `1` | `FDE2h` / `FFB2h` |
+| 1.000 | G / A doadora | `66h,33h` / `9Ah,33h` | `0` / `+26` | `0` / `1` | `FFFFh` / `FFE2h` |
+| 2.000 | G / A doadora | `35h,52h` / `8Ah,52h` | `−56` / `−13` | `0` / `0` | `FF43h` / `FF34h` |
+
+Portanto, 1.000 RPM cruza também a condição lógica em `049Bh`; os
+outros dois pares permanecem do mesmo lado. Os valores de recarga são
+os últimos observados, não uma fórmula direta para a largura mediana de
+P5. O agendamento completo e a ligação física ainda precisam de análise.
+Capturas: `build/ma17-analysis/variants/7bbe_gate_rpm{750,1000,2000}_{g,a}/`.
+
 Outros quatro blocos de 120 bytes ficam em `7CAEh`, `7D26h`, `7D9Eh`
 e `7E16h`, apontados por `70B6h`, `70B8h`, `70BAh` e `70CEh` em todas as
 seis ROMs. G/S88 seleciona a base `70B6h` em `334Dh` quando `2Fh.2=1`; A/S37
@@ -958,6 +2872,16 @@ A/S37 fixa `R5=4`, executa as quatro combinações de flags e confirma em
 `53F2h` o DPTR de cada tabela e em `3381h` o byte correspondente em `R2`.
 Isso demonstra a seleção e a saída digital do lookup, sem provar quando
 os estados surgem naturalmente ou a função física da saída. A rotina
+de estado A em `3C7Dh..3D04h` foi ligada ao seletor em outro ensaio
+isolado, mantendo o mesmo estado de CPU. Com estado anterior `F9:85h=3`,
+contador `F9:84h=40h` e `IRAM[47h]=55h`, a ROM A/S37 escreve estado 4 e
+liga `2Bh.7`; com `47h=5Fh`, escreve `13h` e limpa o bit. Preparando
+`2Fh.2=1`, `57h=0` e `R5=4`, sem tocar em `2Bh.7` entre as rotinas, o
+`MOVC` em `53F2h` lê respectivamente `7D2Ah` e `7CB2h`, e grava o byte
+em `R2`. Regressão: `AlcoholStateWindowFeedsUpperAeMatrixSelector`.
+Isso confirma a cadeia digital sob estado preparado, sem validar o boot
+da família A nem converter `47h` em RPM físico.
+A rotina
 `5228h` em G e sua homóloga `52EBh` em A têm os mesmos 16 bytes: usam
 `RAM[57h]×2` como deslocamento no diretório, leem o destino **big-endian**
 e só então consultam a tabela. Com base `70B6h`, os modos `57h=0/1/2`
@@ -972,6 +2896,18 @@ e formato 8×15 confirmados nesse estado controlado; falta observar a
 seleção natural e o destino funcional de `A4h`. Com `2Bh.7=1` e `2Fh.2=1`,
 o código A usa base `70B8h`, que também alcançaria `70BAh` com `57h=1`;
 essa combinação não foi executada neste teste.
+
+O [mapa de `7D9Eh`, G/S88](../build/ma17-analysis/variants/matrix_plots/matrix_7d9e_g_vs_s88.png)
+mostra que S88 aplica `+8` às primeiras 117 das 120 células e preserva
+as três finais (última linha, colunas 12–14). Em
+[G/S37](../build/ma17-analysis/variants/matrix_plots/matrix_7d9e_g_vs_s37.png),
+S37/S36 aplicam `+22` às primeiras 116 e preservam as quatro finais
+(colunas 11–14). O teste confere cada byte nas ROMs originais. A
+[comparação interna S88 `7D26h/7D9Eh`](../build/ma17-analysis/variants/matrix_plots/matrix_7d26_s88_vs_7d9e_s88.png)
+mostra dez diferenças: as sete células de última coluna já distintas
+em G, mais as três células terminais preservadas de `7D9Eh`. O padrão
+localiza a edição, mas não demonstra a faixa de entradas alcançável
+nem a escala física do resultado interpolado.
 
 Um ensaio completo de G a `ADC0=180`, `ADC6=247`, `ADC2=100`, `ADC3=80`
 e `ADC7=63` atingiu naturalmente a guarda `2Fh.2`, mas manteve `57h=0`
@@ -1028,6 +2964,60 @@ leitura `MOVC` desse bloco; o efeito natural e a função física continuam
 abertos. As diferenças G→A são
 0/119/0/118 bytes nessas quatro regiões; G→S88 são 120/120/117/0.
 
+O ramo G `37AAh..37C3h` (A `37D8h..37F1h`) usa o ponteiro
+`70D4h→7E8Eh` quando `OV=1` e `B.0=1`. A tabela tem 15 bytes nominais,
+iguais nas seis ROMs. O índice de `MOVC` é
+`(RAM_superior[BCh] & 0Fh) + ((RAM_superior[BCh] >> 7) & 1)`;
+o byte lido é gravado em RAM **superior** `8Dh`.
+O [gráfico da curva bruta 7E8Eh](../build/ma17-analysis/variants/matrix_plots/curve_7e8e_all_variants.png)
+mostra um degrau de `01h` até `05h` no índice 10 e retorno a `01h`
+nos índices 12–14. As seis ROMs coincidem célula por célula. O comando
+`/usr/bin/python3 tools/plot_ma17_state_curve.py` também gera CSV e JSON
+com endereço de cada byte e hash de cada ROM. A forma não define unidade
+física nem a frequência natural de cada índice.
+Traces completos G/S88
+com TPS `40/95` registraram `7E91h=01h` e `7E93h=02h` (índices 3 e 5);
+um ensaio experimental S88 com dois degraus TPS registrou `7E95h=03h`
+(índice 7). Um teste com os opcodes
+originais das seis ROMs confirmou índice e escrita para `BCh=03h/05h/07h/8Ah/8Fh`.
+As capturas antigas `tps_gate63_40_95_{g,s88}` não registraram o hash
+do executável. No executável atual `1c0b13f3…28804`, um controle G/S88
+sem degraus, com os oito ADCs brutos `40/130/100/80/90/110/95/63`,
+1.000 RPM e 3,4 milhões de ticks, não leu `7E8Eh` nem RAM superior
+`8Dh`. A diferença pode depender de estado ou da versão do modelo;
+as leituras antigas de TPS constante permanecem não revalidadas.
+O controle atual é reproduzido por
+`Matrix7e16ReachabilityTests.test_7e8e_historical_steady_tps_access_is_absent_in_current_model`.
+O caso `8Fh` chega ao índice 16 e lê `7E9Eh`, além do intervalo nominal:
+é um teste de limite, sem evidência de ocorrência natural.
+O leitor posterior de `8Dh` foi identificado no código original:
+`377Fh/37C9h` executam `CJNE @R1,#00h` com `R1=8Dh`, e `37DFh`
+executa `DEC @R1`. No cenário de 1.500 RPM com P4.6 baixo experimental,
+ADC6 `95→220` no tick 200.000 e TPS `40/95→180/247` no tick 1.350.000,
+G e S88 têm os mesmos 15 bytes em `7E8Eh`, mas G lê `7E93h=02h`
+e S88 lê `7E95h=03h` em `37BFh`, uma vez cada. O código grava o byte
+em RAM superior `8Dh` em `37C3h`; depois, G passa por `37C9h` com
+`02h→01h→00h`, enquanto S88 passa por `03h→02h→01h→00h`.
+Cada passagem positiva chega a `37DFh` para decremento. Isso identifica
+`8Dh` como contador de estado **nesse ramo digital** e demonstra uma
+passagem adicional em S88 causada pelo índice, sem atribuir unidade de
+tempo nem função física. Capturas:
+`build/ma17-analysis/variants/upper8d_read_probe_{g,s88}_tps/`;
+regressão: `Matrix7e16ReachabilityTests.test_7e8e_index_sets_upper_8d_countdown_differently_in_g_s88`.
+Um controle causal com a mesma ROM G, os mesmos ADCs e a mesma roda fônica
+substituiu apenas o retorno de `MOVC` em `37BFh/7E93h` de `02h` por `03h`.
+O guarda `37C9h` passou de `02h→01h→00h` para `03h→02h→01h→00h`,
+com uma execução adicional de `DEC @R1` em `37DFh`. A largura mediana
+observada dos pulsos CC3 foi 5.881 ticks em ambos os ensaios; isso não
+estabelece ausência de qualquer efeito físico em outras condições.
+O resumo P5.0 coincidiu integralmente. Em P5.1, uma única largura
+modelada passou de 1.769 para 1.768 ticks; a mediana permaneceu em
+1.784 ticks. A diferença de um tick é compatível com o caminho de
+instruções adicional, sem demonstrar uma mudança de calibração física.
+Captura: `build/ma17-analysis/variants/upper8d_g_override_03/`;
+regressão: `Matrix7e16ReachabilityTests.test_7e8e_single_movc_byte_controls_upper_8d_countdown`.
+Regressão: `Sab80C517.Pointer70d4IndexesUpperBcAndWritesUpper8d`.
+
 Um estímulo TPS `ADC0/ADC6=40/95→180/247` no tick 200.000, com G,
 `ADC2=100`, `ADC3=80`, `ADC7=63`, 1.000 RPM e 2,4 milhões de ticks,
 chegou a `3752h` mas não a `3830h`: `2Fh.7` permaneceu zero nas
@@ -1062,6 +3052,210 @@ atual desligado; o estímulo testado não a produziu. Essas condições
 delimitam o próximo experimento, sem identificar a função elétrica de
 P4.6. Capturas: `7e16_b_source/` e `7e16_p46_low_step/`; o teste
 anterior agora verifica também `B.5` em `36DEh`.
+
+Um teste isolado com os opcodes da ROM G confirma esse produtor e seus
+limites: partindo de `2E06h`, `46h=40h`, `47h=48h` e `F8:F9h=0`, o
+`MOVC` lê `72A6h=06h`, grava `72DEh=96h` em `F8:FAh` e deixa a RAM
+superior `81h=24h`. Igualar `47h` a `46h` ou pôr `F8:F9h=1` impede a
+gravação. O `MOV B,@R1` original em `36B1h` copia `81h`; com `F8:FAh=FFh`
+preparado, o caminho `36DEh→3701h` liga `B.0`, enquanto os controles
+chegam a `3739h`. O teste salta deliberadamente o fluxo entre `2E24h`
+e `36AFh`; portanto ainda não demonstra que o produtor seja alcançado
+em uma partida natural ou que `3830h` leia `7E16h`.
+Teste: `Sab80C517.FiatUpper81StateProducerOpensB5MatrixBranch`.
+
+Um ensaio de fluxo completo, ainda com **P4.6 baixo experimentalmente**,
+começa em TPS bruto `40/95` e muda ADC6 para `220` no tick 200.000.
+Em 1.000 RPM, `2E06h` é alcançado, mas `46h=2Ah`, `47h=28h` e
+`ROM[72A6h]=06h` desviam em `2E0Fh`. Em 1.500 RPM, `47h=3Ch` e o
+mesmo código chega a `2E1Ch`, grava `F8:FAh=96h` e passa por `36DEh`
+com `B.5=1`. Esse resultado confirma a produção do estado sob o
+estímulo controlado. Ainda não há leitura de `7E16h`: em `36FFh`,
+`ROM[72D6h]=02h`, RAM superior `C5h=53h` e `70h=53h` deixam carry
+limpo e levam a `3739h`. Capturas: `7e16_p46_low_tps_fault_step_probe/`
+e `7e16_rpm_1500_branch_probe/`; teste
+`test_7e16_state_producer_reaches_original_code_at_higher_rpm`.
+
+Um segundo degrau, após a gravação de `F8:FAh`, desloca TPS bruto
+`40/220→180/247` no tick 1.350.000. Com P4.6 baixo experimentalmente,
+mas **sem override de RAM**, `C5h` mantém `53h` enquanto `70h` sobe a
+`DFh`; `36FFh` fica com carry ligado e alcança `3701h`. A rotina
+`3830h` então lê `7E16h` 320 vezes em 3,4 milhões de ticks, em quatro
+células distintas. G lê `7E66h/7E67h/7E75h/7E76h` 80 vezes cada;
+S88 lê `7E76h/7E77h/7E85h/7E86h` 80 vezes cada, embora os 120 bytes
+de `7E16h` sejam idênticos nas duas ROMs. Emparelhando as 80 entradas em
+`3830h` com a escrita em `384Ch`, `CAh` superior recebe valores 0..3
+em G e 0..5 em S88. Controles sem P4.6
+baixo ou sem o primeiro degrau não leem a matriz. Isso estabelece a
+seleção digital e a dependência de estado anterior no emulador;
+a ligação elétrica de P4.6 e a função física de `CAh` continuam abertas.
+Capturas: `7e16_double_tps_step_no_ram78_uca/`,
+`7e16_double_tps_step_s88/`, `7e16_double_tps_step_p46_default/` e
+`7e16_single_tps_step_p46_low/` em `build/ma17-analysis/variants/`.
+O [grafo do ramo 36DEh→3701h](../build/ma17-analysis/variants/7e16_reached_gate.svg)
+e seu [relatório de PCs](../build/ma17-analysis/variants/7e16_reached_gate.json)
+marcam as instruções observadas nessa passagem.
+Teste: `Matrix7e16ReachabilityTests.test_double_tps_step_selects_same_table_at_different_cells`.
+Reproduzir com `python3 -m unittest tests.test_ma17_matrix_7e16` após
+compilar `build/emu8051-tty`.
+
+O índice desse lookup é verificável nas instruções `380Dh..382Fh`:
+`R5 = 15 × (RAM[68h] & 0Fh) + (RAM_superior[BCh] & 0Fh)`, com passo
+`0Fh` lido em `7571h`. Nas 80 entradas nativas de `3830h`, G tem
+`68h=B5h`, `BCh=05h`, `R5=50h`; S88 tem `68h=86h`, `BCh=96h`,
+`R5=60h`. Fornecer só o byte S88 `7580h=25h` às leituras `MOVC` da
+ROM G leva `BCh` a `96h`, mas `68h=C5h` e `R5=51h`, deslocando apenas
+uma coluna. Fornecer também os 225 bytes de `7581h` da ROM S88 leva
+`68h=86h` e `R5=60h`. Com ambas as doações, os 80 pares consecutivos
+`(BCh,68h,R5,R1,CAh)` de G coincidem exatamente com S88, sem alterar
+nenhuma das duas ROMs. Isso isola o efeito dessas calibrações na seleção
+digital observada; não identifica a escala física da matriz `7E16h`.
+Capturas: `7e16_index_trace_{g,s88}/`, `7e16_index_g_7580s88/` e
+`7e16_index_g_7580_7581_donor_s88/` em `build/ma17-analysis/variants/`.
+
+O elo intermediário aparece em `330Dh..332Fh`: o código segmenta a RAM
+superior `AEh` com o cabeçalho `7B28h` e grava o índice compactado em
+`68h`. Após o segundo degrau, as 68 amostras estáveis de `AEh` em
+`330Dh` são `43h` em G, `44h` em G com apenas `7580h=25h`, e `4Ch`
+tanto em G com as duas doações quanto em S88. Em `3830h`, os valores
+correspondentes de `68h` são `B5h`, `C5h` e `86h`. O caso com apenas
+`7580h` faz uma entrada adicional em `3830h` sem outro grupo completo
+de leituras; o teste compara seus 80 grupos `MOVC` concluídos.
+Capturas: `7e16_ae_{g,g7580,gboth,s88}/`.
+
+O primeiro consumidor estático de `CAh` superior é `39B2h`: o código
+compara esse byte com `B`, conserva o maior, compara em seguida `C9h`
+e `CBh` superiores e combina o resultado com `R7` e `R2` antes de
+gravar o novo `R2` em `39F4h`. Em `3A48h`, `CAh` também participa da
+guarda que escolhe a consulta em `7300h`. Ambos os PCs aparecem na
+cobertura dos ensaios de `7E16h`. Instrumentação observacional em
+`39B2h`, após tick 1.400.000, registrou 79 passagens em cada ROM: G
+apresentou `CAh=00h..03h` e S88 `00h..05h`, enquanto `C8h` superior e
+`B` permaneceram `05h`. Portanto, `CAh` não vence o máximo nessa janela.
+Nas 78 passagens completas por `39F4h`, o trio `(R2,B,A)` ficou
+`(97h,05h,9Ch)` em G e `(99h,05h,9Eh)` em S88. `3A48h` foi alcançado
+somente duas vezes após o segundo degrau, ambas com `CAh=00h`. Assim,
+os valores da matriz são consumidos, mas seu efeito em `R2` está
+mascarado nesse estado; a diferença de `R2` entre ROMs tem outra origem
+ainda não isolada. As larguras medianas de P5.0 (G 1767, S88 1765,
+G com doação de `7580h`/`7581h` 1785 ticks) e CC3 (6553, 7312 e 7312)
+não comprovam efeito físico de `7E16h`. Capturas:
+`7e16_ca_consumer_{g,s88}/`; teste:
+`Matrix7e16ReachabilityTests.test_double_tps_step_selects_same_table_at_different_cells`.
+Um teste isolado com os opcodes originais de `39B2h..39F4h`,
+`R2=10h`, `R7=7Fh` e `B=05h` confirma o máximo: `CAh=03h/05h`
+produz `R2=15h`, enquanto `CAh=08h` produz `R2=18h`. Isso demonstra
+que o consumidor pode transmitir `CAh` quando ela supera os demais
+limites, mas não estabelece que tal estado ocorra na partida completa.
+O homólogo A em `39E0h..3A22h`, com os mesmos registradores e os valores
+`CAh=17h/31h` do ensaio isolado de `7E16h`, produz `R2=27h/41h`.
+O runner de partida completa ainda rejeita A, pois seus opcodes antes
+de `7580h` diferem dos da ROM G e o perfil dinâmico dessa revisão não
+foi validado. Teste:
+`Sab80C517.FiatAndAlcoholUpperCaConsumerUsesMaximumBeforeUpdatingR2`.
+
+Para testar especificamente a recalibração G→A em `7E16h`, o runner
+agora aceita sua doação pelos 120 bytes da ROM A, com ponteiro `70CEh`
+verificado nas duas imagens. Na partida completa **do código G** sob o
+mesmo degrau duplo de TPS, 80 leituras da matriz preservaram os endereços
+e bytes brutos da ROM G no log, mas o retorno efetivo da interpolação em
+`R3` mudou de `38h` para `52h`. Das 80 escritas de `CAh` superior,
+54 mudaram: a distribuição G `00h:37, 01h:18, 02h:19, 03h:6` tornou-se
+`00h:26, 01h:11, 02h:12, 03h:12, 04h:15, 05h:4`.
+Após tick 1.400.000, `B=05h` ainda limita todas as leituras em `39B2h`;
+as 78 passagens completas por `39F4h` mantêm `(R2,B,A)=(97h,05h,9Ch)`
+nos dois casos. As medianas modeladas de P5.0/P5.1 e CC3 permanecem
+iguais entre controle e doação; isso não declara igualdade de todas as
+bordas ou histogramas. A ROM G ativa e a ROM A doadora conservam seus
+hashes originais. Capturas: `7e16_g_matched/`, `7e16_a_donor_g/`;
+teste: `test_alcohol_matrix_donor_changes_upper_ca_but_is_clamped`.
+
+Variar apenas ADC2 bruto de 100 para 200, preservando os dois degraus de
+TPS e P4.6 baixo experimental, manteve as 320 leituras de `7E16h`.
+Agora `B=00h` nas 78 passagens por `39B2h` após tick 1.400.000; `C9h`
+e `CBh` superiores também são zero. As 54 alterações de `CAh` entre G
+e G←A alcançam o cálculo seguinte: em `39F4h`, `R2` de entrada é `9Ch`
+e `A=9Ch+CAh`, com `CAh` em `00h..03h` no controle e `00h..05h` na
+doação. A mediana de P5.1 baixo muda **1775→1784 ticks**; P5.0
+permanece 1782 e CC3 6373 ticks nas duas execuções. É um efeito
+reproduzível de uma única tabela doadora sobre o pino **modelado** P5.1,
+sem comprovação da ligação física ou da mediação específica de `R2`
+nesse pino. ADC2=50 forneceu o controle oposto: `B=0Bh` e `CAh≤05h`
+continuaram mascarados. Capturas: `7e16_g_adc2_200/`,
+`7e16_a_donor_adc2_{50,200}/`; teste:
+`test_alcohol_matrix_reaches_r2_when_adc2_lowers_clamp`.
+
+Uma segunda intervenção cruza controle/doação com `CAh` superior zerado
+somente no PC `39B2h`, imediatamente antes de `MOV R1,#CAh`/`MOV A,@R1`.
+As duas execuções ainda completam 80 leituras da matriz e as 54
+diferenças nas escritas prévias de `CAh`; após o zero, `39B2h` vê `CAh=0`
+e `39F4h` calcula sempre `A=9Ch`. Os relatórios de *output latches*,
+CC3, fase CC3/P5, alterações de RAM de motor e cobertura de PC ficam
+iguais entre G e G←A; P5.0/P5.1 baixos têm mediana 1767 ticks nas duas.
+Isso estabelece que a diferença modelada de P5.1 depende da passagem
+por `CAh` superior nesse ponto. A intervenção não distingue qual ramo
+posterior de `CAh` determina cada borda. Capturas:
+`7e16_{g,a_donor}_adc2_200_ca_zero/`; o mesmo teste automatizado cobre
+as quatro combinações de tabela e intervenção.
+
+O próximo elo está em `3AE4h..3B06h`: `R2` é limitado pelas constantes
+de `7200h`/RAM superior `8Ch` e gravado em `69h` em `3B06h`. Com ADC2=200,
+`MA17_TRACE_RAM69=1` registrou 78 passagens após tick 1.400.000;
+`A`/`8Ch` na escrita cobrem `9Ch..9Fh` no controle e `9Ch..A1h` com a
+tabela A. As escritas de `69h` observadas também chegam a `9Fh` versus
+`A1h`, embora ambas terminem em `9Ch`; a comparação só do estado final
+perderia esse efeito transitório. O serviço de Timer 1 lê `69h` em
+`043Bh` e calcula as recargas `34h:35h`.
+
+Um segundo cruzamento fixa `69h=9Ch` **apenas nessa leitura de Timer 1**,
+sem impedir as escritas anteriores em `3B06h` nem as leituras de
+`7E16h`. Controle e G←A passam a ter as mesmas escritas observadas de
+`34h:35h` e medianas P5.0/P5.1 de 1767 ticks; CC3 continua em 6373.
+As sequências de alterações de `69h` e alguns eventos individuais de
+P5.1 ainda diferem. Portanto, `69h` nessa leitura medeia a diferença
+**da mediana**, sem demonstrar igualdade de todas as bordas. Capturas:
+`7e16_{g,a_donor}_adc2_200_ram69_path/` e
+`7e16_{g,a_donor}_adc2_200_ram69_9c/`; o teste automatizado cobre os
+seis braços de doação, zero de `CAh` e leitura fixa de `69h`.
+
+O limite que mascara `CAh` pode ser rastreado até ADC2, mas há duas
+fronteiras distintas. O boot G grava ADC2 bruto 50/100/200 em `62h`
+como `32h/64h/C8h`; `3C65h..3C73h` usa `62h` para consultar `716Ch`
+e escrever RAM superior `CCh`. O consumidor `397Dh..399Ch` chega a
+`C8h=0Bh/05h/00h` nesses três pontos, e `39B2h` usa esse valor como
+limite `B`. A varredura bruta 100/108/112/116/118/120/122/123/124
+produziu `CCh=C8h` de `05/03/03/02/01/01/01/00/00h` após o segundo
+degrau. A transição `122→123` usa as **mesmas** células `716Fh=86h` e
+`7170h=80h`, com `2Fh.2` ainda ligado. A tabela A em `7E16h` supera
+o limite em 25→43 passagens no ponto 122 e em 43→54 no ponto 123
+(controle→doação); P5.1 mediano é 1802,5→1793,5 e 1784→1784 ticks,
+respectivamente. CC3 permanece 5969 nos quatro braços. A ausência de
+diferença na última mediana não significa ausência de efeito interno.
+
+O limite `122→123` também decorre diretamente dos opcodes: `5314h`
+aplica `SWAP A; RR A`, separa `R5=A&07h` e `R6=A&F8h`, e `532Fh`
+interpola bytes adjacentes com a parte alta do produto com sinal.
+Para ADC2 `7Ah`/`7Bh`, `R5=3` e `R6=D0h`/`D8h`; os bytes
+`716Fh:7170h=86h:80h` têm diferença `−6`. Assim,
+`86h+floor(−6×208/256)=81h` e
+`86h+floor(−6×216/256)=80h`; `CPL ACC.7` em `3C6Fh`
+grava `CCh=01h`/`00h`. O teste compara essa conta derivada dos bytes
+originais com a RAM superior observada, sem atribuir graus Celsius à
+fronteira.
+
+Outra fronteira ocorre em `47F1h`: `ROM[72BDh]=7Ch` é comparado com
+`62h`. Em ADC2=124, `22h.6=0` e o carry em `3D0Ch` permanece 1; em
+ADC2=125, `22h.6=1` habilita a consulta a `ROM[721Dh]=21h` contra
+`63h=50h`, e o carry em `3D0Ch` fica 0. `C8h` já é zero nos **dois**
+lados; portanto essa troca de flag não explica a abertura inicial do
+limite. O scanner classifica `RAM[62h]` como IAT e sua fórmula atual
+estima 20,75 °C em bruto 122 e 20,36 °C em 123. Essa é uma pista do
+scanner baseada em NTC ajustado, não uma calibração física confirmada
+do canal ADC2 ou uma temperatura de transição validada na ECU.
+Referência: `Monomotronic-MA1.7-Scanner/src/ECUSerial/SensorDecoders.cpp`;
+capturas: `7e16_adc2_cc_sweep_*/`, `7e16_adc2_cc_donor_{122,123}/`,
+`7e16_adc2_threshold_{124,125}/`; testes:
+`tests.test_ma17_adc2_716c_gate`.
 
 Na ROM G, `3CB1h..3CB7h` forma `PSW.5` a partir do carry de
 `R2−IRAM[6Fh]`, mascarado por `2Eh.6` nesse percurso. O único escritor
@@ -1105,6 +3299,33 @@ inícios baixos por pino. O opcode em `33A4h` escreve RAM superior
 `A4h`, mas `33A5h` troca `R1` para `92h`; portanto, a leitura e possível
 decremento em `33BCh` atuam em RAM superior `92h`, não em `A4h`.
 Ainda não foi demonstrado que `A4h` medeie a mudança nos latches.
+O rastreamento opcional `MA17_TRACE_INDIRECT_IRAM_ADDRESS=A4` agora cobre
+os opcodes que leem `@R0/@R1` e `POP/RET/RETI`, sem alterar os operandos.
+Com G, ADC0/2/3/6/7=`180/100/80/247/63`, 1.000 RPM e 2,4 milhões de
+ticks, não registrou nenhuma leitura de upper `A4h`, tanto no controle
+(`A4h=9Ah`, P5.0 baixo=1.861 ticks) quanto com a matriz S88 doada
+(`A4h=A2h`, P5.0 baixo=1.921 ticks). O controle positivo no mesmo estado
+registrou 458 leituras de upper `92h` em 262 classes, incluindo
+`33BCh`/`E7h`.
+Assim, `A4h` não medeia a diferença P5 observada **via leitura pela CPU
+neste estado emulado**; pode ser cópia de resultado para outro uso ou ter
+consumidores em estados ainda não exercitados. Capturas:
+`build/ma17-analysis/variants/7cae_{a4_reads_g,a4_reads_g_donor_s88,indirect_read_control_92}/`.
+Regressão: `tests.test_ma17_indirect_iram_trace`.
+Uma varredura adicional, sempre com a ROM G original e sem K-Line,
+também registrou **zero leituras de `A4h`** nas seguintes janelas:
+
+| Estado digital | Ticks | Último `A4h` | P5.0 baixo, ticks |
+| --- | ---: | ---: | ---: |
+| 750 RPM, ADC0/2/3/6=`180/100/80/247` | 2.400.000 | `9Ah` | 1.860 |
+| 1.500 RPM, mesmos ADCs | 2.400.000 | `95h` | 1.767 |
+| 2.000 RPM, ADC0/2/3/5/6=`180/40/40/40/247` | 2.400.000 | `86h` | 1.805 |
+| 3.000 RPM, mesmos ADCs | 2.400.000 | `74h` | 1.794 |
+| 1.000 RPM, ADC0/2/3/5/6=`40/100/20/40/95` | 2.400.000 e 12.000.000 | `97h` | 1.861 |
+
+Todos usam ADC7=`63`; capturas `build/ma17-analysis/variants/a4_read_sweep_*/`.
+O resultado restringe a busca de consumidores de `A4h`, mas não prova
+ausência em todos os estados, nem atribui função física a essa RAM.
 Os SHA-256 das ROMs ativas continuaram os originais;
 o mecanismo substitui somente o valor retornado pela leitura, com hash
 separado da ROM doadora. As ROMs nativas G/S88 consultam endereços de
@@ -1207,6 +3428,52 @@ nesse caminho. As capturas estão em
 `build/ma17-analysis/variants/tps_7569_boundary_adc6_{215,216,217,218}/`.
 A plausibilidade elétrica dos pares TPS
 e a frequência dessa seleção numa ECU física permanecem abertas.
+
+Uma grade G de 25 pares ADC0/6, com 1.000 RPM, ADC2/3/7=`140/34/63`
+e quatro milhões de ticks por par, mediu o `MOVC` efetivo e o último
+`IRAM[6Fh]`. Em cinco células, todas com ADC6=235, o firmware leu o
+cabeçalho alternativo `7569h` 385 vezes. Em nove células, leu
+`ROM[72A1h]=34h` em `PC116Fh` também 385 vezes e terminou com
+`6Fh=27h`; nas outras 11 células selecionou somente `755Ch` após a
+partida. O [mapa de ADC0/6 e 6Fh](../build/ma17-analysis/variants/tps_surface_current/tps_surface.png)
+mostra os bytes brutos e os bancos; JSON e 25 logs estão em
+`build/ma17-analysis/variants/tps_surface_current/`.
+Com ADC0=160 ou 200, a borda ADC6=`223→224` mudou `RAM[28h]` de
+`06h` para `00h` no probe de `115Fh`, `R4` de `34h` no ramo normal
+para `E0h` antes do alternativo e as leituras `755Ch/7569h` de
+`386/0` para `1/385`. No ramo alternativo, `11A8h..11B6h` calculou
+`max(0,min(255,R2+13)-R3)`; os cinco casos ADC6=235 tiveram
+`R3=1Ah`, `R2=ADC0` e `6Fh=ADC0−13`. A
+[imagem da borda](../build/ma17-analysis/variants/tps_surface_boundary_current/tps_surface.png)
+e os quatro logs preservam as duas linhas ADC0=160/200.
+O fallback é causal no estado G ADC0/6=`160/200`: fornecer `34h`
+original, `44h` ou `24h` apenas ao retorno `MOVC 116Fh/72A1h`
+produziu `6Fh=27h/37h/17h`, mantendo 386 leituras de `755Ch` e a
+ROM intacta. Capturas `tps_clamp_{native,sham,plus16,minus16}/`;
+regressão `TpsClampTests.test_single_movc_return_controls_fallback_iram6f`.
+Esses limites são digitais; as posições físicas das duas pistas TPS e
+o comportamento da família A ainda não estão validados.
+No mesmo perfil Fiat, a ROM S88 original reproduziu **25/25** bytes
+finais de `6Fh`, contagens exatas dos cabeçalhos `755Ch/7569h` e
+amostras aritméticas do ramo alternativo da grade G. Os quatro pontos
+ADC0=160/200 e ADC6=223/224 também coincidiram, inclusive a fronteira
+`386/0→1/385` leituras. A substituição pontual de `72A1h` repetiu em
+S88 os quatro resultados G `27h/27h/37h/17h`, com ROMs originais
+intactas. Reproduza com
+`python3 tools/audit_ma17_tps_surface.py --variant S88`; artefatos
+`tps_surface_s88_{current,boundary_current}/`
+e `tps_clamp_s88_{native,sham,plus16,minus16}/`. A regressão
+`TpsClampTests.test_g_and_s88_share_high_adc0_segment_boundary` cobre
+dois pares de borda nas duas ROMs. A equivalência vale para esses
+estímulos digitais e para o modelo de hardware Fiat testado.
+`python3 tools/compare_ma17_tps_surfaces.py` valida que os estímulos e
+o hash do emulador coincidem e registra **zero diferenças** nos 25
+pares em `tps_surface_g_s88_comparison.json`; a comparação dos quatro
+pontos de borda está em `tps_surface_boundary_g_s88_comparison.json`.
+Separadamente, `Sab80C517.SixRomTpsFallbackMovcReadsOriginalByte`
+executa `116Dh..1170h` dos seis binários originais com `DPTR=7200h`:
+todos leem `ROM[72A1h]=34h` e deixam `R4=34h` em `1171h`. Isso confirma
+o leitor local da família A, sem validar seu boot no perfil Fiat.
 Na borda `216→217`, o `MOVC` da matriz em `532Fh` leu a mesma
 célula `761Ah=AEh`: com `216`, por `DPTR=7581h` e `A=99h`; com
 `217`, por `DPTR=7617h` e `A=03h`. Em `217`, o interpolador também
@@ -1281,6 +3548,31 @@ sem forçar o índice: `R5=36` em A e `38` em S37. Ambas selecionam
 `704Ah→7662h`, e `13C6h..13CBh` retorna `R3=1Ch` em A e `31h`
 em S37. As tabelas do primeiro eixo são iguais até `757Fh`; o último
 byte em `7580h` vale `10h`/`24h` e acompanha a diferença de índice.
+O produtor A `1386h` usa `7046h→7570h`, cujo cabeçalho `47h` escolhe
+o byte digital `RAM47h`, e grava o segmento/fração em upper IRAM `BCh`.
+Na mesma CPU do ensaio, `RAM47h=55h` produziu nibble baixo `BCh=6/8`
+em A/S37; repetir somente esse produtor com `47h=28h` deu `3/5`.
+O teste varreu depois os **256 valores digitais** de `RAM47h` em ambas
+as ROMs: a coluna observada em `BCh&0Fh` coincidiu sempre com o maior
+segmento cujo início não excede `47h`. Os inícios brutos, derivados dos
+incrementos originais de `7570h`, são:
+
+| ROM | Inícios de coluna para índices 0–14 (`RAM47h` bruto) |
+| --- | --- |
+| A/A+ e G | `0,25,32,40,50,60,72,88,104,120,140,160,186,212,240` |
+| S88 | `0,4,11,19,29,39,51,67,83,99,119,139,165,191,219` |
+| S37/S36 | `0,5,12,20,30,40,52,68,84,100,120,140,166,192,220` |
+
+A verificação por execução cobre A e S37; as demais linhas foram
+calculadas diretamente das ROMs e conferidas pelo teste do gerador de
+gráficos. Isso liga digitalmente `47h` ao índice consumido em `3329h`,
+sem fixar a escala de RPM da revisão A em unidades físicas.
+O mesmo teste mantém `2Bh.7` produzido nessa CPU após `13CBh` e,
+preparando a guarda `22h.1` do leitor separado em `3384h`, executa seus
+opcodes originais. A e S37 chegam a `53F2h` com `DPTR=7EACh`, índice
+`4` e publicam `99h` em `R2` e upper IRAM `A4h`. Isso conecta o
+produtor do flag ao leitor da curva constante em uma sequência controlada;
+o salto entre blocos e os contadores adiantados não reproduzem um boot.
 O resultado combina a diferença de eixo e os bytes da matriz;
 não simula o tempo necessário para os contadores nem comprova uma
 transição natural em boot completo, o valor natural de `6Fh=14h` ou
@@ -1360,6 +3652,16 @@ a escala física, eventual sinal e motivo da transformação continuam
 desconhecidos. `matrix_deltas.json` contém as grades e distribuições
 completas para as seis imagens.
 
+Os mapas [7662h, G/S88](../build/ma17-analysis/variants/matrix_plots/matrix_7662_g_vs_s88.png)
+e [7743h, G/S88](../build/ma17-analysis/variants/matrix_plots/matrix_7743_g_vs_s88.png)
+permitem verificar a silhueta por linha. A relação exata em cada uma é:
+as células de índice 0–13 ficam iguais às de G; a partir do índice 14,
+`S88[7662h+i]=min(255,G[7662h+i]+26)` e
+`S88[7743h+i]=G[7743h+i]+8`. O teste automatizado confere os 225 bytes
+de cada matriz. O [contraste interno S88 7662h/7743h](../build/ma17-analysis/variants/matrix_plots/matrix_7662_s88_vs_7743_s88.png)
+mostra que diferenças preexistentes entre as duas tabelas de G também
+contribuem; a distância entre os dois estados S88 não é constante.
+
 ### Seleção experimental das três matrizes em `7581h..7823h`
 
 Nas 18 execuções corrigidas G/S88 de RPM, ADC e TPS, as 230–231 consultas
@@ -1372,6 +3674,26 @@ consultas, todas com seletor `00h`, e nenhuma mudança de `57h`.
 Outro ensaio enviou o estímulo inicial de 5 baud pela K-Line durante
 seis segundos; nas 581 consultas observadas, o seletor também ficou
 em zero. Esse ensaio não enviou requisições posteriores do scanner.
+Um par novo com o executável SHA-256 `1c0b13f3…28804` executou G e S88
+por 12.000.000 ticks cada (cerca de 12,12 s nominais no perfil Fiat),
+sem sessão K-Line nem overrides, a 1.000 RPM e ADC0..7 bruto
+`100/130/100/20/90/40/155/63`. O rastreador de alterações da IRAM
+inferior não registrou transição de `57h` em nenhuma das duas ROMs.
+No `MOVC @A+DPTR`, G fez 2.374 leituras com base `7B46h` e S88 fez
+4.666; não houve leitura com base `7BBEh`, `7C36h`, `7CAEh`, `7D26h`
+ou `7D9Eh` nesse par. As bases distinguem seleção direta de uma leitura
+que cruza a borda de outra matriz. Os relatórios em
+`build/ma17-analysis/variants/iram57_long_current_{g,s88}/` guardam
+os hashes das ROMs, do executável e os 990.000 ticks/s. A ausência de
+seleção vale para esse estado emulado e não demonstra que os modos 1/2
+sejam inacessíveis em outros estados ou por diagnóstico.
+Para reproduzir, fixe `MA17_ADC_CH0..7` nos oito valores acima e execute
+`python3 tools/trace_ma17.py --no-kline-inject --crank-immediate --rpm 1000
+--stop-ticks 12000000 --seconds 60 --trace-movc --output-dir
+build/ma17-analysis/variants/iram57_long_current_g`. Repita com
+`--firmware 'firmwares_modificados_ma17_tipo/tipo 1.6 alcool27c256 SUN 8817.bin'`
+e o sufixo `_s88` no diretório de saída. O valor de `--seconds` limita
+o tempo de parede; a duração comparável é `--stop-ticks`.
 Nos seis binários, as ocorrências verificadas do opcode direto
 `MOV 57h,#00h` estão em `0B0Fh` e `3B94h` (G/S88) ou `3BC2h`
 (A/A+/S37/S36). Nenhuma ROM contém `MOV 57h,#01h/#02h`. Todas contêm
@@ -1383,6 +3705,19 @@ inatingíveis. `CompareVariantsTests.test_all_six_roms_keep_ram57_direct_writers
 verifica os bytes e endereços das seis imagens. Capturas:
 `build/ma17-analysis/variants/ram57_long_baseline/` e
 `build/ma17-analysis/variants/ram57_kline_probe/`.
+
+Uma grade adicional sem overrides e sem K-Line combinou G/S88,
+1.000/3.000 RPM, ADC0/6 `40/95` ou `180/247`, ADC3 `20/232`,
+ADC2=160 e ADC7=63, por 2,4 milhões de ticks em cada um dos 16 casos.
+Todos alcançaram `1378h`, sem transição de `RAM[57h]`. O comando
+`python3 tools/audit_ma17_ram57_grid.py` reproduz a grade e grava
+`build/ma17-analysis/variants/ram57_grid_current/ram57_grid.json` mais
+um log por caso. O JSON fixa hashes das ROMs e do executável, parâmetros
+e duração; o executável medido foi
+`c4565e7707815c8afcdb47b9353f8355ca283f8355cf2417d5267bcdc7f0f9ab`.
+São estímulos digitais no perfil Fiat, sem validação física das pistas
+TPS nem cobertura da família A. A ausência de mudança não exclui seleção
+por outros estados ou comandos de diagnóstico.
 
 O estímulo opcional `MA17_OVERRIDE_RAM57=0/1/2` altera esse byte somente
 antes de `1378h` em todos os estados de `RAM[47h]`, preservando os bytes
@@ -1470,7 +3805,9 @@ Esses valores não devem ser misturados com a grade ADC corrigida.
 
 `S37` e `S36` diferem em cinco bytes: `0x004C`, `0x004E`, `0x0050`,
 `0x0054` e `0x0055`. Em `S37`, `0x0053..0x0055` contém `02 00 B0`
-(`LJMP 00B0h`); em `S36`, contém `02 AA 0D` (`LJMP AA0Dh`). O destino
+(`LJMP 00B0h`); em `S36`, contém `02 AA 0D` (`LJMP AA0Dh`). Todo o
+conteúdo `6E00h..7FFFh` é idêntico entre essas duas imagens; portanto,
+não há diferença de bytes de calibração entre S37 e S36. O destino
 `AA0Dh` está além de 32 KiB. Esse vetor corresponde a `IEX3` no mapa C517;
 executabilidade e consequência em hardware dependem da variante e do
 estado de habilitação. Três bytes `FF` próximos também mudaram. Tratar `S36`
@@ -1481,7 +3818,28 @@ não prova que a edição visasse um checksum. Se o pino A15 da EPROM de
 32 KiB não for decodificado, `AA0Dh` espelha `2A0Dh`; nessa imagem,
 `2A0Dh` é o **segundo byte** da instrução que começa em `2A0Ch`
 (`30 38 04`, `JNB`). O comportamento no hardware real depende da
-ligação da EPROM e da habilitação de `IEX3`; não foi ensaiado.
+ligação da EPROM e da habilitação de `IEX3`. O teste
+de round-trip atual classifica 22.282 bytes como código na S36 por
+entrada natural, contra 23.615 na S37. Com `--entry 0x00B0` adicional,
+a S36 também classifica 23.615 bytes como código e remonta os mesmos
+32.768 bytes com SHA-256 idêntico; 1.333 bytes do serviço e de rotinas
+alcançadas por ele ficam disponíveis para inspeção comparativa. O
+vetor S36 continua `LJMP AA0Dh` nos dois assemblies. A entrada manual
+**não demonstra** que esse serviço seja alcançável na S36 real. Reproduza
+com `python3 tools/roundtrip_8051.py 'firmwares_modificados_ma17_tipo/tipo 1.6 alcool27c256 SUN 36fd.bin' --entry 0x00B0`;
+regressão: `test_s36_shared_iex3_code_can_be_inspected_without_changing_vector`.
+O teste
+`Sab80C517.Sun36Iex3VectorLeaves32KiBRom` arma `EA`, `EX3`,
+`IP1.2` (como no boot observado) e `IRCON.IEX3` e executa a interrupção
+nas duas ROMs originais. O PC chega a `00B0h` em S37 e `AA0Dh` em S36;
+no modelo do emulador, que mascara endereços de código com `7FFFh`,
+o próximo byte de S36 seria `ROM[2A0Dh]=38h`, operando de uma instrução
+iniciada em `2A0Ch`. Esse ensaio demonstra a divergência do vetor no
+modelo de ROM de 32 KiB, não o comportamento elétrico da placa.
+O teste usa a prioridade 2 do boot: o emulador atual não seleciona
+`IEX3` com prioridade 0 porque inicia a prioridade candidata em zero
+e exige `pri > highest_priority` nesse ramo de `core.c`. Essa limitação
+não altera o ensaio acima, mas restringe simulações com `IP1.2=IP0.2=0`.
 O código comum de S37/S36 em `07B6h..07E2h` contém `SETB IEN1.2` em
 `07E1h`, habilitando `EX3` depois de uma condição de estado. Assim, o
 vetor alterado pode ser alcançado por uma interrupção habilitada; a
@@ -2058,6 +4416,236 @@ duas ROMs, confere o SHA-256 carregado, os dois bytes de RAM e a mediana
 de CC3. Assim, ele cobre a cadeia digital ADC → firmware → temporizador;
 CC3 continua sendo uma saída do modelo, sem validação elétrica na ECU.
 
+Um sweep temporal adicional na **ROM G original**, com 1.000 RPM,
+`ADC2=400` e `ADC7=63`, manteve `ADC3=160` até o tick 1.200.000 e
+aplicou `180`, `200`, `220`, `200` nos ticks 1.200.000, 1.700.000,
+2.200.000 e 2.700.000. O controle manteve `ADC3=160` durante os mesmos
+3.200.000 ticks. Ambos usaram `--trace-movc --no-kline-inject
+--crank-immediate`, a mesma ROM SHA-256 `a3473435…f8e1f` e 203 bordas
+modeladas de CC3. `RAM[63h]` passou por `28h→2Dh→32h→37h→32h`; no
+controle permaneceu em `28h`. Cada mediana abaixo usa pulsos cujo início
+baixo caiu dentro da janela, incluindo eventuais transientes:
+
+| Janela de ticks | Pulsos | CC3 baixo sweep, ticks | CC3 baixo controle, ticks |
+| --- | ---: | ---: | ---: |
+| 0–1.200.000 | 34 | 4765 | 4765 |
+| 1.200.000–1.700.000 | 17 | 4900 | 4765 |
+| 1.700.000–2.200.000 | 17 | 4900 | 4764 |
+| 2.200.000–2.700.000 | 17 | 4900 | 4696 |
+| 2.700.000–3.200.000 | 16 | 4833 | 4697 |
+
+O código do harness conta um tick por ciclo de máquina; no perfil Fiat
+de 11,88 MHz, a conversão nominal é `990 ticks/ms`. Assim, 4900 ticks
+equivalem a aproximadamente 4,95 ms **nesse modelo**. O controle também
+muda após 2,2 milhões de ticks, portanto a diferença entre séries deve
+ser analisada por janela, sem atribuir toda a evolução ao ADC3.
+O datasheet do SAB80C517 especifica 12 períodos do oscilador por ciclo
+de máquina e instruções de 1, 2 ou 4 ciclos. Logo, 11,88 MHz equivalem
+a 990.000 ciclos de máquina por segundo, mas não a uma taxa fixa de
+990.000 instruções por segundo. Sweeps podem executar mais lentamente
+no computador: compare eventos e estímulos em ticks emulados, aplicando
+a conversão de clock apenas para interpretar o tempo físico nominal.
+A validade dessa conversão ainda depende da fidelidade dos periféricos e
+da confirmação do cristal para a revisão ensaiada.
+
+No perfil Fiat, `tempo_s = ticks / 990000` e
+`largura_ms = largura_ticks / 990`. A 1.000 RPM, uma posição da roda
+60−2 dura nominalmente 990 ticks e uma volta, 59.400 ticks. Use
+`--stop-ticks` para fixar a duração simulada; `--seconds` é apenas o
+limite de espera do processo nesse modo. A taxa `[PERF]` mede o ritmo
+do computador, sem mudar o RPM dos estímulos agendados em ticks. Esta
+equivalência pressupõe sweeps sem entrada externa via PTY agendada em
+tempo real. O ADC emulado ainda retorna o resultado sem a latência de
+conversão indicada no datasheet; a normalização não corrige essa
+limitação temporal do modelo.
+
+A captura agregada registrou 195.573 leituras MOVC no sweep e 195.829 no controle,
+com 13 endereços ROM lidos apenas no sweep: `7226h`, `7266h`, `7451h`,
+`74ABh`, `74F1h`, `7523h`, `752Dh`, `754Bh`, `7555h`, `79B3h`,
+`79BDh`, `79D1h` e `7B0Dh`. São diferenças de cobertura nesse ensaio,
+não prova de causalidade individual. Relatórios e logs:
+`build/ma17-analysis/variants/coolant_happy_path_{sweep,control}_g/`.
+Uma repetição com `--movc-bucket-ticks 100000` preservou exatamente os
+totais globais: 195.573/195.829 leituras no sweep/controle. Antes do
+primeiro degrau, ambos tiveram as mesmas 73.588 leituras e os mesmos 538
+endereços distintos. Dos 13 endereços exclusivos do sweep, dez aparecem
+pela primeira vez na janela 1.200.000–1.300.000; `7B0Dh` aparece em
+1.300.000–1.400.000, `7266h` em 1.700.000–1.800.000 e `79D1h` em
+2.000.000–2.100.000. As contagens por endereço e janela estão em
+`build/ma17-analysis/variants/coolant_happy_path_{sweep,control}_bucket_g/`.
+Os valores ADC são estímulos digitais plausíveis para exercitar o código;
+a correspondência com graus Celsius e a ligação física de CC3 seguem
+sem validação. Repetir o sweep nas variantes exige verificar o perfil de
+clock e periféricos de cada revisão.
+
+Para reproduzir, execute o mesmo comando duas vezes, retirando apenas a
+variável `MA17_ADC10_STEP_CH3` no controle:
+
+```sh
+MA17_ADC10_CH2=400 MA17_ADC10_CH3=160 MA17_ADC_CH7=63 \
+MA17_ADC10_STEP_CH3=1200000:180,1700000:200,2200000:220,2700000:200 \
+python3 tools/trace_ma17.py --firmware FiatTipo_MA17_dump_27c256.bin \
+  --trace-movc --movc-bucket-ticks 100000 \
+  --no-kline-inject --crank-immediate --rpm 1000 \
+  --stop-ticks 3200000 --seconds 60 \
+  --output-dir build/ma17-analysis/variants/coolant_happy_path_sweep_bucket_g
+```
+
+O gráfico [ADC3 × CC3](../build/ma17-analysis/variants/coolant_happy_path_adc3_cc3.png)
+mostra os pulsos individuais, inclusive os três pulsos de partida mais
+longos e a queda temporal presente também no controle. Reproduza PNG/SVG com
+`MPLCONFIGDIR=build/ma17-analysis/matplotlib /usr/bin/python3
+tools/plot_ma17_temporal_sweep.py` seguido dos diretórios de sweep e controle
+e `--output-prefix build/ma17-analysis/variants/coolant_happy_path_adc3_cc3`.
+O gráfico usa 990.000 ticks/s apenas para o perfil Fiat; a variante Renault
+exige perfil próprio antes de qualquer conversão temporal.
+
+No mesmo sweep G, um contrafactual substituiu **apenas o resultado** de
+`MOVC` em `PC5333h/ROM7451h`: o byte original `33h` foi entregue ao
+firmware como `4Dh`, valor da célula homóloga na ROM A. A leitura ocorreu
+469 vezes, e o SHA-256 da ROM G continuou original. Após os quatro
+degraus, `RAM[4Dh]` foi `2Ah/2Bh/2Dh/2Bh` na execução nativa e
+`2Bh/30h/37h/30h` com a substituição. As **203 bordas de CC3**, com
+seus ticks e níveis, foram idênticas entre as duas execuções. Portanto,
+esta célula afeta o estado interno nesse cenário, mas não explica sozinha
+o aumento de CC3 visto no sweep. A função física de `4Dh` e efeitos em
+outros estados seguem abertos. Captura:
+`build/ma17-analysis/variants/coolant_happy_path_7451_a_cell_g/`;
+regressão: `test_coolant_sweep_buckets_follow_adc_steps_in_original_g`.
+Outras duas intervenções de célula única, sempre no `MOVC PC5333h`,
+usaram os bytes homólogos da ROM A: `7523h: 93h→B5h` e
+`752Dh: 80h→A2h`. No mesmo sweep, a primeira mudou `RAM[79h]` após
+os quatro degraus de `75h/79h/7Fh/79h` para `77h/7Fh/8Ch/7Fh`, mas
+preservou exatamente as 203 bordas de CC3. A segunda mudou
+`RAM[7Bh]` de `7Ah/7Bh/7Ch/7Bh` para `7Dh/82h/89h/82h`;
+cinco bordas diferiram entre −1 e +4 ticks e três larguras baixas
+diferiram apenas um tick. As cinco medianas de largura por janela
+permaneceram iguais. Esses contrastes comprovam os destinos internos
+das células e delimitam o efeito em CC3 **neste cenário**, sem excluir
+outros regimes como a liberação do TPS. Capturas:
+`build/ma17-analysis/variants/coolant_happy_path_{7523,752d}_a_cell_g/`.
+
+### Reprodução diferencial G → S88 no sweep de ADC3
+
+A S88 tem o mesmo código até `757Fh` e conserva os bytes G em
+`7451h/7523h/752Dh`. Com o mesmo perfil Fiat, RPM e degraus ADC3, as
+duas ROMs escreveram os mesmos valores observados em `RAM[63h]`, `4Dh`,
+`79h` e `7Bh`. Os 203 eventos modelados de CC3 mantiveram a mesma ordem
+de níveis; as larguras baixas diferiram no máximo um tick, mas só dez
+eventos tinham ticks exatamente iguais. Em 185 eventos, a S88 adiantou
+26–28 ticks. Quatro contrafactuais no G original isolaram constantes
+alteradas naturalmente lidas nesse cenário:
+
+| Resultado fornecido ao `MOVC` G | Eventos CC3 iguais à S88 | Estado adicional |
+| --- | ---: | --- |
+| Nenhum | 10/203 | Referência G |
+| `7580h: 10h→25h` | 198/203 | Restam diferenças de até dois ticks |
+| `7B45h: 05h→0Dh` | 10/203 | Deslocamento de fase permanece |
+| Ambos | 203/203 | Primeira escrita em upper `A4h` ainda 99h, S88 A1h |
+| Ambos + `7B46h/7B47h: 99h→A1h` | 203/203 | `A4h` e demais estados estruturados observados iguais |
+
+As duas primeiras células somadas também reproduziram a cobertura PC,
+as 195.052 leituras MOVC e todas as contagens por endereço/janela da S88.
+As duas células adicionais reproduziram as observações estruturadas de
+RAM, saídas e CC3. O trace MOVC bruto ainda registra os bytes **G** e a
+ROM G mantém seu SHA-256; há outros bytes S88 lidos e nenhuma equivalência
+global de firmware foi demonstrada. O ensaio identifica a contribuição
+digital de `7580h` para a fase e de `7B45h` para o resíduo neste estado;
+não identifica o atuador físico. Capturas:
+`build/ma17-analysis/variants/coolant_s88_*_donor_g/` e
+`coolant_happy_path_sweep_bucket_s88/`; regressão
+`test_s88_phase_and_upper_a4_split_across_four_original_movc_bytes`.
+O [gráfico das bordas CC3](../build/ma17-analysis/variants/coolant_s88_phase_factorial.png)
+mostra os deltas de tick das quatro intervenções contra a S88; a linha
+zero representa igualdade de fase no modelo. Reproduza PNG/SVG com:
+
+```sh
+MPLCONFIGDIR=build/ma17-analysis/matplotlib /usr/bin/python3 \
+  tools/plot_ma17_phase_factorial.py \
+  build/ma17-analysis/variants/coolant_happy_path_sweep_bucket_s88 \
+  --arm G=build/ma17-analysis/variants/coolant_happy_path_sweep_bucket_g \
+  --arm 7580h=build/ma17-analysis/variants/coolant_s88_7580_donor_g \
+  --arm 7B45h=build/ma17-analysis/variants/coolant_s88_7b45_donor_g \
+  --arm both=build/ma17-analysis/variants/coolant_s88_both_donor_g \
+  --output-prefix build/ma17-analysis/variants/coolant_s88_phase_factorial
+```
+
+Repetimos a intervenção com **1.500 RPM**, `ADC2=400`, `ADC7=63` e
+`ADC3=160→180→200→220→200` nos ticks 900.000, 1.300.000, 1.700.000 e
+2.100.000, até 2.400.000 ticks. G e S88 geraram 226 bordas CC3 cada,
+com os mesmos níveis em ordem. Diferentemente do deslocamento dominante
+perto de 27 ticks a 1.000 RPM, a G nativa já coincidiu com S88 em 215
+bordas; a maior divergência foi uma borda alta 136 ticks atrasada logo
+após o primeiro degrau. Nesse pulso, a borda baixa ocorreu no mesmo tick
+`923127` nas duas ROMs; a largura modelada foi `4901` ticks em G e
+`4765` em S88. Portanto, o evento representa também diferença de
+**largura de pulso**, não apenas deslocamento de fase. A contagem de
+bordas exatamente iguais à S88 foi:
+
+| Valores S88 entregues ao `MOVC` G | Bordas CC3 iguais à S88 |
+| --- | ---: |
+| Nenhum | 215/226 |
+| Só `7580h:25h` | 221/226 |
+| Só `7B45h:0Dh` | 211/226 |
+| `7580h:25h` e `7B45h:0Dh` | 226/226 |
+| Ambos + `7B46h/7B47h:A1h` | 226/226 |
+
+O trace detalha o pulso divergente. `0744h` publicou `28h→2Dh` na RAM
+superior `[A8h]` no tick `901838` em todos os braços. Na S88, `475Fh`
+restaurou `[A8h]=28h` no tick `901862`; `4756h` só publicou
+`RAM[63h]=2Dh` no tick `923594`. Na G nativa, `4756h` publicou `2Dh`
+já no tick `903126`. Com apenas `7580h:25h` fornecido ao `MOVC` G, a
+publicação de `63h` ocorreu no tick `923597`, acompanhando a S88.
+Os opcodes em `4629h..463Ah` (leitura de `[A8h]`), `4752h..4762h`
+(publicação em `63h` e `[A8h]`), `1D4Bh`, `1ED3h` e `058Eh` são
+idênticos nas duas ROMs. Portanto, a diferença observada decorre da
+ordem em que o código alcança essas operações no modelo, não de uma
+mudança nesses opcodes. Na entrada CC3 do tick `923099`, G tinha
+`RAM[14h:15h]=04CCh`; S88 e G com `7580h:25h` tinham `04AAh`.
+A janela de PC `901820:901880` mostrou o mesmo fluxo da ISR de Timer 0,
+que atende o ADC em `0716h..0744h`, nas três execuções até `RETI` em
+`084Fh` no tick `901852`. No tick
+seguinte, a G retomou o primeiro plano em `5246h` (interpolador), S88
+em `4697h` e G com `7580h:25h` em `468Eh` (rotina que chega a `4756h`).
+Assim, a diferença de tempo entre o produtor ADC e o consumidor vem
+da posição do primeiro plano quando a interrupção termina. A S88 e a
+doação escrevem de volta o valor antigo de `[A8h]` antes da próxima
+publicação em `63h`; a G nativa alcança a publicação com o valor novo.
+A diferença bruta é `22h=34`; a diferença de largura do pulso foi
+`136=4×34` ticks, consistente com a escala de quatro ticks por unidade
+desse agendamento no emulador. Esse evento é mediado pelo instante de
+publicação de ADC3 no estado interno. O motivo anterior para a diferença
+de fase do primeiro plano ainda precisa ser isolado. Capturas da janela:
+`build/ma17-analysis/variants/s88_adc3_latch_pc_{G,S88,G_7580}/`.
+
+O par também igualou a cobertura PC e as 140.578 leituras MOVC totais
+da S88, mas conservou `A4h=99h` na primeira escrita. As duas células
+adicionais igualaram todas as observações estruturadas de RAM nesse
+ensaio, incluindo `A4h=A1h`. O efeito de `7B45h` isolado piorou a
+contagem; portanto as células interagem e a atribuição de fase depende
+do estado e da rotação. O [gráfico a 1.500 RPM](../build/ma17-analysis/variants/s88_phase_rpm1500_factorial.png)
+mostra o evento de 136 ticks e os resíduos pequenos. Capturas:
+`build/ma17-analysis/variants/s88_phase_rpm1500_{G,S88,G_7580,G_7B45,G_both,G_four}/`;
+regressão `test_s88_phase_cell_pair_reproduces_adc3_sweep_at_1500_rpm`.
+O programa e os bytes das duas ROMs permaneceram intactos; os resultados
+continuam restritos ao perfil Fiat emulado.
+
+Em **3.000 RPM**, com os mesmos ADCs e degraus de 1.500 RPM, houve 456
+bordas CC3 por ROM. A G original coincidiu com a S88 em 427 bordas,
+com diferença máxima de quatro ticks; doar apenas `7580h` elevou a
+concordância a 435/456, e doar apenas `7B45h` reduziu a 425/456.
+As duas células juntas reproduziram **456/456 bordas**, cobertura PC e
+as 132.983 leituras MOVC da S88. A primeira escrita upper `A4h` ainda
+era `99h` em G e `A1h` em S88; adicionar `7B46h/7B47h:A1h` igualou
+também as observações estruturadas de RAM. O [gráfico a 3.000 RPM](../build/ma17-analysis/variants/s88_phase_rpm3000_factorial.png)
+mostra resíduos de até quatro ticks e a coincidência com as duas células.
+Capturas: `build/ma17-analysis/variants/s88_phase_rpm3000_{G,S88,G_7580,G_7B45,G_both,G_four}/`;
+regressão `test_s88_phase_cell_pair_reproduces_adc3_sweep_at_3000_rpm`.
+Os ensaios em 1.000, 1.500 e 3.000 RPM confirmam o efeito digital do
+par em mais de uma faixa, mas mostram que sua magnitude depende do
+regime. Não se pode extrapolar essa coincidência de bordas para todos
+os estados do firmware ou para o atuador físico.
+
 Um teste transitório aplicou um único degrau no ADC2 no tick 800.000,
 com 1.000 RPM, ADC3 padrão, ADC7=63 e 1,6 milhão de ticks. Em G e S88,
 o degrau digital `400→160` (bytes altos `64h→28h`) chegou a `RAM[62h]`
@@ -2512,9 +5100,18 @@ elétrica do pino.
 
 A família S37/S36 traz uma **terceira calibração** para `7CAEh`: os
 120 bytes das duas ROMs são idênticos entre si e cada célula vale
-`G+16h` (módulo 256), enquanto S88 vale `G+08h`. Ao fornecer somente
-os retornos `MOVC` dessa matriz S37 à ROM G intacta, com os mesmos ADC
-do fatorial acima, houve 912 leituras da região em cada rotação:
+`G+16h` (módulo 256), enquanto S88 vale `G+08h`.
+
+O [mapa gráfico S88/S37 de `7CAEh`](../build/ma17-analysis/variants/matrix_plots/matrix_7cae_s88_vs_s37.png)
+mostra silhuetas iguais com deslocamento de **+14 decimal em todas as
+120 células**; o CSV registra cada endereço e valor. A forma preservada
+é evidência de recalibração numérica desse banco, sem fornecer sua
+escala física. Comando: `/usr/bin/python3 tools/plot_ma17_matrices.py
+--reference-variant S88 --matrix 0x7CAE --variant S37`.
+
+Ao fornecer somente os retornos `MOVC` dessa matriz S37 à ROM G intacta,
+com os mesmos ADC do fatorial acima, houve 912 leituras da região em
+cada rotação:
 
 | RPM | IRAM superior `8Ch` dominante | `69h` em `3B06h` | P5.0 baixo mediano | CC3 baixo mediano |
 | ---: | ---: | ---: | ---: | ---: |
@@ -2701,6 +5298,39 @@ coincidir exatamente os histogramas P5.0. No relatório `execution.json`,
 `pc_coverage` ficaram iguais aos da S88 natural nesse estado.
 Outras seções do trace ainda divergem; o ensaio não demonstra
 equivalência global das ROMs. O hash da G ativa permaneceu original.
+
+Em outro estado, 1.000 RPM e ADC0..7 bruto
+`100/130/100/20/90/40/155/63`, os 1.200.000 ticks iniciais mostram a
+interação oposta: G passa por `3356h` com `AEh=33h`, `R4=00h` em 92
+consultas estáveis e pula o segundo par `534Bh/5350h`; S88 tem
+`AEh=31h`, `R4=C0h` e executa o par. As leituras `MOVC` da base
+`7B46h` em `532Fh/5333h/534Bh/5350h` foram `113/113/20/20` em G
+e `113/113/112/112` em S88. O código em `5342h` testa `R4` antes do
+segundo par; os bytes do eixo `7B28h` são iguais nas duas ROMs.
+
+| ROM ativa e retornos S88 fornecidos a G | `AEh` estável | `R4` estável | Leituras em cada instrução do segundo par | `69h` final | CC3 baixo mediano, ticks |
+| --- | --- | --- | ---: | --- | ---: |
+| G original | `33h` | `00h` | 20 | `9Ah` | 3509 |
+| G + `7580h` | `29h` | `00h` | 20 | `8Dh` | 2909 |
+| G + matriz `7581h` | `3Ah` | `00h` | 20 | `9Dh` | 4001 |
+| G + ambos | `31h` | `C0h` | 112 | `8Bh` | 3404,5 |
+| G + ambos + 10 células lidas de `7B46h` | `31h` | `C0h` | 112 | `93h` | 3405 |
+| G + acima + `7B45h=0Dh` | `31h` | `C0h` | 112 | `93h` | 3405 |
+| S88 original | `31h` | `C0h` | 112 | `93h` | 3405 |
+
+Assim, **os dois retornos upstream juntos**, e nenhum deles sozinho,
+cruzam a guarda `R4=0` nesse estado. As dez células restauram `69h`,
+`34h` e a mediana CC3; com `7B45h`, os objetos `output_latches`,
+`cc3_observation`, `engine_ram_observation` e `pc_coverage` ficam
+idênticos aos da S88 nesse intervalo. Um par original mais longo de
+12 milhões de ticks manteve 1.167/1.167 primeiras leituras por ROM e
+20/20 segundos pares em G versus 1.166/1.166 em S88. Os experimentos
+fornecem retornos `MOVC` à ROM G sem alterar seus bytes; a identidade
+de resumos selecionados não prova equivalência completa nem função
+física do pino. Capturas: `7b46_pair_path_{g,g_7580,g_7581,
+g_s88_upstream,g_cells,g_cells_7b45,s88}/` e
+`iram57_long_current_{g,s88}/`. Regressão:
+`tests.test_ma17_7b46_pair`.
 Captura: `ae_source_2000/g_triad_7b45/`; o teste acima inclui essa
 quarta intervenção.
 
@@ -2808,6 +5438,28 @@ forçar `04h` no caso 208 produziu a reversão. G e S88 repetiram os
 resultados. Assim, a leitura de `4Fh` medeia o contraste digital nesse
 estado, embora a identidade física da saída permaneça sem prova.
 
+O slot antes provisório `7036h→7AE0h` cobre 32 bytes `FFh` nas seis
+ROMs. O bloco G `3E41h` (A `3EFEh`) consulta o interpolador e, quando
+`T2CON.1=0`, grava o resultado na XRAM paginada `F8:7Fh`. O leitor G
+`480Dh` usa esse byte como fator após a curva `74EEh`.
+Opções de índice preparadas `R5=0/4`, `R4=R6=0` executaram os opcodes
+originais de cada ROM e gravaram `FFh`; o alcance natural máximo do
+índice não foi demonstrado. Num ensaio G a 1.000 RPM com ADC2/3 de
+10 bits `400/160` e ADC3 passando a `204` no tick 800.000, fornecer
+`80h` somente ao retorno `MOVC 532Fh/7AE0h` mudou leituras armazenadas
+de `F8:7Fh` em `480Dh` de `FFh` para `A0h/80h`. `RAM[4Fh]` final
+passou de `04h` a `03h`, `RAM[5Ah]` de `77h` a `66h`, a mediana do
+agendamento CC3 de 1228 a 1211 ticks e a largura baixa de P1.3
+modelada de 4900 a 4832 ticks. Fornecer `FFh` apenas à leitura
+`MOVX 480Dh/F87Fh` restaurou esses quatro resultados, embora a XRAM
+gravada permanecesse alterada; fornecer `FFh` no controle foi neutro.
+A ROM e os bytes brutos de `MOVC` permaneceram originais. `F8:7Fh`
+é XRAM, não pino; a ligação física de `P1.3/CC3` ao bico monoponto
+continua sem confirmação. Testes:
+`SixRom7036ConstantTableWritesPagedXram7f` e
+`test_7ae0_constant_table_reaches_cc3_through_f87f`;
+capturas: `build/ma17-analysis/variants/7ae0_coolant_*/`.
+
 Os ponteiros big endian `7030h/7032h/7034h` apontam para três curvas
 contíguas de dez bytes em `74EEh/74F8h/7502h`. G/S88/S37/S36 têm
 `00 00 04 07 0B 11 16 1A 20 24`, `00 02 05 08 0E 12 16 1A 20 24`
@@ -2867,6 +5519,220 @@ O manual localiza `TXD0` em P3.1 e `CM6` opcional em P4.6; documentos
 anteriores que chamam P4.6 de TXD não estabelecem a ligação da ECU.
 Os dados estruturados e os traces individuais ficam em
 `build/ma17-analysis/variants/experiments_adc517a/`.
+
+### Matrizes `7831h/7859h/786Dh` e curva `7078h→794Dh`
+
+As seis ROMs têm os mesmos ponteiros e bytes nessas três matrizes e na curva. O trecho
+G `3D0Ch..3D42h` usa os segmentadores `7054h→7824h` (`RAM[70h]`) e
+`7056h→782Bh` (`RAM[47h]`, derivada de RPM) para formar
+`R5=4×linha+coluna`, com passo `R0=4` e frações `R4/R6`. Quando
+`T2I1=0`, `XRAM F8:DAh=0` e `RAM[2Fh].5=0`, `3DFAh` seleciona a matriz
+de **5×4** bytes em `7859h`; `3E05h` escreve o interpolado em `F8:00h`.
+O segundo estágio do helper leu `786Dh`, primeiro byte do alvo seguinte,
+no trace: o limite nominal de 20 bytes não é um limite rígido de leitura.
+
+O ramo de `3DDEh..3E05h` também seleciona `705Ah→7831h` quando
+`F8:DAh=0` e `RAM[2Fh].5=1`, ou `70D0h→786Dh` quando `F8:DAh≠0`.
+Ambas são matrizes de 5×4 bytes idênticas nas seis ROMs e usam os mesmos
+eixos e interpolador de `7859h`. Um teste dos opcodes originais G/S88 e
+A/A+/S37/S36, com `R5=1` e frações zero, leu respectivamente
+`7832h=40h`, `785Ah=4Dh` e `786Eh=2Fh` nos três ramos e escreveu o
+byte em `F8:00h`. No trace G de 3,5 milhões de ticks com P4.6 baixo,
+`F8:DAh` voltou a zero depois do padrão de inicialização `55/AA`; o
+ramo `70D0h` não foi observado. O acesso natural a `705Ah` e `70D0h`
+e a fiação de `F8:00h` continuam abertos. Regressão:
+`Sab80C517.Pointer705a705c70d0BranchesFeedXramF800`.
+
+Os slots ainda provisórios `7098h→7845h` (20 bytes variados) e
+`70D2h→7881h` (20 bytes zero) também aparecem nesse bloco, iguais
+nas seis ROMs. Contudo, `JB T2I1` em G `3DDEh`/A `3E9Bh` salta todo o
+lookup quando o bit está ligado. Se ele está desligado, os `JNB T2I1`
+em G `3DECh/3DF4h` (A `3EA9h/3EB1h`) desviam antes das cargas dos
+dois ponteiros. Não há escrita em `T2CON` nesse trecho sem chamadas;
+os 40 bytes do bloco são iguais entre G e A, salvo o destino da chamada
+final ao interpolador. Executar o primeiro salto com `T2I1=1` nas seis
+ROMs chegou diretamente ao ponto após a escrita `F8:00h`; a regressão
+`Sab80C517.T2i1GuardSkips7098And70d2PointerPaths` fixa esse resultado.
+Logo, esses alvos não têm acesso por **fluxo local ininterrupto**.
+Interrupções ou outros leitores indiretos ainda precisam ser examinados;
+os bytes permanecem provisórios, sem função de calibração atribuída.
+
+Há bloqueio local semelhante para os slots provisórios
+`7082h→78A9h` e `7086h→78D1h`, ambos com 20 zeros nas seis ROMs.
+G `3E06h` (A `3EC3h`) pula o bloco até `3E34h` quando `T2I1=1`;
+com o bit zero, os `JNB T2I1` em G `3E1Dh/3E28h` pulam as cargas
+dos dois ponteiros. A execução isolada do primeiro salto nas seis ROMs
+confirma a guarda. Também aqui só está excluído o fluxo local
+ininterrupto; referências indiretas e interrupções não foram excluídas.
+Regressão: `Sab80C517.T2i1GuardSkips7082And7086PointerPaths`.
+
+Em contraste, `7088h→78E5h` contém 20 bytes `FFh` efetivamente lidos
+quando `RAM[7Ah]=0`: G `3E34h..3E40h` (A `3EF1h..3EFDh`) consulta
+o ponteiro e escreve o interpolado em `XRAM F8:FBh`. O trace G
+`movc_gasoline` registrou 262 leituras de `78E5h` e 262 de `78E6h`
+com `DPTR=78E5h`; S88 `movc_sun8817_2s` registrou 495 de cada.
+Opções `RAM[7Ah]=0/1` nos opcodes originais das seis ROMs confirmaram
+respectivamente a escrita `FFh` e o salto sem escrita. O destino físico
+de `F8:FBh` segue desconhecido. Regressão:
+`Sab80C517.Pointer7088LoadsFfIntoXramF8fbWhenRam7aIsZero`.
+O leitor posterior é `MOVX A,@R0` em G/S88 `1CC5h`, ou na família A
+`1CE1h`. Ele multiplica `F8:FBh` por um intermediário derivado de
+`RAM[7Bh]` e `F8:01h`; depois `RAM[7Ah]` participa do produto que
+termina em `R1`. Em novas execuções G/S88 a 1.000 RPM, ADCs padrão,
+sem K-Line e por 2,4 milhões de ticks, cada ROM fez 230 leituras de
+`F8:FBh` nesse PC após a escrita `FFh` em `3E40h`. As duas leituras
+anteriores em `55A2h` pertencem ao autoteste de XRAM.
+Um teste dos opcodes originais nas seis ROMs, com `P2=F8h`,
+`RAM[7Bh]=78h` e `F8:01h=61h`, mostrou `R1>0` somente quando
+`RAM[7Ah]=80h` e `F8:FBh=FFh`; zerar qualquer um deles deu `R1=0`.
+Isso identifica um consumidor digital condicional, sem demonstrar o
+papel físico do campo nem a seleção natural desse ramo na família A.
+Reprodução: `MA17_TRACE_XRAM_ADDRESS=F8FB python3 tools/trace_ma17.py
+--rpm 1000 --crank-immediate --no-kline-inject --stop-ticks 2400000
+--output-dir build/ma17-analysis/variants/f8fb_reader_g_current`;
+regressão: `Sab80C517.SixRomF8fbReaderFeedsRam7aMultiplyChain`.
+Num segundo ensaio, G e S88 originais receberam ADC0..7 brutos
+`180/130/140/4/90/200/247/63` e um degrau ADC0/6 para `160/380` no
+tick 3.274.600. Em 4 milhões de ticks, cada ROM passou 386 vezes por
+`1CB7h`; 69 saídas em `1CDFh` tinham `RAM[7Ah]≠0`. Fornecer `00h`
+**somente** à leitura `MOVX 1CC5h/F8:FBh` manteve o byte armazenado
+`FFh`, mas reduziu `B` de `0Ch..16h` para `00h` nas 69 saídas. As ROMs
+e seus hashes permaneceram originais. Os inícios de pulso CC3 modelados
+ficaram em 129 nos dois braços de cada ROM; o menor intervalo bruto
+agendado mudou de 226→595 ticks em G e 218→568 em S88. A mediana de
+P5.0 permaneceu 1.921/1.863 ticks. Portanto o campo participa
+causalmente do cálculo digital nesse estado, mas este ensaio não
+identifica sua função física nem demonstra mudança na contagem de pulsos.
+Regressão: `python3 -m unittest tests.test_ma17_f8fb_path`; capturas:
+`build/ma17-analysis/variants/f8fb_release_*/`.
+O contraste aparece no **primeiro ciclo CC3 alinhado depois do degrau**:
+em `PC1EA9h`, o candidato `R3:R2` é `00E2h→0265h` na G e
+`00DAh→0248h` na S88. A entrada `058Eh` no mesmo tick 3.315.115
+recebe esses mesmos valores em `RAM[14h:15h]`. Os intervalos baixos
+imediatos do pino CC3 **modelado** foram 892→2.441 ticks na G e
+860→2.325 na S88, medidos entre as próximas bordas baixa e alta do
+log. Isso confirma uma rota digital até o agendador e a saída CPU
+modelada; não confirma a ligação elétrica desse pino ao bico injetor.
+O teste de regressão verifica o valor agendado e o aumento local de
+largura, além da contagem global de inícios.
+Para ligar esse efeito à **curva ROM**, repeti o mesmo cenário fornecendo
+`00h` nos dez pares PC/endereço de `MOVC` efetivamente alcançados em
+`78E5h..78F8h`: três em `532Fh`, três em `5333h`, dois em `534Bh` e
+dois em `5350h`. O valor armazenado em `F8:FBh` permaneceu `00h` e os
+69 resultados `B=00h`, o primeiro agendamento `0265h/0248h` e as
+larguras modeladas 2.441/2.325 ticks reproduziram a intervenção no
+leitor em G/S88. Os hashes das ROMs não mudaram. Alterar só as duas
+células iniciais `78E5h/78E6h` falhou em atingir a escrita inicial:
+o interpolador usou outros índices naquele momento. A evidência
+estabelece a cadeia digital tabela → `F8:FBh` → cálculo → CC3 modelado
+sob intervenção; os bytes originais dessa curva são `FFh` nas seis ROMs
+e a saída física da ECU continua não identificada. Capturas:
+`build/ma17-analysis/variants/f8fb_release_movc_reached00_{g,s88}/`.
+
+Uma auditoria dos `MOVC` em 1.723 artefatos `execution.json` distinguiu
+o `DPTR` usado do endereço efetivo. Nenhum registro usou como base o
+início de um dos quatro slots ainda provisórios. Porém, o primeiro byte
+de três deles foi lido como lookahead da matriz imediatamente anterior:
+
+Reprodução: `python3 tools/audit_ma17_pointer_lookahead.py`. O comando
+gera `build/ma17-analysis/variants/pointer_lookahead_audit.json` e a
+regressão sintética está em `test_pointer_lookahead_audit_distinguishes_direct_and_crossing_reads`.
+O relatório conta somente `MOVC A,@A+DPTR` (`93h`); separa seleção direta
+de `DPTR` das leituras cujo endereço efetivo cai no intervalo vizinho.
+O corpus contém 1.435 capturas da ROM G e 288 da S88, identificadas
+por SHA-256 no relatório; não contém execução completa de A/A+/S37/S36.
+
+| Slot provisório | Byte lido | DPTR da matriz anterior | G | S88 |
+| --- | --- | --- | ---: | ---: |
+| `7098h→7845h` | `7845h=9Ah` | `7831h` | 22 | 8 |
+| `7082h→78A9h` | `78A9h=00h` | `7895h` | 57 | 44 |
+| `7086h→78D1h` | `78D1h=00h` | `78BDh` | 7 | 0 |
+| `70D2h→7881h` | nenhuma no corpus | nenhuma | 0 | 0 |
+
+Todas as leituras observadas dessas três bordas ocorreram em `PC5350h`
+e tocaram somente o primeiro byte do intervalo seguinte. Um teste dos
+opcodes originais das seis ROMs fixou `R5=15`, `R0=4`, `R4=80h` e
+`R6=0`: o mesmo `MOVC` leu as bordas `7845h`, `78A9h`, `78D1h` e,
+em seleção isolada de `70D0h→786Dh`, também `7881h`. Isso demonstra
+acesso possível ao primeiro byte de `70D2h` por lookahead, sem
+demonstrar seleção direta de seu ponteiro. As contagens somam artefatos
+experimentais repetidos, portanto não medem frequência natural na ECU.
+Regressão: `Sab80C517.SixRomFinalMatrixRowReadsAdjacentPointerInterval`.
+
+O trecho G `3E51h..3E61h` usa o segmento e a fração de `RAM[70h]`
+para interpolar cinco bytes em `794Dh` e escrever `F8:8Dh`. O helper
+leria `7952h` como byte adjacente ao índice 4; esse índice não apareceu
+na captura analisada. Com P4.6 experimental baixo e duas mudanças de
+TPS, o G original leu ambas as estruturas. Fornecer `20h` somente em
+`PC=532Fh/785Ch` (original `40h`) mudou a sequência de `F8:00h`
+`5A,53,46,A3,46` para `5A,53,36,A3,36`. Fornecer `20h` somente em
+`PC=532Fh/794Dh` (original `5Ah`) mudou `F8:8Dh` de
+`CD,94,9A,94` para `CD,F7,9A,F7`. As ROMs permaneceram intactas.
+Os destinos são campos de XRAM, sem ligação física comprovada.
+O código A contém caminhos homólogos em `3EB7h` e `3F0Eh`, ainda sem
+execução completa no seu perfil de hardware. Regressão:
+`Curve705c7078Tests.test_cell_read_interventions_change_separate_xram_fields`.
+
+### Seleção `797Ah/7982h`, interpolação e XRAM `F8:8Eh`
+
+O código G `3E62h..3E7Eh`, homólogo A em `3F1Fh..3F3Bh`, divide
+`RAM[6Ah]`: nibble baixo vira índice `R5` e nibble alto vira fração
+`R6`. `RAM[2Fh].0` escolhe o ponteiro big endian `7074h→797Ah` ou
+`7076h→7982h`. Após interpolar dois bytes adjacentes, o código grava
+`R2` em `MOVX @8Eh` quando `T2I1=0`; com `P2=F8h`, o endereço modelado
+é `F8:8Eh`. A função física desse campo e a ligação externa de
+P4.6/CM6 ainda não foram verificadas.
+
+Os oito bytes de cada intervalo são idênticos nas seis ROMs:
+`03 04 06 0A 14 20 37 64`. Entretanto, o índice 7 consulta também
+o byte seguinte. Com base `797Ah`, lê `7981h=64h` e `7982h=03h`;
+com base `7982h`, lê `7989h=64h` e `798Ah=40h`. Em execução isolada
+dos opcodes originais das seis ROMs, `RAM[6Ah]=82h` produziu `08h` em
+`F8:8Eh` nos dois seletores; `87h` produziu `34h` ou `52h`. A diferença
+de arredondamento da interpolação negativa faz o primeiro resultado
+ser `34h`, não `33h`. O oitavo byte de cada intervalo é comprovado;
+seu fim formal ainda é provisório, baseado no próximo alvo do diretório.
+
+Traces G/S88 sem estímulo de P4.6 leram `7982h` como **lookahead** com
+`DPTR=797Ah`; logo o endereço isolado não comprova seleção da segunda
+curva. Traces com P4.6/CM6 da CPU forçado a baixo leram com
+`DPTR=7982h`, comprovando a outra seleção no modelo. Essas capturas
+não estabelecem o nível elétrico natural desse pino na ECU. Regressão:
+`Sab80C517.Iram6aCurveLookaheadChangesF88eAtLastIndex`.
+
+A execução exaustiva do produtor original `1255h..1260h`, para os 256
+valores de `RAM[70h]` nas seis ROMs, retornou `RAM[6Ah]=07h` sempre que
+o índice foi 7. Portanto, esse caminho fornece fração zero no ponto em
+que o interpolador consulta o nono byte; o caso isolado `87h` ainda não
+tem caminho natural demonstrado. Escritas indiretas alternativas em
+`RAM[6Ah]` permanecem em aberto. Em duas execuções G intactas a 3.000
+RPM com dois degraus de TPS, o trace de `F8:8Eh` registrou a mesma
+sequência de mudanças (`55 AA 00 03 05 64 05`) com P4.6 padrão e
+forçado a baixo. A segunda execução leu `798Ah` 194 vezes como
+lookahead da segunda curva, mas não reproduziu a diferença `34h/52h`
+do ensaio isolado. Capturas: `iram6a_default_f88e` e
+`iram6a_p46low_f88e` em `build/ma17-analysis/variants/`.
+
+O slot `707Ah` aponta para `798Ah`: oito bytes `40 40 40 53 53 53 53 53`
+iguais nas seis ROMs, até o próximo alvo do diretório em `7992h`. No G,
+`15CFh..160Eh` consulta esse vetor apenas no ramo `RAM[2Fh].0=0`, após
+a guarda `RAM[2Eh].0` e o limite anterior não nulo. O código divide
+`RAM[6Ah]` em índice e fração, interpola pelo helper `5329h`, combina o
+resultado com o fator lido via `7006h`, satura e publica `R3:R2` em
+`RAM[59h:5Ah]` em `1644h/1646h`. A família A contém o homólogo em
+`1618h..1655h`. Em traces G intactos a 3.000 RPM, o helper leu a base
+`798Ah` 12 vezes com P4.6 padrão e 2 vezes com P4.6 forçado a baixo;
+houve também leitura adjacente de `798Ch`. Fornecer `20h` apenas na
+leitura `MOVC` de `798Bh` em `PC=532Fh`, mantendo a ROM original,
+alterou a publicação inicial de `59h:5Ah` de `05h:00h` para `04h:38h`
+e o primeiro intervalo CC3 de `0544h` para `047Ch`. As três primeiras
+larguras baixas modeladas de CC3 passaram de `5381/5381/5380` para
+`4581/4581/4580` ticks; a quarta permaneceu 1212 e a mediana total,
+5217. A evidência é causal no modelo para uma leitura e um estado de
+entrada; ainda não identifica fisicamente CC3/P1.3 como o bico. O byte
+seguinte em `7992h` pode ser lido pelo interpolador, mas esse acesso no
+índice 7 ainda não foi observado. Portanto, o limite de oito bytes é
+provisório. Regressão: `Iram6aCurveTraceTests.test_798b_read_changes_early_iram_pair_and_cc3_width`.
 
 ### Fatores `79CEh` e `79D8h` na rota de `87h` e CC3
 
@@ -2930,14 +5796,38 @@ Capturas: `build/ma17-analysis/variants/iram87_tps180_247/`,
 `iram87_tps180_247_factor_ff/`, `iram87_tps180_247_s88/` e
 `iram87_tps180_247_s88_factor_ff/`.
 
-### Sinal ADC5 e estado observado da correção lambda
+### Segmentador `70DCh→79E0h` e campo XRAM `F8:F2`
+
+As seis ROMs têm o mesmo ponteiro big endian `70DCh→79E0h` e os oito
+bytes `63 03 1E 2A 8D 72 7A 81` até o próximo alvo em `79E8h`.
+O helper G `52CDh..52ECh` interpreta `63h` como endereço da RAM
+inferior, `03h` como contagem e `1E/2A/8D` como incrementos examinados
+em ordem reversa. `R3` seleciona `79E5h..79E7h` em `28A9h`; `28AFh`
+escreve o valor em XRAM `F8:F2`. A família A tem código homólogo em
+`28BBh` com helper `5390h`, ainda sem ensaio completo no seu perfil.
+
+No G original a 3.000 RPM, ADC3=72/73/114/115 deu `RAM[63h]` igual
+a `48h/49h/72h/73h`, respectivamente. As leituras passaram de
+`79E5h=72h` para `79E6h=7Ah` no limite `49h`, e de `79E6h` para
+`79E7h=81h` no limite `73h`; `F8:F2` recebeu os mesmos valores.
+Com ADC3=80 e ROM intacta, fornecer apenas `72h` na leitura
+`PC=28A9h/79E6h` (valor original `7Ah`) mudou a escrita `28AFh` de
+`7Ah` para `72h`. É causalidade digital de uma célula até XRAM, não
+identificação de atuador ou escala física de temperatura. O uso
+posterior de `F8:F2` e eventual efeito nos pinos continuam abertos.
+Regressão: `Segment79e0Tests.test_adc3_segment_boundaries_and_single_read_intervention`.
+
+### Sinal ADC5 e estado interno associado ao byte F8:0Ch
 
 No scanner `Monomotronic-MA1.7-Scanner`, `SensorDecoders.cpp` define
 três leituras distintas: comando `00h`, ID `65h` para sonda (`raw × 3,9`
 mV); seletor `F8h`, ID `0Ch` para integrador (`(raw−128) × 0,195` %);
 e seletor `F8h`, ID `6Ch` para correção de longo prazo
 (`int8(raw) × 0,39` %). `SensorCategory.h` apenas agrupa esses campos na
-interface. As três escalas são convenções do scanner; em particular, o
+interface. Segundo o autor, o nome "integrador lambda" foi copiado de
+outro scanner e **não está confirmado para esta ECU**. Aqui, `F8:0Ch`
+designa apenas o byte observado; sua função física permanece hipótese.
+As três escalas são convenções do scanner; em particular, o
 próprio scanner marca a escala da sonda como não validada em sensor real.
 O banco Python `sensor_database.py` usa `raw × 3,87` mV para `65h`,
 contra `3,9` no C++; as fórmulas de `F8:0Ch` e `F8:6Ch` concordam.
@@ -3052,7 +5942,7 @@ Reproduzir com `MPLCONFIGDIR=/tmp /usr/bin/python3
 tools/plot_ma17_lambda_response.py`; o Python do sistema possui Matplotlib.
 Os dois sinais divergem gradualmente após a entrada em `186Dh`, mas
 esse contraste ADC5 isolado demonstra o **efeito total** da entrada e
-não separa o integrador lambda de possíveis caminhos paralelos até CC3.
+não separa o estado associado a `F8:0Ch` de possíveis caminhos paralelos até CC3.
 
 Um ensaio transitório posterior começou em `ADC0/6=40/95`, com
 `ADC3=20`, `ADC5=200`, `ADC7=63`, 1.000 RPM e a ROM G intacta. Em
@@ -3134,6 +6024,29 @@ de `IRAM[47h]` (RPM derivada); `799Eh..79A7h` contém dez valores
 `532Fh` lê a célula `799Fh=81h`. A rotina `3CB7h` compara o resultado
 interpolado `R2` com `IRAM[6Fh]` quando `2Eh.6=1`, preservando o carry
 em `PSW.5`; `3D0Ch` copia esse estado para `2Fh.2` no caminho medido.
+
+Na extremidade dessa curva, a leitura adjacente alcança `79A8h`,
+primeiro byte de outra estrutura (`709Ah→79A8h`, cabeçalho `47 03`).
+Em partidas atuais G/S88 a 6.000 RPM, com ADC6 alterado para 880/1023
+no tick 200.000 e `P4.6` modelado baixo, `5333h` leu `79A8h` 359 vezes
+por ROM com `DPTR=799Eh` e índice `0Ah`; `527Dh` leu o mesmo endereço
+403 vezes usando `DPTR=79A8h` para o cabeçalho. Substituir **somente**
+o retorno de `5333h` de `47h` para `00h` manteve `R5=09h`, `R6=00h`,
+`R2=28h` e as medianas CC3 de 658/822 ticks em G/S88.
+Um teste isolado dos opcodes originais varreu os 256 valores de `47h`
+nas seis ROMs: o segmentador `7992h` nunca produziu `R5>9`, e toda
+saída com `R5=9` teve `R6=00h`, inclusive `47h=F1h` do cenário acima.
+Essa propriedade vale para esse produtor e explica o valor numérico
+constante no índice terminal; não elimina outros produtores de `R5/R6`.
+No interpolador, o resultado da subtração em `5338h` mudou de `1Fh` para
+`D8h`; a rotina assinada em `5246h` tomou o outro ramo. O intervalo
+medido de `5338h` até `533Bh` passou de 7 para 13 ticks em ambas as
+ROMs. As bordas CC3 individuais mudaram de tick apesar das medianas
+iguais. Portanto, fração zero anulou a contribuição **numérica** da
+célula seguinte, mas não seu efeito sobre o percurso e o tempo do
+firmware no emulador. Isso não identifica função elétrica ou física.
+Capturas: `curve_boundary_79a8_probe_{g,s88}_{control,donor}/`;
+regressão: `test_zero_fraction_masks_value_but_signed_helper_changes_timing`.
 
 Na ROM G, com TPS estável `180/247`, `ADC3=20`, `ADC5=200` e
 `6Fh=A7h`, uma intervenção **somente no retorno do MOVC**
@@ -3236,14 +6149,14 @@ A atualização fica em `1687h..16EAh` em G/S88 e em
 compara os bytes originais em cada posição. A igualdade do código não
 prova que a rota seja habilitada com a mesma frequência em todos os
 perfis de hardware.
-O integrador só saiu de `80h` abaixo de `6Eh` ou a partir de `9Ah`
+O byte `F8:0Ch` só saiu de `80h` abaixo de `6Eh` ou a partir de `9Ah`
 nessa janela; isso não valida tensão física de comutação da sonda.
 O teste `test_lambda_adc5_thresholds_and_neutral_intervals` verifica
 os seis pares de fronteira. Traces:
 `build/ma17-analysis/variants/lambda_adc5_sweep_20261114/`.
 
 O byte `F8:0Ch` é escrito em `19D0h..19D2h` a partir do estado interno
-calculado em `R6:R7`/`5Dh:5Ch`. Um rastreio opcional de `MOVX` para esse
+calculado em `R7:R6`/`5Ch:5Dh`. Um rastreio opcional de `MOVX` para esse
 endereço, fundamentado na instrução `MOVX A,@Ri` do manual SAB80C517,
 p. 224, encontrou **uma única instrução leitora distinta** em 2,4 milhões
 de ticks: `55A2h`, na rotina de autoteste da XRAM, que escreve `55h` e
@@ -3281,8 +6194,8 @@ Em G, estender o estímulo `ADC3=4` a 12 milhões de ticks levou
 por volta de 5,1 milhões de ticks). Os extremos de ADC3 não têm
 temperatura física validada. Os dados mostram dependência de ADC5 nessa
 rota, mas ainda não isolam quanto da variação de CC3 é causado pelo
-integrador. O nome físico do byte vem do scanner; falta validação em
-ECU real.
+estado interno associado a `F8:0Ch`. O nome e a escala do scanner
+continuam sem validação em ECU real.
 
 O diretório em `7008h` aponta para dez bytes em `7426h..742Fh`, que o
 código G interpola com o estado derivado de `4Eh` e grava em RAM superior
@@ -3651,7 +6564,9 @@ com a mesma limitação sobre temperatura física e sessão serial completa.
 ### Estado de falha associado ao atuador de lenta
 
 O scanner atribui `0402h` ao interruptor do atuador e `1A01h` ao
-motor, mas sua descrição ainda é hipótese física. As quatro triplas
+motor; essas descrições vêm da lista externa citada em
+`ECUMonomotronic.cpp`, não de uma identificação física feita pelo
+scanner. Elas permanecem hipóteses. As quatro triplas
 `6E2Ah..6E35h` são byte a byte iguais nas seis ROMs. Na varredura
 base da ROM G, elas correspondem aos bits 0..3 de `XRAM[F84Eh]`;
 `407Dh` mascara `IRAM[27h]` por `F884h` e `41E5h` publica o resultado.
@@ -3807,6 +6722,255 @@ de `64h` e os pontos medidos. O scanner também distingue IRAM `69h`
 (avanço candidato, escala inferida) de XRAM `F8:69h` (rótulo EVAP ainda
 hipotético); o trace `ENGINE-RAM addr=69` observa **IRAM**, não XRAM.
 
+A agenda ADC da ROM G alimenta `64h` pelo **canal 4**, além do canal 1
+que alimenta `61h`. Com ADC1=47, ADC7=63 e 1.000 RPM, variar apenas
+ADC4 para 60/90/120 gravou `64h=3Ch/5Ah/78h` em `0744h`, enquanto
+`61h=2Fh`. O cálculo original deu `7Dh=C8h/85h/64h`, conforme
+`floor(256×47/ADC4)`; `31h=1Eh/3Fh/6Fh` e a mediana baixa de P5.0
+foi 3.493/7.306/12.869 ticks. CC3 também mudou. Logo, esse contraste
+confirma a dependência digital de `7Dh` e a covariação das saídas, mas
+não isola todas as rotas pelas quais ADC4 chega aos periféricos.
+Teste: `VariantTraceTests.test_adc4_divisor_changes_7d_axis_and_modeled_p5_in_g`;
+capturas: `build/ma17-analysis/variants/adc4_ratio_{60,90,120}/`.
+
+Para separar P5 da outra rota, um contrafactual manteve os mesmos três
+estímulos e forneceu `31h=3Fh` **somente** antes da leitura em `0490h`,
+no cálculo do Timer 1. Os valores naturais de `31h` continuaram
+`1Eh/3Fh/6Fh`, `69h` ficou em `9Ah`, e a largura mediana de P5.0
+convergiu para 7.306 ticks nos três cenários. CC3 conservou larguras
+distintas de 5.797/6.381/6.605 ticks. Isso identifica `31h` como
+mediador do contraste ADC4→P5 **nessa condição emulada**, sem explicar
+a rota ADC4→CC3 nem comprovar a conexão elétrica de P5 com bobinas.
+Teste: `VariantTraceTests.test_adc4_p5_width_is_mediated_by_ram31_at_timer1_read`;
+capturas: `build/ma17-analysis/variants/adc4_ratio_{60,90,120}_ram31_3f/`.
+
+Há uma rota distinta após `7Dh`: o ponteiro `706Ch→7960h` seleciona uma
+curva de três segmentos idêntica nas seis ROMs. Na G, o resultado passa
+por um ajuste ligado a XRAM `72h` e é gravado em `7Fh` em `4064h`; a
+instrução original `MOV A,7Fh` em `1E98h` o consome no cálculo que
+precede CC3. Com ADC1/4/7=47/90/63, trocar somente o retorno de
+`MOVC 5333h/7966h` de `4Bh` por `80h` mudou `7Fh=7Ah→8Eh` e a largura
+mediana modelada de CC3 de 6.381 para 6.541 ticks. `31h=3Fh` e P5.0
+em 7.306 ticks ficaram iguais. Entregar `7Fh=7Ah` apenas antes da
+leitura em `1E98h` restaurou CC3 a 6.381 ticks com a doação de `7966h`
+ativa. Esse cruzamento identifica a rota digital da célula para CC3
+nesse estado; função e unidade físicas continuam desconhecidas.
+O interpolador leu `7968h`, cabeçalho da curva seguinte, em algumas
+passagens de borda: a faixa própria `7960h..7967h` não delimita todos
+os bytes que uma interpolação terminal pode consultar. Teste:
+`VariantTraceTests.test_7966_movc_cell_reaches_cc3_through_ram7f`;
+capturas: `build/ma17-analysis/variants/adc4_{ratio_90_movc,7966_donor_80,7966_donor_80_ram7f_7a}/`.
+Executando o consumidor homólogo original nas seis ROMs para cada
+`7Dh=00h..FFh`, com XRAM `72h=0`, as 1.536 saídas `7Fh` coincidiram
+entre revisões. A curva é monotônica não crescente nesse estado:
+`7Dh=0/64→7Fh=150`, `128→131`, `133→122`, `200→49` e
+`254/255→34`. A igualdade digital das seis revisões não valida a
+escala elétrica do eixo ou a correção XRAM `72h` em operação natural.
+Teste: `Sab80C517.SixRom7960LookupMatchesAcrossAllRawRatioBytes`.
+O bloco seguinte na G (`4053h..4065h`) e seu homólogo na família A
+(`4110h..4122h`) leem `MOVX @R1` com `R1=72h`. Com `P2/XPAGE=F8h`,
+144 execuções isoladas dos opcodes originais, cruzando quatro valores de
+`7Dh` e seis bytes em XRAM `F8:72h` nas seis ROMs, confirmaram:
+`7Fh = clamp(interpolação_7960h(7Dh) + signed8(F8:72h), 0, 255)`.
+Foram testados offsets positivos e negativos e saturação nos dois
+extremos. A fórmula é digital; a origem e o significado físico de
+`F8:72h` ainda precisam ser rastreados. Teste:
+`Sab80C517.SixRom7960LookupAddsSignedF872WithSaturation`.
+
+A curva seguinte, `706Eh→7968h`, tem os mesmos oito bytes nas seis ROMs
+e três ordenadas `80h`. Na G, `406Fh` grava seu resultado em RAM **superior**
+`9Dh`; `MOV A,@R1` em `1E8Bh` lê esse byte com `R1=9Dh`. Entregar
+`40h` somente à leitura `MOVC 532Fh/796Eh` (byte original `80h`)
+fez `406Fh` gravar `9Dh=4Ch` em vez de `80h` e reduziu a largura
+mediana modelada de CC3 de 6.381 para 4.177 ticks. Entregar `80h`
+apenas antes do `MOV A,@R1` recuperou 6.381 ticks, embora `406Fh`
+continuasse gravando `4Ch`. `7Fh`, `31h` e P5.0 permaneceram iguais.
+Isso identifica uma segunda rota digital de compensação na G; as
+ordenadas constantes não demonstram sozinhas a intenção física da curva.
+Teste: `VariantTraceTests.test_796e_movc_cell_reaches_cc3_through_upper_iram9d`;
+capturas: `build/ma17-analysis/variants/adc4_796e_{control,donor,rescue}_uppertrace/`.
+Uma varredura isolada da leitura e escrita homólogas nas seis ROMs,
+`7Dh=00h..FFh`, produziu `9Dh=80h` em **1.536/1.536** casos. Portanto,
+os bytes originais formam um fator digital constante para todo o eixo
+testado, inclusive onde o interpolador busca o cabeçalho vizinho como
+segundo valor. A intervenção anterior mostra que a rota ainda aceita
+outro valor e altera CC3 no modelo; não determina por que a calibração
+original foi fixada em `80h`. Teste:
+`Sab80C517.SixRom7968LookupReturns80ForEveryRawRatioByte`.
+
+Os slots `70C6h→79B0h` e `70C8h→79BAh` selecionam duas curvas de
+dez bytes, idênticas nas seis ROMs. O bloco G `48CCh..48DFh` chama o
+interpolador `5329h` para cada curva e grava os resultados em RAM
+superior `85h` e `86h` por `MOV @R0,A`; o homólogo A começa em
+`4989h` e chama `53ECh`. O teste dos opcodes originais nas seis ROMs
+confirmou as duas escritas para índices `R5=0/4/9`, com `R6=0`.
+Num boot G de 120.000 ticks a 1.000 RPM, cada primeira célula foi lida
+mais de 30 vezes pelo `MOVC 532Fh`. Substituir só o retorno da leitura
+`79B0h` de `FFh` por `40h` fez a escrita em `85h` receber `40h` e
+deixou `86h=FFh`; a intervenção simétrica em `79BAh` afetou somente
+`86h`. A ROM e o byte bruto registrado para cada leitura continuaram
+iguais. Os endereços `85h/86h` são **RAM superior por acesso indireto**,
+não SFRs nem pinos: os leitores posteriores ainda precisam ser ligados
+a uma saída física. Testes:
+`SixRom79b0And79baCurvesWriteUpperIram85And86` e
+`test_79b0_79ba_movc_cells_independently_write_upper_85_86`;
+capturas: `build/ma17-analysis/variants/79b0_79ba_upper_*/`.
+O leitor G `37FFh` seleciona `RAM[85h]` quando `B.0=1` e
+`RAM[86h]` quando `B.0=0`; `3800h` multiplica o byte selecionado
+pelo **byte alto** do produto anterior, não pelo byte baixo. O teste
+dos opcodes originais com `RAM[85h/86h]=00h/FFh` confirmou ambos os
+ramos e o byte alto resultante em `B`. Há também um leitor condicional
+de `85h` em `3672h`, antes da escrita em RAM superior `C9h`.
+Num rastro G atual de 2,4 milhões de ticks (`ADC0/6=40/95`,
+`ADC3=80`), os escritores `48D5h/48DFh` foram alcançados, mas nenhum
+dos leitores `3672h/37FFh` executou; `3699h` gravou `C9h` 230 vezes
+por outro caminho. Assim, o vínculo natural dessas curvas com um pino
+permanece aberto. Teste: `FiatUpper85And86ReadersSelectSeparateMultipliers`;
+captura: `build/ma17-analysis/variants/79b0_79ba_reader_native_g/`.
+
+O alvo `709Ah→79A8h` também combina um eixo segmentado (`47h`, três
+segmentos, limites brutos **79/129**) e três ordenadas `FF E6 67`.
+Os opcodes originais G/S88 `45EFh..45F8h` e A/S37 `46ACh..46B5h`
+produziram, para todos os 256 valores de `47h` nas seis ROMs, a mesma
+curva não crescente em `XRAM[F8:A3h]` (`FFh` no início, `67h` no fim).
+Em G, o leitor condicional `2027h` usa `F8:A3h` antes da chamada ao
+agendador `CC3` em `2036h`. Num rastro G de seis milhões de ticks,
+`MOVC 532Fh/79ADh` leu `FFh` 1.436 vezes; entregar `40h` somente
+nessa leitura mudou o único `R2:R3` observado em `5469h` de `3A00h`
+para `0E00h`. O pulso baixo modelado de `P1.3/CC3` iniciado no tick
+5.712.863 passou de **233 para 57 ticks**, embora as medianas globais
+de CC3 e P5 não mudassem. O leitor `2027h` encontrou `F8:A3h=FFh`
+no controle e `40h` no braço com `MOVC` alterado. Fornecer `FFh`
+somente ao `MOVX` desse leitor restaurou `3A00h` e 233 ticks, mesmo
+com `F8:A3h` armazenando `40h`; fornecer `FFh` ao controle foi neutro.
+Assim, `F8:A3h` media a diferença no modelo. O override de leitura
+`MA17_OVERRIDE_XRAM_READ_AT=2027:F8A3:FF` não altera a XRAM armazenada.
+Este estado digital (`ADC0/6=120/95`) pode
+combinar trilhas TPS incoerentes; a saída física ligada a `P1.3` não
+foi medida. Testes: `SixRom79a8RpmCurveWritesF8a3ForAllRawValues` e
+`test_79ad_movc_cell_changes_late_cc3_pulse_in_g`; capturas em
+`build/ma17-analysis/variants/rpm79a8_long_*/`.
+
+O acesso `2027h` depende do estado anterior, não ocorre em toda volta.
+Em duas execuções G de 6 milhões de ticks a 1.000 RPM, com os mesmos
+ADC1/2/3/4/5/7=130/100/4/90/40/63, tanto `ADC0/6=120/95` como
+`120/180` alcançaram o escritor `45F8h` e a leitura `2016h` de
+`XRAM[F8:A2h]`. Apenas `120/95` apresentou `PSW.F0=1` e `23h=2Fh`
+em `2011h`: o desvio `203Dh` levou a `204Fh`, que incrementou
+`F8:A2h` de `00h` para `01h` no tick 5.702.714. A leitura seguinte
+em `2016h` encontrou `01h`, alcançou `2027h`, e `203Ah` zerou o
+contador. Em `120/180`, a leitura permaneceu `00h`, sem passagens por
+`204Fh` ou `2027h` durante a janela. `F0` é o bit do PSW em `D5h`,
+distinto do carry. Isso delimita a condição digital vista no emulador;
+o único `SETB 23h.3` no trecho, em `142Eh`, também foi alcançado só
+por `120/95`. O ramo `1427h` compara `R4` com `05h` antes dessa
+instrução; a causa anterior do estado ainda precisa de rastreamento.
+As identidades elétricas das pistas TPS e a função física de `P1.3`
+ainda exigem medição. Teste:
+`VariantTraceTests.test_f8a2_counter_gates_79a8_reader_in_g`;
+capturas: `build/ma17-analysis/variants/rpm79a8_f8a2_gate_*/`.
+
+O slot antes provisório `700Ah→74A8h` contém dez bytes idênticos nas
+seis ROMs (`22 22 28 2A 2C 30 34 38 3C 42`). No código G,
+`48E3h` testa `T2CON.1`; `48E6h` escolhe esse slot quando o bit é
+zero, e `48E9h→5321h` carrega
+o ponteiro big endian e interpola bytes adjacentes. No estado G a
+1.000 RPM, `RAM57h=R5=R6=00h`, de modo que `532Fh/5333h` lê
+`74A8h/74A9h=22h/22h` e `R2=22h` ao retornar em `48ECh`.
+Com `P4.7` padrão alto, uma guarda eleva `R2` para `25h` antes da
+escrita em `RAM46h` em `48FFh`; forçar somente o pino modelado baixo
+preserva `22h`. Fornecer `42h` apenas ao `MOVC 532Fh/74A8h` faz
+`RAM46h` receber `42h` nos dois estados de `P4.7`, sem alterar a ROM.
+Os blocos homólogos são `4773h/48E9h` em G/S88 e `4830h/49A6h`
+em A/A+/S37/S36. Comparações de 16 e 33 bytes dos opcodes originais
+encontraram apenas os destinos relocados das chamadas
+`5279h→533Ch` e `5321h→53E4h`; o escritor A de `RAM46h` está em
+`49BCh`. Isso confirma a correspondência estática nas seis ROMs,
+sem demonstrar a execução natural do caminho A sob o harness Fiat.
+O ramo alternativo do mesmo seletor usa `7010h→74C6h` quando
+`T2CON.1=1`. Essa curva de dez bytes (`22 22 23 24 25 26 28 28 28 28`)
+também é idêntica nas seis ROMs. Em execução isolada dos opcodes
+originais, `R5=0/4/9` e `R6=0` alcançaram `MOVC` com `DPTR=74C6h`
+e gravaram o byte selecionado em `RAM46h` nas seis imagens; com
+`T2CON.1=0`, os mesmos casos selecionaram `74A8h`. O bloco que aplica
+o piso dependente de `P4.7` é ignorado em `T2CON.1=1`, inclusive
+quando o latch do pino está alto. Isso confirma seleção e escritor
+sob estado preparado, sem demonstrar quando o modo alternativo é
+atingido por uma ECU em funcionamento. Teste:
+`Sab80C517.SixRomIram46CurvesSelectSixPointerSlots`.
+O mesmo leitor usa `RL` sobre `IRAM57h` para escolher os pares seguintes
+do diretório. A execução isolada preparou `IRAM57h=0/1/2` e cobriu
+os seis slots, em cada ROM e com `R5=0/4/9`, `R6=0`:
+
+| `T2CON.1` | `IRAM57h` | Slot | Curva | Primeiro/último byte G |
+| --- | ---: | --- | --- | --- |
+| 0 | 0 | `700Ah` | `74A8h` | `22h/42h` |
+| 0 | 1 | `700Ch` | `74B2h` | `24h/3Dh` |
+| 0 | 2 | `700Eh` | `74BCh` | `24h/3Bh` |
+| 1 | 0 | `7010h` | `74C6h` | `22h/28h` |
+| 1 | 1 | `7012h` | `74D0h` | `20h/2Dh` |
+| 1 | 2 | `7014h` | `74DAh` | `20h/2Bh` |
+
+Cada intervalo tem dez bytes idênticos nas seis imagens. `IRAM57h`
+é inicializado com zero; não foi identificado um produtor normal de
+`1/2` nem uma seleção natural de `T2CON.1=1` para esse leitor. Os
+casos preparados provam a seleção e a escrita em `RAM46h`, sem
+atribuir função física às quatro curvas adicionais.
+Uma varredura adicional de `ADC3=4/40/80/160/220`, mantendo as demais
+entradas, levou `IRAM63h=04h/28h/50h/A0h/DCh` pelo escritor `4756h`.
+O seletor `7002h→73D4h` usa `IRAM63h`, e `R5` percorreu
+`0/1/3/5/9`, com frações `R6=00h/B0h/20h/E0h/00h`.
+Sete valores intermediários adicionais cobriram os índices
+`2/4/6/7/8`; assim, todos os índices `0..9` tiveram leitura original
+por `MOVC` em um dos doze perfis. Em `P4.7` forçado baixo,
+`RAM46h` recebeu `22h/26h/2Ah/34h/42h` nos cinco exemplos iniciais.
+No último índice, `5333h` lê `74B2h`, primeiro byte da tabela seguinte,
+mas `R6=0`; esse byte não contribui para o valor observado. Isso
+confirma o eixo digital e o alcance dos dez bytes nesta varredura.
+Os consumidores de `RAM46h`, a escala física de `ADC3` e a ligação
+elétrica de `P4.7` permanecem abertos. Testes:
+`test_74a8_movc_and_p47_gate_ram46_in_g` e
+`test_74a8_curve_index_tracks_iram63_in_g`; capturas:
+`build/ma17-analysis/variants/74a8_ram46_*/` e
+`build/ma17-analysis/variants/74a8_adc3_*/`.
+
+Uma execução G mais longa verificou um consumidor posterior de `RAM46h`.
+No código `2391h..23AFh`, esse valor entra numa comparação anterior à
+rota que pode atualizar `XRAM[F8:3Dh]`. Com `ADC0/6=120/180`,
+`ADC3=4`, 1.000 RPM e `P4.6` experimentalmente baixo apenas após o
+tick 12.200.000, o controle tinha `RAM46h=25h`; na visita de
+`23AFh` com `2Dh=D1h` perto do tick 12.287.229, carry ficou zero
+e `23B9h` foi alcançado. Fornecer `42h` somente na leitura
+`MOVC 532Fh/74A8h` levou `RAM46h=42h`; na visita correspondente,
+carry ficou um e `23B9h` não foi alcançado. Os dois braços também
+divergiram em `20h` e `24h`. O teste de resgate entregou `25h` só
+à instrução original `MOV A,46h` em `2307h` no braço doador e
+restaurou `231Ch` (`CLR 20h.3`) e `23B9h`, embora `RAM46h`
+continuasse armazenando `42h`; entregar `25h` ao controle foi neutro.
+Em `23A3h`, logo após `SUBB A,47h`, carry foi zero nos quatro braços;
+o bit `20h.3` ligado no doador sem resgate é que volta a ligar carry
+antes de `JC` em `23AFh`. Portanto, a leitura `2307h` media a
+diferença nessa guarda digital. O override
+`MA17_OVERRIDE_IRAM_READ_AT=2307:46:25` restaura a IRAM depois do
+opcode e não altera a ROM.
+Nenhuma mudança de `F8:3Dh` nem movimento físico foi demonstrado.
+Teste lento: `test_74a8_cell_changes_late_idle_position_gate_in_g`;
+capturas: `build/ma17-analysis/variants/74a8_idle_gate_*/` e
+`build/ma17-analysis/variants/74a8_idle_rescue_*/`.
+
+O comentário de `SensorDecoders.cpp` justifica `7Dh×0,075 V` por
+`(256/218)×0,0637`, assumindo `64h≈DAh`. O quociente executado pela ROM
+exige a razão **inversa** ao transferir uma escala de `61h` para `7Dh`:
+para `64h=218`, `61h≈7Dh×218/256`, com quantização. Se os quatro
+pontos `61h=156/160/172/181` e 11,67/12,05/12,82/13,50 V publicados
+pelo scanner tiverem mesmo divisor 218, a ROM produziria
+`7Dh=183/187/201/212`. Nesse caso, `7Dh×0,0637` daria
+11,657/11,912/12,804/13,504 V; `7Dh×0,075` daria
+13,725/14,025/15,075/15,900 V. A comparação é **condicional**:
+o material do scanner não fornece amostras simultâneas de `64h` nem
+medições elétricas do canal 4. Nenhum dos fatores foi promovido a escala
+física validada no catálogo.
+
 ## Saída do injetor e hipótese de carga
 
 Para o **Fiat Tipo 1.6 ie com MA1.7**, a tabela de pinagem do fabricante
@@ -3828,6 +6992,499 @@ publicado e a temporização CC3. **Ainda não há trilha elétrica da placa
 que ligue `P1.3` ao driver do terminal 35**. Portanto, CC3 é candidato
 forte a temporizador de injeção, mas os ticks do emulador não são uma
 medição de largura elétrica no bico.
+
+Uma grade de fase com a ROM G intacta comparou `850/3000 RPM` e duas
+entradas TPS estáveis (`ADC0/6=120/95` ou `40/95`), mantendo os outros
+ADC em `ADC1/2/3/4/5/7=130/100/4/90/40/63`, P4.7 baixo
+experimentalmente, sem K-Line e com 800.000 ticks por braço. O dente 0
+da roda 60−2 alinhou duas voltas em cada janela. As medianas vieram
+do relatório `execution.json`:
+
+| RPM | TPS ADC0/6 | `14h:15h` | CC3 baixo, ticks | P5.0 baixo, graus da roda | CC3 baixo, graus da roda |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 850 | 120/95 | 1096 | 4373 | 102,6° | 111,7° |
+| 850 | 40/95 | 665 | 2649 | 101,9° | 111,7° |
+| 3000 | 120/95 | 1096 | 4372 | 61,7° | 113,1° |
+| 3000 | 40/95 | 285 | 1128 | 58,0° | 113,1° |
+
+P5.1 iniciou seu pulso baixo cerca de 180° após P5.0 em cada braço.
+CC3 teve dois pulsos baixos por volta; sua largura acompanhou a mudança
+de `14h:15h`, aproximadamente `4×` o agendamento menos 11–12 ticks.
+Em ambos os RPMs, reduzir TPS diminuiu bastante a largura de CC3;
+as larguras de P5 mudaram pouco sob o mesmo contraste. A fase de P5
+mudou com RPM. Isso fortalece CC3/P1.3 como **candidato ao controle do
+bico** e P5.0/P5.1 como **candidatos às duas bobinas**, sem validar a
+ligação elétrica na placa. A 3.000 RPM e TPS 40/95 estável ainda houve
+67 inícios de pulso CC3: **não apareceu bloqueio de CC3** nessa janela.
+Testar cut-off de desaceleração requer transição coerente das pistas TPS
+e **interruptor de lenta pressionado**, conforme a condição física
+informada para esta ECU. Deve-se observar as guardas do agendador de
+CC3, mesmo quando `14h:15h` permanece diferente de zero. O pino da
+CPU correspondente ao interruptor ainda não está identificado.
+Capturas e gráficos:
+`build/ma17-analysis/crank-phase-{850,3000}-{sensors,tps40}/`.
+
+`P4.3` é uma entrada candidata a investigar, pois os opcodes `2374h`
+e `4991h` a testam em rotas ligadas ao controle de lenta. Um estímulo
+experimental `MA17_P4_3_FORCE_LOW=1` preserva o latch de saída do
+SAB80C517. A 3.000 RPM, TPS estável 40/95, 800.000 ticks, o controle
+e o braço P4.3 baixo tiveram a mesma mediana `14h:15h=285`, 67
+inícios de CC3 e largura baixa de 1.128 ticks. Com TPS 180/247
+passando a 40/95 no tick 1.200.000, ambos os braços de 2,4 milhões
+de ticks tiveram 93 amostras tardias de `14h:15h`, nenhuma zero, e
+207 inícios de CC3. `RAM60h/66h` confirmou a mudança de ADC, mas
+`2374h` e `4991h` não foram executados. Este teste **não simula um
+interruptor de lenta comprovado** e não exclui P4.3: as duas rotas
+condicionais citadas não foram alcançadas. Capturas:
+`cutoff-3000-tps-release-{control,p43low}/`;
+o teste de regressão do estímulo está em `PortController`.
+
+Há uma cópia digital observável do pino: os 28 bytes em G/S88
+`49ADh..49C8h` e A/A+/S37/S36 `4A70h..4A8Bh` são idênticos.
+Com `P2=F8h`, a sequência empacota `2Eh.7`, `2Ah.1`, `P4.7`,
+`22h.4`, `P4.3`, `P4.1` e `P4.6` nos bits 6..0 e grava
+`XRAM[F8E2h]`; o bit 7 fica zero. Um teste dos opcodes originais
+confirma a posição de `P4.3` (bit 2) e `P4.6` (bit 0) nas seis ROMs.
+No boot G a 1.000 RPM, TPS ADC0/6=40/95 e 2,4 milhões de ticks,
+forçar somente `P4.3` baixo mudou as escritas em `49C8h` de
+`00→57h→77h` para `00→53h→73h`. A cobertura de PCs e os resumos
+modelados de CC3 e saídas coincidiram. Capturas:
+`build/ma17-analysis/variants/p4_status_{default,p43low}/`; teste
+`test_p43_level_is_copied_to_f8e2_status_bit_in_full_fiat_boot`.
+O byte é estado interno de XRAM: ainda não identifica a ligação
+elétrica de `P4.3` nem prova que seja o contato de lenta.
+
+O outro leitor de `P4.3` em `2374h` depende do byte em
+`ROM[7375h+RAM57h]`. Nos modos `57h=0/1/2`, as seis ROMs têm
+`09h/03h/05h`: bit 7 limpo, de modo que a guarda em `236Eh` pula a
+consulta do pino. Um teste dos opcodes originais G/S88 `233Bh..2378h`
+e A/A+/S37/S36 `2357h..2394h` confirmou `R7=5` nos três modos,
+com `P4.3` alto ou baixo, quando `22h.4=1`, `P4.7=1` e `T2I1=0`.
+Como prova do ramo, `RAM57h=0Fh` fez `MOVC` ler `7384h=C2h` e
+`P4.3` baixo reduziu `R7` de 5 para 4. **Não foi observada seleção
+natural do modo `0Fh`**; a experiência não identifica o contato físico.
+No segundo leitor, G/S88 `4986h` e família A `4A49h`, os mesmos
+opcodes escolheram o diretório `702Ah` para modos `0/1/2` com ambos
+os níveis de `P4.3`. No ensaio isolado de modo `0Fh`, `P4.3` alto
+escolheu `702Ah` e baixo escolheu `7024h`. Isso delimita a guarda das
+curvas alternativas `748Ah/7494h/749Eh` sem demonstrar uso natural:
+com `57h=0Fh`, o deslocamento posterior `57h×2` leva de `7024h` a
+`7042h→755Ch`, e não a essas três curvas.
+Regressão: `FirmwareP43IndexGateRequiresHighRom7375Bit`.
+Há outros consumidores do mesmo trio de bytes. Em G/S88 `210Ch`,
+o bit 2 do valor `MOVC` escreve `B.4`; o homólogo da família A é
+`2128h`. Um ensaio com opcodes originais das seis ROMs, começando com
+RAM superior `9Eh=B0h`, limpou `B.4` nos modos 0/1 (`09h/03h`) e o
+manteve no modo 2 (`05h`). Num boot G a 1.000 RPM, TPS 40/95 e
+2,4 milhões de ticks, `MOVC` leu naturalmente `7375h=09h` em
+`210Ch` 11 vezes, `233Fh` 230 vezes e `36BBh` 230 vezes.
+Captura: `build/ma17-analysis/variants/mode_flags_7375_g/`; teste
+`test_mode_flags_7375_are_read_by_three_fiat_consumers`.
+Os demais leitores testam bits 0/1/3 sob outras guardas; o rastro
+documenta acesso ao modo zero, não a transição natural entre modos.
+
+Prosseguindo no **mesmo estado de CPU isolado** até o seletor G `1A12h`
+(família A `1A2Eh`), `B.4` foi gravado em RAM superior `9Eh` por
+`2147h`/`2163h`. Com valor inicial `9Eh=B0h`, `XRAM[F8:10h]=0` e
+índice `R4=0`, o resultado nas seis ROMs foi:
+
+| `RAM57h` | `IRAM63h` | `9Eh` após escrita | Diretório → curva | Primeiro byte em `R1` |
+| ---: | ---: | ---: | --- | ---: |
+| 0/1 | `26h` | `8Ch` | `70E0h→79F0h` | `03h` |
+| 2 | `26h` | `9Ch` | `70E4h→7A50h` | `02h` |
+| 0/1/2 | `27h` | `8Ch` ou `9Ch` | `70E0h→79F0h` | `03h` |
+
+O limite é `ROM[720Dh]=26h`: acima dele, a escolha do modo 2 não
+alcança `7A50h`. O teste original `FirmwareP43IndexGateRequiresHighRom7375Bit`
+cobre essa cadeia para G, A, A+, S88, S37 e S36. A execução começa
+com entradas preparadas; não demonstra transição natural para modo 2
+nem a função física de `R1`.
+
+O leitor de bit 3 em G/S88 `360Eh` (família A `363Ch`) integra outra
+cadeia digital. Em execução ligada dos opcodes originais nas seis ROMs,
+`2E3Ah` (família A `2E56h`) grava `F8:EFh=max(0,IRAM[6Fh]-F8:31h)`:
+entradas preparadas `60h/20h` produzem `40h`; `20h/60h` produzem zero.
+Na mesma CPU, com `RAM57h=0` e `XRAM[F9:87h]=4`, `7375h=09h` permite
+que `360Eh` leia `F8:EFh`. O bloco usa `ROM[72D0h]=47h`, multiplica
+por quatro, satura o produto e limita por `ROM[72CCh]=3Ch`: grava
+`3Ch` em RAM superior `C9h`. Com `F8:EFh=0` ou `RAM57h=1/2`
+(`03h/05h`, bit 3 limpo), grava zero. O consumidor G `39B2h`/A `39E0h`
+leva isso a `R2=4Ch` contra `10h` quando `B=CAh=CBh=0`, `R7=7Fh`
+e `R2` inicial é `10h`. Teste:
+`FirmwareF8efProducerModeFlagAndC9ConsumerLinkInSixRoms`.
+
+Na execução completa G a 3.000 RPM, com `ADC0/6=180/247→40/95` no
+tick 1,2 milhão e `ADC3/5/7=4/40/63`, `F8:EFh` recebeu
+`00h→55h→AAh→00h` na inicialização e não voltou a ficar não nulo em
+três milhões de ticks. `2D8Eh` foi alcançado, mas `2E3Ah` e `360Eh`
+não foram; as 291 visitas registradas a `39B2h` viram `C9h=00h`.
+Esse cenário não demonstra que a cadeia preparada ocorra naturalmente.
+Captura: `build/ma17-analysis/variants/mode_bit3_f8ef_tps_release_g/`;
+teste: `test_f8ef_and_upper_c9_stay_zero_after_fiat_tps_release`.
+A função física de `C9h` permanece desconhecida.
+
+Um segundo cenário alcançou o ramo com a ROM G intacta: 3.000 RPM,
+`ADC0/6=40/95`, `ADC3/5/7=40/40/63`, 600 mil ticks e **P4.6 baixo
+experimental** desde o boot. `2E3Ah` gravou `F8:EFh=14h`; `2DBEh` o
+reduziu a `06h`. Sete leituras em `361Ah` viram `06h`, sete leituras
+`MOVC` em `360Eh` retornaram `7375h=09h`, `3699h` gravou `C9h=3Ch`
+sete vezes e `39B2h` consumiu o mesmo `3Ch`. Nessas passagens,
+`39F4h` recebeu `A=9Bh`. Aos 1.000 RPM com o mesmo estímulo, a escrita
+de `F9:87h` que abre a guarda em `35F1h` veio após `F8:EFh` ter caído
+a zero, e `C9h` permaneceu zero; a diferença é temporal no modelo.
+
+Um contrafactual forneceu zero somente às sete leituras `MOVX` em
+`361Ah/F8:EFh`, preservando a ROM e o byte armazenado (`06h`) no log.
+As sete escritas `C9h=3Ch` desapareceram e `A` em `39F4h` passou
+de `9Bh` a `5Fh` nesses pontos. Os histogramas das larguras P5.0/P5.1
+modeladas mudaram, com 22 inícios de pulso em cada pino nos dois braços.
+CC3 manteve 46 inícios e mediana de 1.213 ticks. Isso comprova o
+efeito digital de `F8:EFh→C9h→R2` nessa condição simulada; ainda falta
+traçar a mediação até P5 e identificar a fonte elétrica de P4.6.
+Capturas: `mode_bit3_p46low_3000_{control,zero_read}_g/` e
+`mode_bit3_f8ef_p46low_{read,f987}_g/` em
+`build/ma17-analysis/variants/`; teste:
+`test_f8ef_read_reaches_upper_c9_r2_and_p5_with_p46_low`.
+
+`P4.6` é outro candidato, porque `2D57h/2D60h` o leem e a rota
+`29D5h` pode armar um dos estados que o scanner chama `0402h`
+(interruptor de lenta), sob TPS incompatível. No mesmo degrau
+180/247→40/95 a 3.000 RPM, forçar P4.6 baixo desde o boot mudou a
+sequência: após 1,2 milhão de ticks, houve 121 inícios baixos de CC3,
+contra 100 no controle, e larguras medianas tardias de 1.196 contra
+1.188 ticks. As 93 amostras tardias de `14h:15h` também foram todas
+não nulas, com mediana 299 em ambos os braços. Logo, P4.6 afeta o
+controle modelado, mas este ensaio **não identificou o contato físico**.
+Captura `cutoff-3000-tps-release-p46low/`.
+
+Uma captura posterior isolou o trecho tardio do mesmo degrau TPS, com
+3.000 RPM e `MA17_TRACE_CC3_AFTER_TICK=1600000`, até 3 milhões de ticks.
+No controle, `IRAM[26h].7` passou a 1 entre as entradas consecutivas do
+agendador CC3 nos ticks 2.184.194 e 2.194.094; a última borda modelada
+de `P1.3/CC3` ocorreu no tick 2.185.454. Quando `P4.6` foi levado a
+baixo **somente no tick 1.200.000**, junto com o TPS, `26h.7` mudou
+entre 1.877.295 e 1.887.195; a última borda ocorreu em 1.878.528.
+Ambas as capturas tiveram 142 entradas em `058Eh` após 1,6 milhão de
+ticks, com `CCEN=81h` e `14h:15h` sempre diferente de zero. O desvio
+de cerca de 307 mil ticks na cessação das bordas é, portanto, um efeito
+digital do estímulo experimental em P4.6, não esgotamento do logger.
+
+O opcode `JB 26h.7` em `0591h` salta sobre o agendamento de CC3; a
+rotina em `2050h` atualiza o bit a partir de `F0`, após outras guardas
+e cálculos. **O bloqueio de CC3 pelo bit está confirmado no firmware e
+nos rastros; a função física de cut-off do bico permanece hipótese.**
+Não foi demonstrado que P4.6 seja o interruptor de lenta, nem que a
+mudança deste bit decorra somente do contato. Para testar a condição
+necessária informada para esta ECU, ainda é preciso identificar o pino
+do interruptor e comparar contatos pressionado/solto mantendo iguais
+RPM, TPS e demais entradas. Capturas:
+`build/ma17-analysis/cutoff-3000-late-{control,p46timed}/`.
+
+O probe opcional `MA17_TRACE_CC3_DECISION=1` registrou os PCs que
+alimentam `26h.7`, sem substituir RAM nem alterar a ROM. No controle G,
+`2D04h` comparou `R2=38h` com `RAM[47h]=78h`, deixou `CY=1` e leu
+`ROM[7331h]=32h`; `2D0Eh` copiou o carry para `26h.4`. Na passagem
+seguinte por `1FB4h`, `26h.4` elevou `F0`, que chegou a `26h.7` em
+`2052h`. Com P4.6 baixo desde o fechamento do TPS, `2Fh.0=1` e a
+passagem que ativou `26h.7` veio de `26h.5`: `1F9Bh` registrou `CY=1`,
+`1FB4h` preservou o carry e `2052h` gravou o bit. O estímulo muda a
+rota digital; ele não identifica por si só a chave física nem comprova
+que `26h.7` seja exclusivamente o estado de cut-off.
+
+| ROM | P4.6 baixo desde o degrau? | Primeira observação após `26h.7=1`, tick | Última borda CC3, tick |
+| --- | --- | ---: | ---: |
+| G | não | 2.190.344 | 2.185.454 |
+| G | sim, experimental | 1.883.240 | 1.878.528 |
+| S88 | não | 2.190.366 | 2.185.858 |
+| S88 | sim, experimental | 1.883.261 | 1.878.916 |
+
+Os quatro ensaios terminaram no tick 3.000.000 com 142 entradas tardias
+em `058Eh` por braço. `058Eh..05DCh`, `1E00h..2054h` e
+`2CC0h..2D61h` são byte a byte idênticos em G e S88. As constantes
+`7200h+32h..43h` e `7300h+2Fh..31h` também coincidem nas seis ROMs;
+isso não autoriza aplicar os mesmos PCs à família A, cujo código em
+`1Fxxh` diverge. Capturas:
+`build/ma17-analysis/cutoff-{3000,s88}-decision-{control,p46timed}/`.
+O teste de regressão do probe verifica que o bit observado após `2052h`
+é igual a `F0` na entrada da sequência.
+
+Controle adicional com as mesmas entradas e 3.000 RPM manteve
+`ADC0/6=180/247` durante 3 milhões de ticks. Com P4.6 padrão ou
+forçado baixo a partir do tick 1.200.000, nenhuma das 142 entradas
+tardias em `058Eh` viu `26h.7=1`, e as bordas de CC3 prosseguiram até o
+fim da captura. Assim, **P4.6 baixo isolado não foi suficiente para
+ativar essa guarda** no estado testado. O degrau de TPS participa da
+diferença observada, mas o contato de lenta real ainda não foi
+estimulado de modo comprovado. Capturas:
+`build/ma17-analysis/cutoff-3000-tpshigh-{control,p46timed}/`.
+
+O trace de `MOVC` alcançou `ROM[7331h]=32h` em `2D0Ah` com
+`DPTR=7300h` no cenário G de fechamento do TPS. Em `2D04h`, o código
+compara `R2` com `IRAM[47h]`; `MOVC` não muda o carry, que `2D0Eh`
+copia para `26h.4`. O byte lido é usado separadamente como recarga
+de `XRAM[F826h]` em `2D15h`. Substituir **somente o retorno MOVC** por
+`01h` mudou a sequência de F826h de `00→32→31→...` para
+`00→01→00→01→...`; as leituras de `7331h` passaram de 2 para 41 em
+3 milhões de ticks. `26h.7` ativou no mesmo tick 2.190.344 e a última
+borda CC3 permaneceu no tick 2.185.454 nos dois braços. Portanto,
+`7331h` é uma **recarga digital confirmada**, sem evidência de que
+represente a duração do cut-off ou um tempo físico. Todas as seis ROMs
+têm `32h` nesse endereço; o consumidor da família A aparece
+estaticamente em `2D26h`, mas sua execução completa exige um perfil
+de hardware validado. Capturas:
+`build/ma17-analysis/cutoff-3000-xram26-{control,7331-01}/`;
+catálogo: `xram_f826_reload_7331`.
+
+O cut-off conhecido **na ECU física ocorre acima de 1.500 RPM**
+(informação do proprietário; limiar exato e condições de habilitação ainda
+não medidos aqui). Portanto, a transição digital rastreada abaixo não
+deve ser chamada de limiar de cut-off físico. No cenário digital G
+descrito acima, um sweep de RPM
+solicitado ao gerador 60-2 mostrou outra fronteira:
+
+Os ensaios a 1.500 RPM abaixo exercitam esse ramo digital; não são
+uma observação de cut-off físico nesse RPM. A validação requer localizar
+o contato de lenta e o pino do único bico, medir os pulsos com TPS fechado
+e aberto e varrer RPM abaixo e acima de 1.500 em condições térmicas
+controladas.
+
+| RPM solicitado | IRAM[47h] | `26h.7` após fechar TPS | Borda CC3 tardia |
+|---:|:---:|:---:|:---:|
+| 1.400–1.401 | `38h` | não | sim |
+| 1.425–1.500 | `39h`–`3Ch` | sim | não |
+
+Um controle adicional manteve as pistas TPS constantes desde o boot,
+com ADC1/2/3/4/5/7=520/400/16/360/160/252 em escala de 10 bits.
+Com TPS fechado (`ADC0/6=160/380`), G a 1.400 RPM leu `7310h` 178
+vezes, conservou `26h.7=0` e gerou bordas CC3 até o tick 2.984.620;
+a 1.500 RPM leu `7310h` 180 vezes, ativou `26h.7` e a última borda
+ocorreu no tick 1.162.502. Com TPS aberto (`720/988`), não houve
+leituras de `7310h` nem ativação de `26h.7` a 1.500 ou 1.600 RPM;
+as bordas continuaram até os ticks 2.988.390/2.996.509. Assim, a
+passagem pela comparação depende do estado de TPS neste harness, além
+do byte de RPM. Isso não identifica o contato de lenta nem converte a
+fronteira digital em limiar físico de cut-off. Regressão:
+`test_7310_guard_depends_on_tps_state_at_fixed_rpm`; capturas
+`build/ma17-analysis/variants/cutoff_{1400,1500,1600}_steady_{closed,open}/`.
+
+Uma grade adicional com G original a 1.500 RPM, ADC1/2/3/4/5/7 fixos
+em `520/400/16/360/160/252`, TPS sem degrau e 2 milhões de ticks
+mostrou uma **guarda anterior** à comparação com `RAM70h`:
+
+| ADC0/6 bruto | `RAM70h` em `2D0Eh` | `27h.3` e `24h.5` em `2C3Ch` | Alcançou `2C49h`/`2D04h` | Inícios CC3 modelados |
+|---:|:---:|:---:|:---:|---:|
+| 320/580 | `2Ch` | ambos 1 em passagem tardia | sim/sim | 51 |
+| 400/680 | `34h` | ambos 0 | não/não | 93 |
+
+Os dois valores de `RAM70h` são menores que `4Ah`. Assim, o teste
+`70h−4Ah` em `2CD3h` não explica a diferença: `2C40h` testa `27h.3`
+e `2C43h` testa `24h.5` antes do `MOVC` em `2C4Bh`. A grade de oito
+pares ADC0/6, de `160/380` até `720/988`, está em
+`build/ma17-analysis/variants/cutoff_tps_grid_*/`; os rastros de flags
+em `cutoff_tps_path_{320_580,400_680,560_880}/`. Os pares intermediários
+são estímulos digitais exploratórios, sem escala física de TPS validada.
+Regressão: `test_tps_state_can_bypass_7310_before_ram70_comparison`.
+
+O produtor original `11C4h..11D1h` recebeu `R4=91h/AAh` nesses dois
+cenários, gravou `RAM6Fh=R4−0Dh=84h/9Dh` e
+`RAM70h=floor((R4−0Dh)/3)=2Ch/34h`. Em `29A3h`, o firmware copia
+`RAM6Fh` para `R2`. Com `R3=80h`, a comparação em `2AB1h` usa
+`0Dh+R3=8Dh`: `84h` passa para a máquina de estados, enquanto `9Dh`
+toma o desvio para `2A45h`. No primeiro braço, `2AF9h` liga `24h.2`;
+depois `2B42h..2B49h` ligam `27h.3` e `24h.5`, permitindo `2C49h`.
+
+Para separar essa leitura do restante do TPS, um contrafactual forneceu
+somente o resultado de `MOV R2,6Fh` em `29A3h`, mantendo a ROM e o
+valor armazenado em `RAM6Fh` originais:
+
+| ADC0/6 | Leitura `6Fh` fornecida | Passou por `2AF9h`/`2B42h`/`2C49h`/`2D04h` | Decisões `26h.7=1` | Inícios CC3 |
+|---:|:---:|:---:|---:|---:|
+| 320/580 | original `84h` | sim | 81 | 51 |
+| 320/580 | `9Dh` | não | 0 | 93 |
+| 400/680 | original `9Dh` | não | 0 | 93 |
+| 400/680 | `84h` | sim | 81 | 51 |
+
+Isso confirma `RAM6Fh` como mediador digital desta guarda no modelo G.
+Não identifica a posição física do TPS nem prova cut-off do bico.
+Capturas `build/ma17-analysis/variants/cutoff_ram6f_*/` e
+`cutoff_tps_6fproducer_{320_580,400_680}/`; regressão:
+`test_ram6f_read_mediates_tps_pre_movc_gate`.
+
+A ROM S88 original repetiu os quatro braços no mesmo perfil Fiat: os
+inícios CC3 foram `51/93/93/51`, e as decisões amostradas com
+`26h.7=1` foram `81/0/0/81`. Os PCs `2AF9h`, `2B42h`, `2C49h` e
+`2D04h` apareceram somente nos braços de leitura `84h`. Os trechos
+originais `11C4h..11D3h`, `299Ah..29A7h`, `2A78h..2AB3h`,
+`2AF9h..2B4Eh`, `2C3Ch..2D15h` e `1F9Bh..205Bh` coincidem em
+G/S88. Regressão: `test_s88_ram6f_read_repeats_pre_movc_gate`;
+capturas: `build/ma17-analysis/variants/cutoff_ram6f_s88_*/`.
+
+Na família A, o produtor `11C4h..11D3h` permanece no mesmo endereço.
+Os opcodes de `29A3h` (`MOV R2,6Fh`), `2A78h..2AB3h`, `2AF9h` e
+`2B42h..2B4Eh` têm trechos idênticos deslocados em `+1Ch`;
+os demais bytes desse caminho incluem destinos de chamadas e saltos
+relocalizados. Isso sustenta a correspondência estática, sem demonstrar
+o mesmo resultado na execução completa da família A. Regressão:
+`test_ram6f_pre_movc_guard_sites_align_across_six_roms`.
+Ao forçar P4.6 baixo experimentalmente, a 1.400 RPM com TPS fechado
+as leituras de `7310h` aumentaram de 178 para 228, mas `26h.7`
+continuou limpo e CC3 seguiu pulsando. A 1.500 RPM com TPS aberto,
+as leituras passaram de zero para 60; ainda assim `26h.7` ficou limpo
+e houve 143 inícios CC3 nos dois braços. Logo, alcançar `7310h` é
+insuficiente para ativar a guarda. No par a 1.500 RPM, o braço com TPS
+fechado chegou a `2D04h` no tick 1.167.033: `R2=38h`, `47h=3Ch` e
+`CY=1`; `2D0Eh` copiou esse carry para `26h.4`, e `2052h` pôs
+`26h.7=1` no tick 1.176.409. O braço aberto com P4.6 baixo também
+leu `7310h`, mas em `2CD3h` tinha `RAM70h=DFh`; o teste
+`70h−4Ah` tomou `JNC 2D0Dh`, limpou o carry e pulou `2D04h`.
+`26h.4` e `26h.7` permaneceram limpos. No braço fechado,
+`RAM70h=1Bh` permitiu continuar até `2D04h`. O caminho demonstra a
+guarda anterior à comparação de RPM nesse estado. O produtor de
+`RAM70h` também divergiu: o braço fechado passou por `11C4h..11D1h`,
+com `R4=5Fh`, e gravou `floor((5Fh−0Dh)/3)=1Bh`.
+O braço aberto com P4.6 baixo passou por `11A8h..11C0h`;
+em `1175h`, `R2=B4h` e `R3=1Ah` dão
+`min(FFh,B4h+0Dh)−1Ah+38h=DFh`. Isso liga os dois caminhos de
+cálculo ao gate `70h−4Ah`, sem provar a escala física de `70h`.
+Essas execuções não identificam P4.6 como
+interruptor de lenta. Capturas `cutoff_{1400,1500}_steady_{closed,open}_p46low/`.
+Rastros de decisão antecipada:
+`cutoff_1500_{closed,open_p46low}_branch_early/` e
+`cutoff_1500_{closed,open_p46low}_tps70_source/`.
+
+Uma troca **somente da leitura** `MOV A,70h` em `2CD3h`, a partir do
+tick 1.100.000, testou a mediação sem alterar a ROM nem o valor
+armazenado em `70h`. No braço fechado a 1.500 RPM, fornecer `DFh` no
+lugar de `1Bh` eliminou `2D04h` e a guarda `26h.7`; os inícios CC3
+passaram de 51 para 143 em três milhões de ticks. No braço aberto com
+P4.6 baixo, fornecer `1Bh` no lugar de `DFh` fez `2D04h` executar e
+ligou `26h.7` durante oito decisões entre os ticks 1.114.695 e
+1.186.777. O bloqueio foi transitório: os inícios CC3 passaram de
+143 para 139, e as bordas continuaram depois do tick 2.900.000.
+No tick 1.187.358, `2D0Eh` voltou a ver `CY=0` e limpou `26h.4`;
+`2052h` limpou `26h.7` no tick 1.196.607. A persistência ainda
+depende de estados adicionais no fluxo de `2Cxxh`.
+Assim, `RAM70h` nessa leitura medeia a entrada no ramo, mas não é
+suficiente para sustentar a guarda no estado aberto. Regressão:
+`test_ram70_read_at_2cd3_mediates_rpm_guard_but_not_persistence`;
+capturas `cutoff_1500_{closed_ram70read_df,open_p46low_ram70read_1b}/`.
+
+O fim dessa guarda transitória veio de outro leitor de `70h`.
+Com TPS aberto e P4.6 baixo, `29D5h` ligou `27h.0` no tick
+1.187.281; `2C24h` limpou `27h.3` no tick 1.187.321,
+`2C1Bh` restaurou `F8:3Bh` de `00h` para `32h` e limpou `24h.5`.
+A próxima passagem por `2C3Ch` então desviou por `2CCDh→2D0Dh`,
+limpando `26h.4` e depois `26h.7`. O opcode em `29CEh` compara
+`4Ah−RAM70h`; com `DFh`, o carry permite chegar ao teste de
+`F8:3Ch` e a `SETB 27h.0` em `29D5h` quando o byte é zero.
+
+Um fatorial de leituras pontuais após o tick 1.100.000 separou as
+duas funções de `RAM70h`, mantendo a ROM G intacta, 1.500 RPM,
+TPS aberto e P4.6 baixo experimental:
+
+| Valor fornecido em `2CD3h` / `29CEh` | Decisões com `26h.7=1` | Inícios CC3 em 3 M ticks | Última borda CC3 |
+| --- | ---: | ---: | ---: |
+| original / original | 0 | 143 | 2.988.390 |
+| `1Bh` / original | 8 | 139 | 2.988.306 |
+| original / `1Bh` | 0 | 143 | 2.988.372 |
+| `1Bh` / `1Bh` | 185 | 48 | 1.106.196 |
+
+O braço duplo não passou por `29D5h` após a intervenção;
+`27h.3/24h.5` permaneceram ligados na janela observada e a guarda
+persistiu até o fim de 3 M ticks. Assim, a leitura em `2CD3h`
+abre a comparação de RPM, enquanto a leitura em `29CEh` pode
+acionar uma rota de falha que desfaz esse estado. Essa interação é
+digital e condicionada aos estímulos testados; não identifica o
+contato de lenta nem a saída física do bico. Regressão:
+`test_ram70_read_pair_controls_guard_persistence_with_p46_low`;
+capturas `cutoff_1500_open_p46low_ram70read_1b_{29ce,both}/` e
+`cutoff_1500_open_p46low_ram70read_1b_{f83b,fault}/`.
+O probe opcional `MA17_TRACE_CUTOFF_PATH=1`, com janela definida por
+`MA17_TRACE_CC3_AFTER_TICK`, registra esses PCs e flags sem escrever
+RAM ou SFR; o teste compara os quatro braços por reinicializações
+independentes.
+
+A ROM S88 original, executada separadamente no mesmo perfil Fiat,
+reproduziu os 143/139/143/48 inícios CC3 dos quatro braços. As
+decisões amostradas com `26h.7=1` foram 0/8/0/186 (G: 0/8/0/185);
+no braço duplo, a última borda ocorreu no tick 1.106.738. O bit
+`27h.0` surgiu em `29D5h` nos braços controle e `2CD3h` isolado,
+mas não nos braços com a substituição em `29CEh`. Os bytes de
+`29CBh..29D6h`, `2C0Ch..2D15h`, `1F9Bh..2053h` e `7310h=38h`
+são idênticos em G/S88. Essa repetição sustenta a homologia do ramo
+nessas duas imagens, sem estender o resultado às quatro ROMs da família
+A ou ao circuito físico. Regressão:
+`test_s88_ram70_read_pair_repeats_guard_interaction`; capturas
+`cutoff_s88_1500_open_p46low_{base,gate,fault,both}/`.
+
+Nas quatro ROMs da família A, o trecho G `29CBh..29D6h` que lê
+`RAM70h` em `29CEh` reaparece byte a byte em `29E7h..29F2h`;
+o contador `2C0Ch..2C2Bh` reaparece em `2C28h..2C47h`.
+O ramo `2C3Ch..2D15h` também se alinha com deslocamento `+1Ch`,
+exceto pelos dois bytes de destino dos saltos em `2C48h` e `2C55h`.
+O agendador `1F9Bh..205Bh` conserva 189 dos 193 bytes nesse
+alinhamento; os quatro bytes diferentes são destinos de duas chamadas.
+Isso localiza os homólogos estáticos de `29CEh`, `2CD3h` e `2054h`
+em `29EAh`, `2CEFh` e `2070h`, respectivamente. Ainda não demonstra
+que a família A percorra esse caminho com o perfil de hardware Fiat,
+nem identifica a saída física. Regressão:
+`test_ram70_guard_and_fault_sites_align_across_six_roms`.
+
+Em `2C49h`, o firmware carrega `A=10h`; o `MOVC` em `2C4Bh` lê
+`ROM[7310h]=38h` com `DPTR=7300h` e põe o resultado em `R2`.
+As comparações em `2C7Ch` e `2D04h` usam `IRAM[47h]`, que acompanha
+o RPM injetado.
+O trecho de 280 bytes `2C49h..2D60h` é idêntico em G/S88. Nas quatro
+ROMs da família A, a rotina homóloga fica em `2C65h..2D7Ch` e difere
+somente no destino de um `LJMP`: `2CD3h→2CEFh`, também deslocado `+1Ch`.
+Assim, o `MOVC` homólogo está em `2C67h` e as comparações em `2C98h` e
+`2D20h`; todas as seis ROMs guardam `38h` em `7310h`. A regressão
+`test_7310_rpm_bound_consumer_is_relocated_in_a_family` confere esses
+bytes. Esta correspondência estática não valida o limiar de cut-off da
+família A em execução completa, pois seu perfil de hardware difere.
+Um ensaio isolado dos opcodes originais A/A+/S37/S36 preparou
+`DPTR=7300h`: `2C67h` leu `7310h=38h` e gravou `R2`. Ao entrar
+separadamente nas comparações de `2C98h` e `2D20h`, com a mesma CPU,
+`IRAM[47h]=38h` deixou o carry limpo e `39h` o ligou. Regressão:
+`AlcoholRpmBoundMovcFeedsRelocatedComparisons`. O teste confirma a
+aritmética local; não mede RPM físico nem alcançabilidade no boot A.
+
+Em quatro execuções de 3 milhões de ticks, a leitura
+original em 1.400 RPM não ativou `26h.7`, mas fornecer `34h` só no
+retorno desse `MOVC` ativou a guarda no tick 2.190.186 e encerrou as
+bordas CC3 no tick 2.178.580. Em 1.500 RPM, a leitura original ativou
+a guarda no tick 2.190.190, com última borda no tick 2.172.388;
+fornecer `3Ch` ao `MOVC` impediu a ativação e manteve bordas até
+2,98 milhões de ticks. O hash da ROM permaneceu igual nos quatro casos.
+Logo, `7310h` é um limite **digital causal** desse ramo no modelo G,
+mas não foi convertido em um limiar físico de cut-off. A divergência
+com a observação acima de 1.500 RPM pede validação do tempo da roda,
+do sinal real do interruptor de lenta e da saída elétrica do bico;
+`CC3` ainda não foi identificado fisicamente como o bico. Capturas:
+`build/ma17-analysis/cutoff-rpm-{1400,1401,1425,1450,1475,1499,1500,1501}/`
+e `cutoff-rpm-{1400-7310-34,1500-7310-3C}/`;
+catálogo: `iram47_branch_bound_7310`.
+
+O mesmo experimento em **S88** reproduziu os quatro estados: em
+1.400 RPM, original sem guarda e retorno `34h` com guarda; em 1.500 RPM,
+original com guarda e retorno `3Ch` sem guarda. O valor bruto lido
+continuou `38h` e o hash S88 não mudou. As últimas bordas CC3 foram,
+respectivamente, 2.984.762, 2.178.720, 2.172.600 e 2.984.464 ticks.
+Capturas: `build/ma17-analysis/s88-7310-rpm1400-{original,34}/` e
+`s88-7310-rpm1500-{original,3C}/`.
+Uma medição independente da roda em 1.425 RPM solicitados registrou
+72 passagens pela posição zero com período invariável de 41.640 ticks,
+equivalente a **1.426,5 RPM** usando 990.000 ticks/s. A quantização do
+gerador explica cerca de 1,5 RPM nesse ponto, não a diferença frente
+ao relato físico de cut-off acima de 1.500 RPM. Captura:
+`build/ma17-analysis/crank-1425-period-check/`.
+Forçar P4.7 baixo desde o boot, mantendo o mesmo degrau de TPS, também
+não deslocou essa fronteira no G: em 1.400 RPM não houve guarda; em
+1.425 e 1.500 RPM houve, com primeiras observações nos ticks 2.190.429
+e 2.190.184. P4.7 já participa de outro piso de RPM documentado, mas
+sua identidade elétrica não foi estabelecida; este resultado não
+identifica o interruptor de lenta. Capturas:
+`build/ma17-analysis/cutoff-p47low-rpm{1400,1425,1500}/`.
 
 A hipótese de carga **RPM × TPS** é coerente com a falta de MAP nessa
 pinagem e com as dependências digitais já medidas: `IRAM[47h]` acompanha
@@ -3863,7 +7520,7 @@ passagem ocorre. O teste
 casos TPS alto. As capturas estão em `build/ma17-analysis/variants/`
 sob `lambda_tps_mode_*`. Um TPS alto **estável** não representa
 aceleração forte; os dados não permitem chamar o último caso de malha
-aberta nem atribuir a diferença de CC3 exclusivamente ao integrador.
+aberta nem atribuir a diferença de CC3 exclusivamente ao estado `F8:0Ch`.
 Um contraste transitório foi tentado com ambas as pistas mudando em `1.200.000`
 ticks, de `ADC0/6=120/95` para `180/247`, mantendo `ADC5=40` ou `200`;
 as capturas são `lambda_tps_step_low/` e `lambda_tps_step_high/` no mesmo
@@ -3936,10 +7593,22 @@ cabeçalhos `7054h→7824h` (`70 05`) e `7056h→782Bh` (`47 04`) usam
 interpola duas linhas e duas colunas. Assim, os 20 bytes formam uma
 matriz **5×4**, com frações `R4/R6`.
 
+Os dois eixos agora têm entradas próprias no catálogo. A rotina original
+`527Ch` (ou `533Fh` na outra revisão de código) lê os incrementos de
+trás para frente e compara a soma com o byte de entrada usando carry de
+8 bits. Executá-la nas seis ROMs para **todos os 256 valores** de cada
+eixo deu limites brutos `70h`: **37, 68, 130, 250** e `47h`:
+**52, 80, 108**. Somar os bytes no sentido em que aparecem na ROM
+produziria limites incorretos. Em um rastro G de 3.000 RPM, os dois
+cabeçalhos foram lidos 433 vezes cada por `MOVC` em 2,4 milhões de
+ticks. O teste `SixRom7824And782bMatrixAxesSegmentAllRawValues` fixa
+os limites; a escala física de `70h` e a conversão de `47h` em RPM
+para cada clock ainda precisam de validação.
+
 `3DC1h` seleciona `7925h` sob a guarda de `28h.1/.2` e `2Fh.0`,
 gravando o resultado em `RAM[6Eh]` em `3DC7h`. O código em `1773h`
 leva `6Eh` a `R4`; `184Dh/1854h` usa esse valor numa operação de
-16 bits antes de `199Ah` atualizar `RAM[5Dh:5Ch]`. Em `3E14h..3E2Eh`,
+16 bits antes de `199Ah` atualizar `RAM[5Ch:5Dh]`. Em `3E14h..3E2Eh`,
 outra guarda seleciona `7895h` ou `78BDh`; `3E33h` grava o resultado
 por `MOVX @R1`, com `R1=01h` e `P2=F8h` no ensaio G. Não há ainda
 identificação física demonstrada para `F8:01h` ou para `6Eh`.
@@ -3954,6 +7623,184 @@ de ticks, produziu:
 | `78BDh` | 0 | ramo não alcançado; `3E33h=61h` | P5 e CC3 medianos iguais |
 | `7925h` | 1.780 | `3DC7h`: `6Eh` de `5Ch→84h` | P5 e CC3 medianos iguais |
 
+Um segundo estado natural G mostra efeito da matriz `7895h` sobre a
+**contagem** de pulsos modelados. A 1.000 RPM, com `ADC0/6=180/247`,
+`ADC3/5/7=34/110/63`, `ADC0/6` passa a `40/95` no tick 3.274.600.
+Em quatro milhões de ticks, há 3.160 leituras de `7895h` e nenhuma
+de `78BDh`. Doar somente as células A muda `F8:01h=72h→9Ah`, mantendo
+o hash da ROM G. Em ambos os braços, 69 de 386 visitas a `1CB7h`
+têm `7Ah≠0`. Entre 129 entradas do agendador CC3, os intervalos
+`RAM[14h:15h]=0000h` após a transição passam de 2 para 14; os
+inícios de pulso no modelo caem de 127 para 115. Na entrada 107,
+o candidato G `00CAh` ultrapassa o limite ROM `00C8h` e é publicado,
+enquanto o candidato com células A `0044h` fica abaixo e é zerado.
+O braço A volta a publicar um intervalo não nulo (`00D5h`) na entrada
+119. A mediana global CC3 permanece 4.404 ticks e P5, 1.921 ticks.
+Isto mede efeito causal no modelo G, sem identificar fisicamente o
+atuador. Capturas: `7895_tps_release_{control,donorA}/`; regressão:
+`test_7895_donor_reduces_cc3_events_after_tps_release`.
+
+Uma segunda condição G alcança naturalmente `78BDh`: 1.000 RPM,
+`ADC0/6=40/95`, `ADC3/5/7=4/200/63`. Em 2,4 milhões de ticks,
+`3E1Ah` ocorre 369 vezes e há 1.736 leituras `MOVC` no bloco. Doar
+somente as 20 células A para a execução G preserva o hash da ROM e
+altera o último `A` em `3E33h` e o `XRAM[F8:01h]` lido em `1CB7h`
+de `72h` para `9Ah`. Com `ADC5=40`, a mesma condição seleciona
+`7895h` (1.940 leituras) e não lê `78BDh`. A mediana de P5 permanece
+1.861 ticks e a largura modelada de CC3, 2.372 ticks: no consumidor
+observado `IRAM[7Ah]=00h`. A função física de `F8:01h` segue em aberto.
+Capturas: `78bd_natural_tps40_95_adc3_4_adc5_200{,_donorA}/`;
+regressão: `test_78bd_natural_adc5_branch_and_donor_reach_f801`.
+
+Uma transição posterior de TPS também preserva a seleção de `78BDh`
+com `IRAM[7Ah]` diferente de zero. A execução G começa com
+`ADC0/6=180/247`, `ADC3/5/7=4/200/63` e 1.000 RPM; no tick 3.274.600,
+`ADC0/6` passa a `40/95`. Em quatro milhões de ticks há 2.988 leituras
+da matriz e 69 de 386 passagens por `1CB7h` têm `7Ah≠0`. Na última,
+`7Ah=8Ch`: doar as células A muda `F8:01h=72h→9Ah` e o resultado `B`
+em `1CDFh` de `0Ch` para `10h`. O opcode `mov R1,B` em `1CDFh` grava
+esse resultado em `R1` logo depois do ponto observado. As medianas
+globais continuam P5=1.921 e CC3=4.464 ticks, mas escondem uma
+diferença na sequência: o agendador CC3 recebe `RAM[14h:15h]=0000h`
+em dez visitas consecutivas na doação A (índices de instrução
+3.315.115 a 3.582.432), contra valores não nulos no controle. O
+modelo de pino CC3/P1.3 registra 129 inícios de pulso no controle e
+119 na doação. O trace localiza a guarda: em `1EA9h`, `R3:R2=00E2h`
+no controle e `005Ah` na doação; `ROM[DPTR+18h:19h]` fornece o limite
+`00C8h`. O candidato da doação fica abaixo desse limite. Como
+`XRAM[F8:08h]=61h` tem bit 7 limpo e `XRAM[F8:EFh]=00h`, o ramo
+`1EB9h..1EC7h` zera `R5:R4`; `1ECBh..1ED3h` então publica `0000h`
+em `RAM[14h:15h]`. No controle, o código preserva `00E2h`. Isso
+explica as dez oportunidades de pulso anuladas no **modelo emulado**;
+a ligação física de CC3/P1.3 ainda depende do circuito.
+Capturas: `78bd_tps_release_adc3_4_adc5_200_{control,donorA}/`;
+regressão: `test_78bd_donor_reaches_nonzero_iram7a_consumer_after_tps_release`.
+
+A correspondência entre revisões foi verificada também por execução
+isolada dos opcodes originais nas seis ROMs. O ramo G/S88 em
+`3E14h..3E33h` e o ramo A/A+/S37/S36 em `3ED1h..3EF0h` selecionam
+`7080h` ou `7084h` conforme `2Ch.4`, com `2Fh.1=0` e `T2I1=0`.
+Fixando `R5=2` e as frações de interpolação em zero, a terceira célula
+é escrita por `MOVX @R1` em `F8:01h`: `80h/81h` em G/S88/S37/S36 e
+`A8h/A9h` em A/A+. O teste
+`Sab80C517.SixRom78bdBranchWritesSelectedCellToF801` comprova a
+homologia do ramo e das tabelas nesse estado preparado; não demonstra
+a seleção durante a inicialização natural do hardware A.
+
+O consumidor também possui correspondência comprovada: o alinhamento
+leva `1CB7h/1EA9h/1ED3h` em G para `1CD3h/1EC5h/1EEFh` no código A.
+Os opcodes da comparação e publicação, assim como o limite
+`ROM[7218h:7219h]=00C8h`, são iguais nas seis imagens. Em execuções
+isoladas com os opcodes originais, o candidato `005Ah` publica `0000h`
+quando `F8:08h=61h` e `F8:EFh=00h`. O mesmo candidato publica o limite
+`00C8h` quando o bit 7 de `F8:08h` está ligado, ou quando
+`F8:EFh=01h` e `2Fh.0=1`. Com `F8:EFh=01h` e `2Fh.0=0`, publica zero;
+`00E2h` é preservado. Teste:
+`Sab80C517.SixRomCc3LowerGatePublishesZeroBelowBound`. O estado
+preparado demonstra a guarda comum, sem estabelecer o acesso natural
+ou a mesma sequência de pulsos no hardware A.
+
+Um rastreamento adicional localiza onde a diferença de `7925h` se perde
+nesse estado. Após tick 1.400.000, 160 passagens por `3DC7h` recebem
+`A=5Ch` no controle e `84h` na doação; em 99 passagens por `183Ch`,
+`R4` já conserva respectivamente `5Ch`/`84h`. `RAM[2Ch]=38h` deixa
+o bit 7 desligado, e o desvio em `1840h` segue sempre para `184Bh`.
+Ali `R7:R6=0000h` menos `R5:R4` positivo toma emprestado; o ramo
+`1858h` satura o resultado em zero antes de `199Ah`. Nas 98
+passagens tardias por `199Ah`, `R7:R6` e `RAM[5Ch:5Dh]` são zero em
+ambos os braços, apesar da diferença preservada em `R4`. As estruturas
+de eventos P5 e CC3 são iguais entre as execuções. Isso explica o
+bloqueio **nessa condição**, sem excluir efeito de `7925h` quando a
+entrada anterior `R7:R6` for maior. Capturas:
+`7925_ram6e_path_{control,donor}/`; teste:
+`tests.test_ma17_matrix_7925`.
+
+Há também uma passagem com entrada positiva em outro estado G:
+1.000 RPM, ADC0/6=40/95, ADC2/3=140/34, 4 milhões de ticks.
+`7925h` é lida 3.240 vezes; `3DC7h` conserva a diferença, e a
+passagem por `183Ch` no tick 3.284.915 recebe `R7:R6=03C0h` com
+`R4=13h` no controle ou `3Bh` na doação. Mas `2Ch=A2h` liga o bit 7:
+`1843h..1846h` chama `1863h`, que substitui `R5:R4` por
+`RAM[5Bh]×20h=1Eh×20h=03C0h` em ambos. `199Ah` encontra
+`R7:R6=0000h` nos dois braços. Portanto esta passagem também não
+mede o efeito posterior da matriz; ela revela outra guarda que o
+mascara. Capturas: `7925_natural_gate_{control,donor}/`; o segundo
+teste em `tests.test_ma17_matrix_7925` cobre esse cruzamento.
+
+Um cruzamento adicional muda apenas a decisão do primeiro `JNB 2Ch.7`
+em `1840h` que encontra `R7:R6≠0`: o harness zera esse bit durante a
+instrução original `30 67 08` e restaura `RAM[2Ch]` logo após o tick.
+Os quatro braços combinam tabela G/A com guarda nativa/alterada.
+Sem intervenção, `199Ah` recebe `R7:R6=0000h` nas duas tabelas; com
+ela, a subtração usa `R4=13h`/`3Bh` e produz `03C0h−0013h=03ADh` ou
+`03C0h−003Bh=0385h`, observados em `R7:R6` e, após a escrita, em
+`RAM[5Ch:5Dh]`. A doação preserva o SHA da ROM G, e o relatório marca
+explicitamente a guarda artificial. Os relatórios estruturados de
+P5 e CC3 são iguais **entre os dois braços com guarda alterada**;
+o CC3 mediano é 2540,5 ticks neles, contra 2540 nos braços nativos.
+Portanto foi isolado um elo digital latente de `7925h` até a RAM, sem
+demonstrar efeito físico ou alcance natural dessa rota. Capturas:
+`7925_gate_once_{control,donor}_{normal,clear}/`; teste:
+`test_one_instruction_gate_exposes_donor_result_in_5c_5d`.
+
+Um degrau simulado nos ADC0/6, canais associados ao TPS, abriu
+**a mesma rota sem alterar bit algum da CPU**.
+G começa em ADC0/6=180/247, ADC2/3=140/34 e 1.000 RPM; no tick
+3.267.000, apenas ADC0/6 passam a 40/95. `199Ah` recebe `0A40h` em
+3.274.654, ainda com `5Bh=52h`; o escritor original `3DDCh` reduz
+`5Bh` para `1Eh` em 3.280.630. Em 3.284.916, a subtração deixa
+`R7:R6=0680h` e limpa `2Ch.7`. Na visita seguinte, em 3.295.357,
+`1840h` desvia naturalmente para `184Bh`. Doar só os 20 bytes A de
+`7925h` muda `R4=13h→3Bh`, depois `RAM[5Ch:5Dh]=066Dh→0645h`.
+Ambos os braços fazem 3.160 leituras `MOVC` no intervalo da matriz.
+
+O efeito digital persiste na trajetória de XRAM `F8:0Ch`: a primeira
+transição para `8Bh` ocorre em tick 3.356.561 no controle e
+3.315.882 com a tabela A. Um cruzamento somente na leitura original
+`MOV R4,6Eh` (`AC 6E`, PC `1773h`) inverte `13h↔3Bh`, restaurando a
+RAM fonte após cada instrução. Controle com leitura `3Bh` reproduz
+os relatórios estruturados de XRAM, RAM, P5 e CC3 da doação; doação
+com leitura `13h` reproduz os do controle. A ROM ativa mantém o hash
+G em todos os braços. P5.0/P5.1 medianos são 1921 ticks e CC3 4404
+em ambos os mapas; as distribuições individuais de bordas podem variar.
+Isso demonstra mediação emulada de `7925h→6Eh→R4→5Ch:5Dh→F8:0Ch`
+sob o degrau experimental de TPS, sem identificar a função física de
+`F8:0Ch`. Capturas: `7925_tps_release_cross_{control,donor,
+control_to_3b,donor_to_13}/`; teste:
+`tests.test_ma17_matrix_7925_release`.
+
+Uma repetição do mesmo degrau ADC0/6 fixou ADC5 bruto em `40` ou
+`200`, mantendo ADC2/3=140/34 e 1.000 RPM. Em cada par G/G←A,
+`7925h` foi lida igualmente (3.164 leituras no ADC5=40; 3.172 no
+ADC5=200) e `R4` em `183Ch` diferiu `13h→3Bh`. Com ADC5=40,
+`2Ch=AAh` nessa passagem, a sequência de `F8:0Ch` divergiu e os
+valores finais aos 4 milhões de ticks foram `98h`/`A2h`. Com
+ADC5=200, `2Ch=22h`, `R7:R6=0000h` na mesma região e `F8:0Ch`
+permaneceu `80h` nos dois braços. P5.0 mediano ficou em 1921 ticks
+e CC3 em 4404 nas quatro execuções. O scanner apresentaria `98h` e
+`A2h` como +4,68%/+6,63% pela sua escala *não validada*; isso não
+comprova malha fechada nem unidade física da matriz. O cruzamento
+`6Eh` em ADC5=40 está descrito logo abaixo. Capturas:
+`7925_lambda_factor_{40,200}_{control,donor}/`; teste:
+`Matrix7925Adc5Tests.test_adc5_bounds_table_effect_on_f80c_in_tps_release`.
+
+O primeiro cruzamento em ADC5=40 limitava o override de `1773h` a
+`2Ch.7=0` e não permutou `F8:0Ch` (`98h/A2h/93h/A8h`). O trace mostrou
+por quê: em tick 3.284.882, o caminho `18D9h→1958h` ainda tinha
+`2Ch=8Ah`, `R4=13h/3Bh` e entrada `R7:R6=0A40h`; a diferença já
+alcançou `R7:R6=0A53h/0A7Bh` em `199Ah`. A intervenção restrita não
+atingia essa passagem. O probe agora substitui a leitura original
+`MOV R4,6Eh` em **qualquer** estado de `2Ch.7` quando o acumulador
+`5Ch:5Dh` é não nulo, restaurando `6Eh` após cada instrução.
+Com isso, os quatro braços mantêm 3.164 leituras da matriz e os
+finais `F8:0Ch` tornam-se `98h` (G), `A2h` (G←A), `A2h` (G→3Bh) e
+`98h` (G←A→13h). Os relatórios estruturados de XRAM, RAM, P5 e
+CC3 coincidem em cada par cruzado. O mesmo probe conserva a mediação
+bidirecional em ADC5=110. A conclusão é uma mediação **digital no
+modelo Fiat**, sem validação da interpretação lambda do scanner.
+Capturas: `7925_full_read_cross_{40,110}_{control_to_3b,donor_to_13}/`;
+teste: `Matrix7925Adc5Tests.test_adc5_40_all_ram6e_reads_mediate_f80c_trajectory`.
+
 O consumidor de `F8:01h` foi encontrado em `1CB7h..1CDFh`: o código
 lê `RAM[7Bh]`, `MOVX @R0=01h`, `MOVX @R0=FBh` e `RAM[7Ah]` numa cadeia
 de multiplicações antes de copiar `B` para `R1`. No estado de 1.500
@@ -3966,8 +7813,10 @@ na mediana CC3. Um teste isolado executou os opcodes G originais de
 `1CB7h..1CDFh` com `7Bh=78h`, `F8:FBh=FFh` e `F8:01h=61h/89h`:
 com `7Ah=00h`, `R1=00h` nos dois casos; com `7Ah=80h`, o segundo valor
 de `F8:01h` produziu `R1` maior. Isto confirma um efeito **condicional
-no resultado interno**; ainda falta alcançar `7Ah≠0` num boot natural
-e medir se o efeito prossegue até uma saída modelada.
+no resultado interno**. Os ensaios posteriores de transição TPS com
+`7895h` e `78BDh`, descritos acima, alcançam `7Ah≠0` naturalmente
+e mostram perda de pulsos no modelo CC3; a ligação física permanece
+sem confirmação.
 
 No estado TPS `120/95`, `ADC3/5/7=4/40/63` e 1.000 RPM,
 `7925h` foi lida 36 vezes. A doação mudou `3DC7h` de `1Ah` para
@@ -3989,17 +7838,121 @@ de cobertura, não prova a função de cada região.
 ### Curva alternativa de 15 bytes em `7EACh`
 
 Os seis diretórios de ponteiros têm `70BCh→7E9Dh` e `70BEh→7EACh`.
+O [gráfico A/S37 da curva `7E9Dh`](../build/ma17-analysis/variants/matrix_plots/matrix_7e9d_a_vs_s37.png)
+mostra 15 bytes idênticos, mas eixos `RAM47h` diferentes em cada painel.
+Com o produtor `1386h` e o leitor `3329h→3384h` originais em estado
+preparado, a mesma entrada bruta `RAM47h=40` seleciona índice 3 na A
+(`R2=99h`) e índice 5 na S37 (`R2=8Eh`) quando o flag de banco está
+limpo. Com o flag ativo, os dois bancos alternativos constantes dão
+`R2=99h`. Portanto, bytes de tabela iguais não garantem o mesmo
+resultado para a mesma entrada bruta; a relação dessa entrada com RPM
+físico ainda não foi validada na revisão S37.
+Uma varredura dos 256 valores brutos, executando os mesmos opcodes
+originais sob guardas preparadas, encontrou **215 entradas distintas**
+no banco padrão, da primeira em `22` à última em `236`.
+O banco alternativo `7EACh` resultou em `99h` nas duas ROMs em todas
+as entradas. A [curva de transferência A/S37](../build/ma17-analysis/variants/matrix_plots/curve_7e9d_a_s37_transfer.png)
+mostra a diferença entre as respostas interpoladas, inclusive onde os
+bytes da tabela são iguais. O CSV e o JSON adjacentes registram os 256
+resultados e hashes das ROMs. Para reproduzir, execute o teste
+`Sab80C517.AlcoholCodeAdc3StateLadderSelectsDifferentMatrixCell` com
+`MA17_7E9D_SWEEP_CSV=build/ma17-analysis/variants/matrix_plots/curve_7e9d_a_s37_transfer.csv`
+e depois `/usr/bin/python3 tools/plot_ma17_curve_transfer.py
+build/ma17-analysis/variants/matrix_plots/curve_7e9d_a_s37_transfer.csv`.
+Essa é uma transferência digital em estado preparado; não mede a
+frequência natural dos bancos nem uma grandeza física.
+As janelas originais `01ABh..01BFh`, `0DD2h..0E04h`,
+`0E35h..0EAFh`, `1386h..139Dh`, `3329h..3332h`,
+`3384h..33D2h`, `533Ch..538Ch` e `53E4h..540Bh` são byte a byte
+idênticas entre A e S37. Elas cobrem cópia/escrita de `47h`, segmentação,
+seleção de banco e interpolação neste caminho; já os incrementos do
+eixo em `7570h` diferem. Isso fortalece a atribuição da divergência
+digital ao eixo neste ensaio, sem demonstrar que as duas ECUs gerem o
+mesmo `RAM47h` para o mesmo RPM físico.
+Os 14 inícios de segmento não nulos em S37 são exatamente **20
+contagens brutas menores** que os correspondentes em A. A varredura
+confirma a consequência com opcodes originais: para cada `x=0..235`,
+`R2_S37(x, banco padrão) = R2_A(x+20, banco padrão)`; **zero diferenças
+em 236 comparações**. O primeiro segmento começa em zero nas duas
+ROMs, e a igualdade também vale em `x=0..4` porque ambas as curvas
+ficam no platô inicial `99h`. Isso é um alinhamento horizontal da
+transferência digital, não uma medida de 20 contagens de RPM.
 `7EACh..7EBAh` conserva os 15 bytes G em S88, mas A/A+/S37/S36
 substituem todos por `99h`. Na família de código A, `3384h` seleciona
 `70BEh` quando `RAM[2Bh].7=1`, senão `70BCh`; `R7` fornece o índice.
+Os opcodes A em `3329h..3332h` obtêm `R7=upper IRAM[BCh]&0Fh` e
+`R6=upper IRAM[BCh]&F0h`. No teste isolado, `BCh=A0h|índice` produz
+`R7=0/3/4/13`; a fração `R6` é zerada antes do lookup para ler uma
+célula exata. Os dois bancos dão `99h` nos índices 0 e 3; no índice 4,
+`7E9Dh` dá `94h` e `7EACh` dá `99h`; no índice 13, dão `2Bh` e `99h`.
+Assim, nas leituras de células exatas a seleção do banco só altera o resultado a partir
+do índice 4. A interpolação original antecipa o primeiro efeito: com o
+produtor `1386h` e o leitor `3329h→3384h` executados em estado preparado,
+os bancos ainda coincidem em `RAM47h=40/41` na A e `20/21` na S37,
+mas divergem em `42` e `22`, respectivamente, ainda no segmento 3.
+Esses números são contagens digitais brutas, sem conversão física validada.
+O [gráfico interno A: `7E9Dh` versus `7EACh`](../build/ma17-analysis/variants/matrix_plots/matrix_7e9d_a_vs_7eac_a.png)
+confirma quatro células iniciais iguais e 11 distintas; o maior delta
+é +113 bytes na última célula. O eixo horizontal agora mostra o início
+bruto em `RAM47h` de cada segmento; as colunas continuam com a mesma
+largura visual, embora os intervalos digitais tenham tamanhos diferentes.
+O teste integrado da revisão A confirmou
+a rota digital `RAM47h→7046h→7570h→upper BCh→R7`; a escala física
+desse eixo e a seleção em boot completo permanecem em investigação.
+O [gráfico G/A de `7EACh`](../build/ma17-analysis/variants/matrix_plots/matrix_7eac_g_vs_a.png)
+mostra a curva G/S88 descendente, de `92h/9Ch` no início até `52h` nas
+últimas células, substituída por um platô `99h` nas quatro ROMs da
+família A. As 15 células mudam, com delta assinado de −3 a +71 bytes.
+O CSV conserva endereços e bytes; o JSON registra os hashes. Para
+reproduzir: `/usr/bin/python3 tools/plot_ma17_matrices.py --matrix
+0x7EAC --variant A`. O platô orienta a investigação do ramo selecionado;
+o gráfico não estabelece eixo, unidade física nem frequência de acesso
+em operação normal.
 Um teste com opcodes originais das quatro ROMs A, `R7=4`, `R6=0` e
 `T2CON.1=0`, alcançou `MOVC` em `53F2h`: com flag limpa leu
 `7E9Dh+4=94h`; com flag ativa leu `7EACh+4=99h`. O valor chegou a
 `R2` e à upper IRAM `A4h`. Isso comprova a seleção e o destino interno
-nesse estado isolado. A origem natural da flag, o significado físico
-de `A4h` e a seleção durante um boot A com hardware correto permanecem
-em aberto. No caminho G inspecionado em `335Fh`, `DPTR=70BCh` é
-sobrescrito em `3371h`; o ponteiro, por si só, não comprova uma leitura.
+nesse estado isolado. O teste integrado descrito acima também propaga
+o flag produzido em `3C7Dh..3D04h` até este leitor, com a guarda de
+entrada preparada. A seleção em boot completo e o significado físico
+de `A4h` permanecem em aberto. Uma tentativa de trace completo da ROM A
+foi recusada pelo
+guardrail de `tools/trace_ma17.py`, que exige código idêntico ao G até
+`757Fh`; isso não é evidência de que o ramo seja inacessível na ECU A.
+No G, `335Fh` passa `DPTR=70BCh` ao helper `5321h` antes
+de `3371h` sobrescrever DPTR. Com P4.6 experimental baixo e 3.000 RPM,
+o trace G observou 131 leituras do ponteiro `70BCh` e de
+`7E9Dh+9=60h`/`7E9Dh+10=58h`; sem esse estímulo, essa seleção não
+ocorreu na janela testada. Isso comprova o acesso G no modelo sob essa
+entrada, sem estabelecer o estado elétrico natural de P4.6 na ECU.
+
+O mesmo diretório tem a terceira palavra `70C0h→7EBBh`. Os intervalos
+`7E9Dh..7EABh` e `7EBBh..7EC9h` contêm 15 bytes cada, idênticos nas
+seis ROMs. Um teste dos opcodes originais G/S88 e A/A+/S37/S36 iniciou
+os ramos `335Ch`/`3384h` com `R7=9`, fração `R6=0`, e selecionou
+`RAM[57h]=0/1/2`: os ponteiros resultantes foram `7E9Dh`, `7EACh` e
+`7EBBh`, com leitura da décima célula e publicação em upper IRAM A4h
+quando `T2I1=0`. Para o terceiro intervalo, o byte foi
+`7EC4h=5Dh`. O modo 2 foi imposto no ensaio; seu acesso natural neste
+caminho e a função física de A4h seguem em aberto. Regressão:
+`Sab80C517.Pointer70bcSelectsThreeCurvesWithRam57`.
+
+Um sweep posterior executou o produtor original `1386h` e o leitor
+`3329h→3384h` em A e S37 para os **256 valores brutos** de `RAM47h`,
+com guardas preparadas, `RAM57h=2` e `RAM2Bh.7=0`. Embora os 15 bytes
+de `7EBBh` sejam idênticos, o resultado `R2` difere em 157 entradas
+iguais (primeira 1, última 158), por causa do eixo `7570h`. A relação
+`S37(x)=A(x+20)` vale de `x=5` a `235`; nos cinco valores `0..4`, ela
+falha porque o primeiro segmento tem larguras diferentes e as duas
+primeiras células da curva são `88h` e `9Ch`. Isso contrasta com a
+curva `7E9Dh`, cujo início plano `99h` preserva a translação desde
+`x=0`. Consulte o [gráfico da transferência `7EBBh` A/S37](../build/ma17-analysis/variants/matrix_plots/curve_7ebb_a_s37_transfer.png)
+e o CSV/JSON homônimos. O teste
+`Sab80C517.AlcoholCodeAdc3StateLadderSelectsDifferentMatrixCell`
+exporta o CSV quando `MA17_7EBB_SWEEP_CSV` aponta para o caminho de
+saída; `tools/plot_ma17_third_curve_transfer.py` gera o gráfico e as
+métricas. Os resultados provam uma diferença digital no estado preparado;
+não estabelecem a seleção natural desse modo ou uma escala física.
 
 Nesta etapa da investigação, ainda faltavam seis dos 40 intervalos
 alterados: `743Ah`, `7444h`, `7462h`, `746Ch`, `753Eh`, `7939h`.
@@ -4310,6 +8263,15 @@ adjacentes e `47E0h` grava o resultado em XRAM `F806h` (`P2=F8h`,
 `R1=06h`). A flag `2Fh.5` é escrita em `19DEh` a partir da comparação
 de `RAM[3Dh]` com `02h`, conforme o rastreamento anterior desse contador.
 
+O slot vizinho `703Eh→7548h` contém dez zeros nas seis ROMs. No trace
+completo G `movc_gasoline`, o lookup leu `754Bh/754Ch` 280 vezes por
+endereço; o trace S88 `movc_sun8817_2s` registrou 512 leituras de cada.
+Um teste dos opcodes originais das seis ROMs, com índice e fração zero,
+confirmou que `2Fh.5=1` usa `703Ch` e `2Fh.5=0` usa `703Eh`, ambos
+escrevendo o resultado em `F8:06h`. A identidade física do campo segue
+desconhecida. Regressão:
+`Sab80C517.Pointer703c703eBranchesFeedXramF806`.
+
 Na ROM G original, a 1.000 RPM com `ADC0/6=120/95`, `ADC3/5/7=4/40/63`
 e 2,4 milhões de ticks, o trace registrou 281 leituras de `753Eh`
 em `532Fh` e 281 de `753Fh` em `5333h`. Doar somente os valores A
@@ -4322,6 +8284,40 @@ Os únicos `MOVX` que leram `F806h` nos dois traces foram os testes
 de memória de partida em `55A2h`, antes da escrita alterada. Assim,
 não se observou consumidor posterior nesses 2,4 milhões de ticks;
 um uso por hardware externo ou em outro estado permanece em aberto.
+
+Um trace G com a mesma doação e estado inicial, estendido a 8 milhões
+de ticks, contou 1.616 leituras `MOVC` da célula `753Eh` e a escrita
+`F806h:00h→22h` em `47E0h` no tick 1.231.225. As únicas leituras
+`MOVX` de `F806h` continuaram sendo as duas verificações da partida em
+`55A2h`; nenhuma ocorreu após a escrita alterada. A instrumentação
+registra as primeiras mil leituras desse endereço, portanto esse
+resultado limita o caminho observado, sem excluir leitura por hardware
+externo ou outro estado do firmware. `F8:06h` é endereço XRAM, não
+pino identificado. Captura: `variants/f806_long_donor/`.
+O harness atual rejeita a ROM A completa porque o prefixo de código
+difere de G antes de `757Fh`; a seleção natural da célula `22h` em A
+continua pendente de um perfil de hardware validado.
+
+### Quatro curvas neutras `7B00h..7B27h`
+
+Os ponteiros `70AEh/70B0h/70B2h/70B4h` apontam para quatro blocos de
+dez bytes `80h`, idênticos nas seis ROMs. O código G em
+`483Bh/4874h/48A9h/4896h` chama o interpolador de bytes adjacentes;
+o homólogo A está deslocado `+BDh`. Após o lookup, `CPL ACC.7`
+transforma `80h` em `00h`: o primeiro ramo escreve RAM **superior**
+`CFh`, o segundo combina o resultado com `CFh` e escreve `CEh`, e os
+dois últimos podem escrever `CDh` (um deles combina com `D0h`).
+O teste dos opcodes originais das seis ROMs, com `R5=3`, `R6=0` e os
+acumuladores anteriores zerados, confirmou ambos os `MOVC` de cada
+par e a escrita de zero em `CFh/CEh/CDh`.
+
+Os rastros completos já existentes mostram `DPTR=7B00h` em S88,
+`7B0Ah` em G e `7B1Eh` em G sob estímulo experimental. Nenhum dos
+rastros inspecionados mostrou `DPTR=7B14h`; esse quarto ramo foi
+demonstrado apenas em execução isolada. Esses blocos são baselines
+digitais neutros nos estados testados. Seus eixos e funções físicas
+permanecem abertos. Regressão:
+`Sab80C517.FourNeutral70ae70b4CurvesUseAdjacentByteHelper`.
 
 Restam três intervalos alterados sem entrada curada: `743Ah`,
 `7444h` e `746Ch`.
@@ -4360,12 +8356,30 @@ e gravado em `RAM[4Dh]`.
 
 O teste `Pointer702aFirstCellAddsToIram4dAcrossSixRoms` executou
 os opcodes originais a partir de `4997h` em G/S88 e `4A5Ah` na
-família A, com `DPTR=702Ah`, `RAM[57h]=0`, `R5=R6=R2=0`.
-`MOVC` leu `746Ch` e a escrita final em `4Dh` foi `0Fh` nas quatro
-ROMs com bytes G ou `29h` em A/A+. Esse teste começa **após** as
+família A, com `DPTR=702Ah`, `RAM[57h]=0/1/2`, `R5=R6=R2=0`.
+Os três ponteiros levam a `746Ch/7476h/7480h`. Em modo zero, `MOVC`
+leu `746Ch` e a escrita final em `4Dh` foi `0Fh` nas quatro ROMs
+com bytes G ou `29h` em A/A+; nos modos 1 e 2, a primeira célula
+comum `05h` chegou a `4Dh` nas seis ROMs. Os intervalos de dez bytes
+dos dois modos novos são provisórios, delimitados pelo próximo alvo
+do diretório. Esse teste começa **após** as
 guardas de `22h.4`, upper IRAM `A5h` e seleção entre grupos;
-portanto, não demonstra que o primeiro byte seja lido em operação
-natural. O efeito físico da diferença permanece desconhecido.
+portanto, não demonstra acesso natural aos modos 1 e 2 nem a função
+física da diferença no modo zero.
+
+O grupo alternativo `7024h/7026h/7028h` aponta para três intervalos
+candidatos de dez bytes em `748Ah/7494h/749Eh`, iguais nas seis ROMs.
+Os limites vêm dos próximos alvos do diretório; o leitor indexado não
+impõe esse tamanho por si. Os opcodes
+originais de G e da família A, iniciados após as guardas em
+`4997h/4A5Ah`, selecionaram cada ponteiro com `RAM[57h]=0/1/2` e
+gravaram a primeira célula em `RAM[4Dh]` com `R2=R5=R6=0`:
+`08h/03h/03h`. A seleção anterior do grupo `7024h` exige bit 7 do
+byte lido em `7375h+RAM[57h]` e P4.3 baixo. Nos modos 0/1/2,
+esses bytes originais são `09h/03h/05h`, todos com bit 7 limpo;
+portanto, o teste isolado confirma o leitor e a soma, mas não a
+seleção natural do grupo. Teste:
+`Pointer7024ThreeCurvesAddToIram4dAcrossSixRoms`.
 
 Os 40 intervalos alterados do diretório de ponteiros têm agora ao
 menos uma entrada curada; várias entradas ainda registram seleção
@@ -4400,7 +8414,128 @@ passagem por `4997h` ou leitura de `746Ch..7475h`. Forçar P4.7
 baixo no caso `120/180` alcançou `21F2h`, mas não limpou a guarda
 nem alcançou a curva. As capturas estão em `ram4d_gate_grid/`.
 No código G, `220Ch` escreve `22h.4` e `220Fh` escreve seu complemento
-em P5.3; a pinagem física do atuador continua sem confirmação.
+em P5.3; a função física desse pino continua sem confirmação.
+Um novo probe em `21F9h..2211h` confirmou `DPTR=7200h` e 230 passagens
+por `220Fh` em cada uma de duas partidas G a 1.000 RPM, com P4.7 padrão
+ou forçado baixo. Em ambas, `22h.5=1` bloqueou P5.3 baixo. O teste dos
+opcodes originais com estado preparado mostra que P5.3 passa a baixo
+somente quando P4.7 está alto, `RAM[63h]` supera `ROM[72C5h]=0Eh`,
+`22h.5=0` e `PSW.5=1`. `72C3h..72C5h` foi incluído no catálogo com
+evidência separada. P4.7 e P5.3 são candidatos a examinar na hipótese
+de pedido/liberação do A/C informada pelo usuário; a fiação, a
+polaridade externa e o papel de `22h.5` ainda são desconhecidos.
+O probe da rota produtora contou 230 entradas em `21C6h`, nenhuma
+em `21CAh` e `28h.1=1` em 229 das entradas de `21C6h`; os opcodes
+`2174h..2180h` incluem esse bit na guarda que mantém `22h.5` ativo.
+Com TPS experimental `ADC0/6=40/95`, `28h=00h` em todas as 230
+entradas de `21C6h`; as primeiras 21 chegam pelo desvio `2Eh.0=1`
+em `216Ah`, e as outras 209 passam por `21C2h`. Portanto, há outra
+rota de bloqueio mesmo sem `28h.1`. O teste Python fixa essa distinção.
+O probe ampliado dessas 209 passagens mostrou `upper IRAM[9Eh]=4Ch`
+(`B.6=1`) e `upper IRAM[A6h]` sempre não zero, de `64h` a `50h`.
+O salto `2167h` evita então a checagem das flags em `2174h` e vai a
+`21C2h`; dali, `2Dh.5` apenas decide se decrementa `A6h` antes de
+`21C6h` ligar `22h.5` (20 passagens com `2Dh.5=1`). `A6h` e `9Eh`
+são RAM superior endereçada indiretamente, não pinos nem SFRs.
+O latch modelado de `P5.3` permanece alto; sua ligação ao pedido ou
+à liberação física do A/C ainda não foi estabelecida.
+Captura: `variants/p53_guard_audit_lowtps/`.
+
+Estendendo esse estado a **15 milhões de ticks**, `A6h` chegou a zero
+perto do tick 10.505.322. O código passou então por `2174h` 440 vezes,
+mas `27h.1/.3` permaneceram ligados (`27h=0Eh/8Eh`): `21CAh` nunca
+foi alcançado, `P5.3` não caiu e não houve leitura de `746Ch`.
+Ao fornecer `0Eh` somente ao `MOVX F8:39h` em `2B38h`, com `ADC3=20`
+(`RAM[63h]=14h` no trecho estável), o código original G executou
+`21CAh` 439 vezes, com 439 níveis baixos observados no latch P5.3,
+e leu `746Ch` 904 vezes por `MOVC`. Sem essa substituição de leitura,
+mas com o mesmo `ADC3`, nenhuma dessas leituras da curva ocorreu.
+`F8:39h` é estado XRAM compactado; a substituição é uma intervenção
+digital, não um sensor físico validado. A fiação de P5.3 permanece aberta.
+
+Nesse estado preparado, `499Fh` leu a primeira célula com
+`RAM[57h]=R5=R6=0` e `R2=19h`. Doar somente a curva `746Ch` de A
+(`29h` na célula zero; os nove bytes restantes iguais a G) ao `MOVC`
+mudou `RAM[4Dh]` de `28h` para `42h` nas visitas pareadas a `233Bh`.
+O resultado em `2593h` mudou de `2Ch` para `49h`. Os 152 pulsos baixos
+CC3 modelados após o tick 10,5 milhões tiveram larguras idênticas no
+controle e na doação; não se observou efeito em CC3 nesse cenário.
+Ambas as execuções preservaram o hash da ROM G. Capturas:
+`variants/p53_guard_long_adc3_20/`,
+`variants/p53_guard_long_fault0e_adc3_20/` e
+`variants/p53_guard_long_fault0e_adc3_20_donor746c/`.
+
+Uma grade curta de TPS localizou um caminho **sem substituição de
+`F8:39h`**: com `ADC0/6=100/155`, `ADC3/5/7=20/40/63`, 1.000 RPM e
+15 milhões de ticks, a ROM G executou `21CAh` 440 vezes, registrou
+439 amostras baixas do latch P5.3 e leu `746Ch` 922 vezes. `27h=04h`
+e `28h=00h` no estado posterior; `2B38h` não foi visitado. Os pares
+TPS `20/70`, `30/85`, `50/105`, `60/115` e `80/135` ainda
+produziram `F8:39h=2Eh` e `27h=0Eh` em 2,4 milhões de ticks; `100/155`
+terminou com `27h=04h`. Esses valores ADC são estímulos do modelo,
+sem validação da correspondência elétrica das duas pistas.
+
+Doar somente `746Ch` de A ao `MOVC` nesse percurso G sem override de
+estado interno preservou o SHA da ROM e mudou `RAM[4Dh]` de `28h`
+para `42h` em 183 visitas pareadas a `233Bh`; `A` em `2593h` mudou
+de `2Ch` para `49h`. Os 152 pulsos CC3 pareados após 10,5 milhões de
+ticks tiveram larguras idênticas. Isso estabelece seleção da primeira
+célula e efeito interno **na execução completa G emulada**, sem
+demonstrar seleção na ROM A completa ou efeito físico no atuador.
+O teste `P53GateTests.test_delayed_746c_first_cell_donor_reaches_iram4d`
+reproduz esse percurso. Capturas:
+`variants/p53_guard_natural_tps100_155/` e
+`variants/p53_guard_natural_tps100_155_donor746c/`.
+
+Com os mesmos ADCs e 15 milhões de ticks, a ROM G leu `746Ch`
+951/922/876/820 vezes a 750/1.000/1.500/3.000 RPM. `25EDh` não
+foi alcançado a 750 ou 1.000 RPM, mas apareceu a 1.500 e 3.000.
+Doar a curva A nessas duas rotações ainda mudou `RAM[4Dh]`
+`28h→42h` em 193 e 191 amostras pareadas, respectivamente.
+Os 227 pulsos CC3 pareados a 1.500 RPM e os 455 a 3.000 RPM após
+10,5 milhões de ticks tiveram larguras idênticas; as medianas P5
+também ficaram iguais dentro de cada par.
+
+Um probe temporal a 3.000 RPM registrou `25EDh` 1.459 vezes, incluindo
+443 após 10,5 milhões de ticks. Doar `746Ch` alterou `R3` em 452
+entradas de `25EDh` e 450 passagens por `2606h`, mas o acumulador `A`
+em `2606h` permaneceu igual em todas as passagens pareadas. O fluxo
+visitou `26C5h` e não alcançou `26D8h`, ramo posterior que ainda pode
+usar `R3`. Portanto, a propagação até `R3` foi confirmada; nenhum
+efeito de saída foi observado nesses estados. O teste
+`P53GateTests.test_746c_downstream_division_is_reached_without_output_change`
+reproduz o contraste a 3.000 RPM. Capturas: `variants/746c_rpm_{750,1500,3000}/`,
+`variants/746c_rpm_{1500,3000}_donor/` e
+`variants/746c_downstream_{1500,3000}_{control,donor}/`.
+
+O probe `MA17_TRACE_RAM4D_BRANCH` separa os bloqueios em `2653h`.
+Em G a 3.000 RPM, ADC0/6=100/155 e `P4.6` baixo somente após
+10,6 milhões de ticks, ADC2=160/ADC3=80 deixou `2Fh.4=1`, mas
+`62h=A0h` mais o limite ROM `733Bh=28h` não ficou abaixo de
+`upper IRAM[A8h]=50h`; o fluxo ainda tomou `26C5h`. Com ADC2=20,
+`62h=14h`, o mesmo ensaio atingiu `26CBh` 100 vezes e `26D8h` 99
+vezes. `P4.6` aqui é **entrada modelada do pino da CPU**, não um
+terminal da ECU identificado: o SAB80C517 também oferece CM6 nesse
+pino. `62h`, `2Fh.4` e `A8h` são estados de RAM, não pinos.
+Nesse estímulo, as 149 leituras de `746Ch..7475h` foram em `746Fh`
+(índice 3, byte `0Fh` comum às ROMs); a célula divergente `746Ch`
+não foi selecionada. Portanto, alcançar `26D8h` ainda não demonstra
+efeito dessa diferença nem identidade física de uma saída.
+Capturas: `variants/746c_p46_late_adc2_{160,20}_adc3_80/`.
+
+Uma varredura sem forçar `P4.6`, mantendo ADC0/6=100/155, ADC2=4,
+3.000 RPM e 12 milhões de ticks, mediu ADC3=32/40/48. O `MOVC`
+com DPTR=`746Ch` leu `746Dh`/`746Eh`/`746Eh` 285/280/290 vezes;
+`upper IRAM[A8h]` foi `20h`/`28h`/`30h`. Em ADC3=20, a primeira
+célula `746Ch` é lida, mas `A8h=14h` não supera sequer o limite
+`733Bh=28h` somado a `62h`. Nos estados testados, a mudança de
+ADC3 que abre o limite desloca o índice para células iguais entre
+as variantes. Isso **não prova** exclusão para todas as entradas,
+estados temporais ou perfis de hardware. Capturas:
+`variants/746c_adc3_grid_{32,40,48}/`.
+Testes: `P53GateTests.test_p47_input_changes_gate_state_but_bit225_blocks_p53`,
+`P53GateTests.test_p46_and_adc2_open_late_26d8_branch` e
+`Sab80C517.FiatP53GateUsesP47CoolantThresholdAndBit225`.
 
 ### Limite do fatorial `7580h/7581h/7B46h` por estado TPS
 
@@ -4486,12 +8621,17 @@ Capturas: `build/ma17-analysis/variants/7b46_timer1_rpm{750,1500}_{control,donor
 Isso confirma um efeito temporal interno condicionado ao estado, mas
 continua sem identificar eletricamente a saída P5.0.
 
-O `tools/roundtrip_8051.py` remontou `A`, `S88`, `S37` e `S36`: 32768 bytes,
-zero divergências e SHA-256 igual ao original em todos os casos. O perfil de
-SFR específico do Fiat só é aplicado ao hash de `G`; os outros desmontam
-com avisos para `91h` e `B1h`, que precisam de confirmação por revisão.
+O `tools/roundtrip_8051.py` remontou `G`, `A`, `A+`, `S88`, `S37` e
+`S36`: 32768 bytes, zero divergências e SHA-256 igual ao original em
+todos os casos. Os cinco hashes únicos Fiat selecionam o perfil C517A
+com `XPAGE`, `SYSCON` e vetores da família; não houve avisos de SFR
+desconhecido nem erros do assembler. A S88 passou de 18.225 para
+23.420 bytes classificados como código ao receber seus vetores e SFRs.
+A S36 teve 22.282 bytes classificados; seu vetor `53h` aponta para
+`AA0Dh` em vez de `00B0h`, exigindo análise própria de alcançabilidade.
 A remontagem prova fidelidade dos bytes, não acerto de todas as classificações
-estáticas. `G` permanece coberto pelo teste de regressão existente.
+estáticas. `test_fiat_calibration_variants_use_c517a_profile` cobre as
+cinco imagens modificadas; `G` mantém seu teste separado.
 
 ## Comando K-Line `04h` e sequência de saídas na ROM G
 

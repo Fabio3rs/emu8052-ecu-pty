@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,40 @@ class RoundtripTests(unittest.TestCase):
         self.assertIn("mov ADDATL, A", assembly)
         self.assertIn("push XPAGE", assembly)
         self.assertIn("mov SYSCON, #02h", assembly)
+
+    def test_fiat_calibration_variants_use_c517a_profile(self):
+        variants = ROOT / "firmwares_modificados_ma17_tipo"
+        for name, minimum_code in (
+                ("tipo 1.6 alcool27c256.bin", 23000),
+                ("tipo 1.6 alcool27c256+1.5bar.bin", 23000),
+                ("tipo 1.6 alcool27c256 SUN 8817.bin", 23000),
+                ("tipo 1.6 alcool27c256 SUN 37a5.bin", 23000),
+                ("tipo 1.6 alcool27c256 SUN 36fd.bin", 22000)):
+            with self.subTest(firmware=name):
+                report, assembly = self.run_roundtrip(variants / name)
+                self.assertEqual(report["original_size"], 32768)
+                self.assertGreater(report["code_bytes"], minimum_code)
+                self.assertEqual(report["disassembler_stderr"], "")
+                self.assertEqual(report["assembler_stderr"], "")
+                self.assertIn("Fiat Tipo", report["firmware_origin"])
+                self.assertIn("XPAGE DATA 091h", assembly)
+                self.assertIn("SYSCON DATA 0B1h", assembly)
+                self.assertIn("mov SYSCON, #02h", assembly)
+                if "SUN 8817" not in name:
+                    self.assertIn("jump_4D63:", assembly)
+                    self.assertIn("mov A, #92h", assembly)
+
+    def test_s36_shared_iex3_code_can_be_inspected_without_changing_vector(self):
+        firmware = (ROOT / "firmwares_modificados_ma17_tipo" /
+                    "tipo 1.6 alcool27c256 SUN 36fd.bin")
+        natural, assembly = self.run_roundtrip(firmware)
+        explicit, with_entry = self.run_roundtrip(firmware,
+                                                  "--entry", "0x00B0")
+        self.assertIn("ljmp 0AA0Dh", assembly)
+        self.assertIn("ljmp 0AA0Dh", with_entry)
+        self.assertIn("jump_00B0:", with_entry)
+        self.assertGreaterEqual(explicit["code_bytes"], natural["code_bytes"])
+        self.assertGreaterEqual(explicit["code_bytes"], 23615)
 
     def test_renault_clio_ma17(self):
         firmware = ROOT / "Renault_Clio_1.6__0261204510_1037355887_Bosch_1997_.ori"
@@ -143,6 +178,32 @@ class RoundtripTests(unittest.TestCase):
                     self.assertLessEqual(
                         abs(cc3["cc3_pin_model_width_minus_4x_raw_median_ticks"]), 15)
                     self.assertEqual(cc3["p1_3_shadow_median_low_width_ticks"], 4)
+
+    def test_cc3_decision_probe_observes_firmware_bit_write(self):
+        if not (ROOT / "build" / "emu8051-tty").exists():
+            self.skipTest("build/emu8051-tty is required for dynamic firmware test")
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, MA17_TRACE_CC3_DECISION="1",
+                       MA17_ADC_CH7="63")
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "trace_ma17.py"),
+                 "--seconds", "10", "--stop-ticks", "400000",
+                 "--no-kline-inject", "--crank-immediate",
+                 "--output-dir", directory],
+                capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            report = json.loads((Path(directory) / "execution.json").read_text())
+            self.assertTrue(report["cc3_decision_trace_enabled"])
+            lines = (Path(directory) / "emulator-trace.log").read_text().splitlines()
+            decisions = [line for line in lines if line.startswith("[CC3-DECISION]")]
+            self.assertTrue(any("PC=1F9B" in line for line in decisions))
+            self.assertTrue(any("PC=2D10" in line for line in decisions))
+            writes = [line for line in decisions if "PC=2054" in line]
+            self.assertGreater(len(writes), 0)
+            for line in writes:
+                f0 = int(re.search(r"F0=(\d)", line).group(1))
+                flags = int(re.search(r"flags26=([0-9A-F]{2})", line).group(1), 16)
+                self.assertEqual(bool(flags & 0x80), bool(f0))
 
     def test_scanner_sensor_addresses_follow_distinct_adc_channels(self):
         if not (ROOT / "build" / "emu8051-tty").exists():

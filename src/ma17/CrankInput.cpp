@@ -61,6 +61,10 @@ static void process_crank_rising_edge(em8051 *cpu, long long tick,
     static int gaps_in_revolution = 0;
     static int revolutions = 0;
     if (sim.current_tooth == 0) {
+        // Fiat 60-2 reference for phase plots; 4T stroke phase is unknown.
+        if (std::getenv("MA17_TRACE_CRANK_PHASE"))
+            fprintf(stderr, "[CRANK-PHASE] tick=%lld tooth=0 rpm=%d\n",
+                    tick, sim.target_rpm);
         // The first wrap omits the initial position 0.
         if (revolutions++ > 0 && std::getenv("MA17_TRACE_PC") &&
             revolutions <= 129)

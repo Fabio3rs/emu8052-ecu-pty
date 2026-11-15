@@ -11,6 +11,24 @@ from plot_ma17_cfg import MODULAR, ROM, build_graph, filter_observed_paths, read
 
 
 class ControlFlowGraphTests(unittest.TestCase):
+    def test_alcohol_monolithic_assembly_maps_matrix_and_af_writer(self):
+        source = ROOT / "build/ma17-analysis/variants/roundtrip_alcohol" / (
+            "tipo 1.6 alcool27c256.disasm51.asm")
+        rom = ROOT / "firmwares_modificados_ma17_tipo/tipo 1.6 alcool27c256.bin"
+        if not source.exists():
+            self.skipTest("round-trip alcohol assembly is required")
+        labels, code = read_assembly(source, rom.read_bytes())
+        self.assertEqual(labels["jump_3296"], 0x3296)
+        self.assertEqual(labels["jump_32AD"], 0x32AD)
+        self.assertEqual(labels["jump_3473"], 0x3473)
+        self.assertTrue(code[0x32AD][0].startswith("mov DPTR"))
+        self.assertTrue(code[0x3479][0].startswith("jb F1"))
+        blocks, edges = build_graph(code, labels, 0x3296, 0x34D5)
+        _, _, forward = filter_observed_paths(blocks, edges, [0x32AD, 0x3473])
+        _, _, reverse = filter_observed_paths(blocks, edges, [0x3473, 0x32AD])
+        self.assertEqual(forward[0]["status"], "possible")
+        self.assertEqual(reverse[0]["status"], "no_static_path_in_view")
+
     def test_36de_gate_uses_real_assembly_destinations(self):
         labels, code = read_assembly(MODULAR / "ma17.asm", ROM.read_bytes())
         blocks, edges = build_graph(code, labels, 0x36DE, 0x371D)

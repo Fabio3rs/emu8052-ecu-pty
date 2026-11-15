@@ -320,7 +320,7 @@ def ecu_handshake(ser, pty_mode: bool):
     # 1) 5-baud init (0x10 para MA1.7)
     send_5baud_init(ser, 0x10, pty_mode)
 
-    # 2) Espera sync (0x55) e 4 keys
+    # 2) The Fiat emulator sends five keys after sync; hardware may differ.
     print("\n[HANDSHAKE] Aguardando resposta da ECU...")
     sync = read_byte_with_timeout(ser, 2000, "Sync: ")
     if sync is None:
@@ -334,11 +334,15 @@ def ecu_handshake(ser, pty_mode: bool):
     key2 = read_byte_with_timeout(ser, 1000, "Key2: ")
     key3 = read_byte_with_timeout(ser, 1000, "Key3: ")
     key4 = read_byte_with_timeout(ser, 1000, "Key4: ")
-    if None in (key1, key2, key3, key4):
+    key5 = read_byte_with_timeout(ser, 1000, "Key5: ") if pty_mode else None
+    if None in (key1, key2, key3, key4) or (pty_mode and key5 is None):
         print("[ERRO] Timeout aguardando keys")
         return False
 
-    print(f"[HANDSHAKE] Keys: {key1:02X} {key2:02X} {key3:02X} {key4:02X}")
+    keys = f"{key1:02X} {key2:02X} {key3:02X} {key4:02X}"
+    if key5 is not None:
+        keys += f" {key5:02X}"
+    print(f"[HANDSHAKE] Keys: {keys}")
 
     # 3) Responde ~key2 (seguindo padrão do scanner C++ de referência)
     resp = (~key2) & 0xFF
@@ -610,7 +614,7 @@ def keep_alive_loop(ser, pty_mode, timeout_ms=1000, keep_alive_interval_ms=300):
 
 
 def main():
-    modes = {"--handshake-only", "--diagnostics-once"}
+    modes = {"--handshake-only", "--diagnostics-once", "--frame38-probe"}
     options = sys.argv[2:]
     fault_options = [arg for arg in options if arg.startswith("--expect-fault-triplet=")]
     mode_options = [arg for arg in options if arg in modes]
@@ -618,7 +622,7 @@ def main():
             len(options) != len(fault_options) + len(mode_options) or
             (fault_options and mode_options != ["--diagnostics-once"])):
         print("Uso: python3 test_pty.py /dev/pts/X|/dev/ttyUSB0 "
-              "[--handshake-only|--diagnostics-once "
+              "[--handshake-only|--diagnostics-once|--frame38-probe "
               "[--expect-fault-triplet=02061B]]")
         return False
     expected_triplet = None
@@ -633,6 +637,7 @@ def main():
     dev = sys.argv[1]
     handshake_only = "--handshake-only" in sys.argv[2:]
     diagnostics_once = "--diagnostics-once" in sys.argv[2:]
+    frame38_probe = "--frame38-probe" in sys.argv[2:]
     pty_mode = is_pty_path(dev)
 
     print(f"Conectando a {dev} @ 4800 8N1 (PTY: {pty_mode})...")
@@ -667,6 +672,11 @@ def main():
             print("=" * 60)
             if handshake_only:
                 return True
+            if frame38_probe:
+                responses = request_data(ser, frame_id=0x38)
+                print(f"[FRAME38] transport {'complete' if responses else 'failed'}; "
+                      "firmware branch requires PC/RAM trace confirmation")
+                return responses is not None
             if diagnostics_once:
                 faults = request_data(ser, frame_id=0x07)
                 sensor_63 = read_iram_byte(ser, address=0x63)

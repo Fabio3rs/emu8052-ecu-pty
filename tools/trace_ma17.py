@@ -72,6 +72,12 @@ MOVC = re.compile(r"^\[MOVC-SUMMARY\] pc=([0-9A-F]{4}) opcode=(83|93) "
                   r"dptr=([0-9A-F]{4}) acc=([0-9A-F]{2}) "
                   r"address=([0-9A-F]{4}) mapped=([0-9A-F]{4}) "
                   r"value=([0-9A-F]{2}) count=(\d+)$")
+MOVC_BUCKET = re.compile(r"^\[MOVC-BUCKET\] start=(\d+) "
+                         r"address=([0-9A-F]{4}) count=(\d+)$")
+INDIRECT_IRAM = re.compile(
+    r"^\[INDIRECT-IRAM-READ\] pc=([0-9A-F]{4}) opcode=([0-9A-F]{2}) "
+    r"address=([0-9A-F]{2}) value=([0-9A-F]{2}) "
+    r"count=(\d+) first_tick=(\d+)$")
 TRACE_STOP = re.compile(r"^\[TRACE-STOP\] ticks=(\d+)$")
 LOOKUP = re.compile(r"^\[LOOKUP-SUMMARY\] rpm=([0-9A-F]{2}) load=([0-9A-F]{2}) "
                     r"selector=([0-9A-F]{2}) flags=([0-9A-F]{2}) "
@@ -81,7 +87,8 @@ LOOKUP = re.compile(r"^\[LOOKUP-SUMMARY\] rpm=([0-9A-F]{2}) load=([0-9A-F]{2}) "
 EVENTS = ("[RESET_0 ENTRY", "[ISR-TF0]", "[SIGUSR1]", "[K-LINE]",
           "[5-BAUD", "[UART", "[S0CON-WRITE]", "[CRANK-EDGE]",
           "[CRANK-POLL]", "[CRANK-LOOP-RESTART]", "[ISR-IEX3]",
-          "[PORT-EDGE]", "[P5-LATCH]", "[CC3-ENTRY]", "[CC3-GATE]",
+          "[PORT-EDGE]", "[P5-LATCH]", "[CC3-ENTRY]", "[CC3-DECISION]",
+          "[CC3-GATE]",
           "[CC3-GATE-WRITE]", "[P1.3-SHADOW]", "[CC3-MATCH-CANDIDATE]",
           "[CC3-PIN]", "[CRANK-REV]", "[KLINE-PAGE]")
 RPM_PCS = (0x01AB, 0x01AE, 0x0DEE, 0x0EA5, 0x565A, 0x566C)
@@ -116,6 +123,18 @@ def summarize_injection_flow(events):
             "first_pairs": pairs[:3], "last_pairs": pairs[-3:]}
 
 
+def parse_ram69_producer(line):
+    """Read a G/S88 pre-tick sample at the lower IRAM[69h] writer."""
+    if not line.startswith("[RAM69-PATH]") or "PC=3B06" not in line:
+        return None
+    try:
+        fields = dict(token.split("=", 1) for token in line.split()[1:])
+        return {key: f"{int(fields[key], 16):02X}" for key in
+                ("U8C", "RAM47", "RAM69", "flags2B")}
+    except (KeyError, ValueError) as error:
+        raise ValueError("invalid RAM69 producer trace") from error
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seconds", type=float, default=5.5)
@@ -133,11 +152,16 @@ def main():
                         help="Fiat gasoline ROM or a byte-identical-code calibration variant")
     parser.add_argument("--trace-movc", action="store_true",
                         help="aggregate executed MOVC reads by PC, input and ROM address")
+    parser.add_argument("--movc-bucket-ticks", type=int,
+                        help="also aggregate MOVC ROM addresses by emulated tick window")
     parser.add_argument("--trace-lookup", action="store_true",
                         help="aggregate 137Bh matrix lookup inputs and A/B results")
     parser.add_argument("--stop-ticks", type=int,
                         help="stop after this many emulated ticks; --seconds is a wall timeout")
     args = parser.parse_args()
+    if args.movc_bucket_ticks is not None and (
+            not args.trace_movc or args.movc_bucket_ticks <= 0):
+        parser.error("--movc-bucket-ticks requires --trace-movc and a positive count")
     if ("MA17_OVERRIDE_MOVC_7B45" in os.environ or
             "MA17_OVERRIDE_MOVC_7580" in os.environ or
             "MA17_OVERRIDE_MOVC_7581_DELTA" in os.environ or
@@ -170,11 +194,14 @@ def main():
     if matrix_source is not None:
         layouts = {"743A": (0x7020, 10), "7444": (0x7022, 10),
                    "744E": (0x7018, 10), "7462": (0x701C, 10),
-                   "746C": (0x702A, 10), "753E": (0x703C, 10),
+                   "746C": (0x702A, 10), "752A": (0x707C, 10),
+                   "753E": (0x703C, 10),
                    "7581": (0x7048, 225), "7662": (0x704A, 225),
                    "7743": (0x704C, 225), "7B46": (0x709C, 120),
+                   "7BBE": (0x709E, 120), "7C36": (0x70A0, 120),
                    "7CAE": (0x70B6, 120),
                    "7D26": (0x70B8, 120), "7D9E": (0x70BA, 120),
+                   "7E16": (0x70CE, 120),
                    "7895": (0x7080, 20), "78BD": (0x7084, 20),
                    "7925": (0x7064, 20), "7939": (0x7066, 20),
                    "7ED9": (0x70A2, 60),
@@ -212,10 +239,26 @@ def main():
     if ram78_override is not None and not re.fullmatch(
             r"[0-9A-Fa-f]{1,2}", ram78_override):
         parser.error("MA17_OVERRIDE_RAM78 must be one or two hex digits")
+    r6_1c19_override = os.environ.get("MA17_OVERRIDE_R6_AT_1C19")
+    if r6_1c19_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{2}", r6_1c19_override):
+        parser.error("MA17_OVERRIDE_R6_AT_1C19 must be two hex digits")
     ram4f_override = os.environ.get("MA17_OVERRIDE_RAM4F")
     if ram4f_override is not None and not re.fullmatch(
             r"[0-9A-Fa-f]{1,2}", ram4f_override):
         parser.error("MA17_OVERRIDE_RAM4F must be one or two hex digits")
+    ram7f_override = os.environ.get("MA17_OVERRIDE_RAM7F_AT_1E98")
+    if ram7f_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{2}", ram7f_override):
+        parser.error("MA17_OVERRIDE_RAM7F_AT_1E98 must be two hex digits")
+    upper9d_override = os.environ.get("MA17_OVERRIDE_UPPER9D_AT_1E8B")
+    if upper9d_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{2}", upper9d_override):
+        parser.error("MA17_OVERRIDE_UPPER9D_AT_1E8B must be two hex digits")
+    ram6e_read_override = os.environ.get("MA17_OVERRIDE_RAM6E_READ")
+    if ram6e_read_override is not None and not re.fullmatch(
+            r"[0-9A-Fa-f]{2}", ram6e_read_override):
+        parser.error("MA17_OVERRIDE_RAM6E_READ must be two hex digits")
     idle_r4_override = os.environ.get("MA17_OVERRIDE_IDLE_POSITION_R4")
     if idle_r4_override is not None and not re.fullmatch(
             r"[0-9A-Fa-f]{2}", idle_r4_override):
@@ -232,6 +275,16 @@ def main():
     p4_7_force_low = os.environ.get("MA17_P4_7_FORCE_LOW")
     if p4_7_force_low not in (None, "1"):
         parser.error("MA17_P4_7_FORCE_LOW must be 1 when set")
+    p4_3_force_low = os.environ.get("MA17_P4_3_FORCE_LOW")
+    if p4_3_force_low not in (None, "1"):
+        parser.error("MA17_P4_3_FORCE_LOW must be 1 when set")
+    trace_cc3_decision = os.environ.get("MA17_TRACE_CC3_DECISION")
+    if trace_cc3_decision not in (None, "1"):
+        parser.error("MA17_TRACE_CC3_DECISION must be 1 when set")
+    if os.environ.get("MA17_ZERO_UPPER_CA_AT_39B2") not in (None, "1"):
+        parser.error("MA17_ZERO_UPPER_CA_AT_39B2 must be 1 when set")
+    if os.environ.get("MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840") not in (None, "1"):
+        parser.error("MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840 must be 1 when set")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     log = output / "emulator-trace.log"
@@ -241,10 +294,13 @@ def main():
     environment["MA17_TRACE_PC"] = "1"
     environment["MA17_CRANK_RPM"] = str(args.rpm)
     environment.pop("MA17_TRACE_MOVC", None)
+    environment.pop("MA17_MOVC_BUCKET_TICKS", None)
     environment.pop("MA17_TRACE_LOOKUP", None)
     environment.pop("MA17_STOP_TICKS", None)
     if args.trace_movc:
         environment["MA17_TRACE_MOVC"] = "1"
+    if args.movc_bucket_ticks is not None:
+        environment["MA17_MOVC_BUCKET_TICKS"] = str(args.movc_bucket_ticks)
     if args.trace_lookup:
         environment["MA17_TRACE_LOOKUP"] = "1"
     if args.stop_ticks is not None:
@@ -345,12 +401,24 @@ def main():
     cc3_pin_edges = []
     crank_revolutions = []
     movc_reads = []
+    movc_buckets = []
+    indirect_iram_reads = []
     lookup_rows = []
     injection_flow_events = []
     air_gate_pcs = collections.Counter()
     air_gate_counts = collections.Counter()
+    ram69_producer_samples = []
+    ram69_path_log_events = 0
     observed_stop_ticks = None
     for number, line in enumerate(log.read_text(errors="replace").splitlines(), 1):
+        if line.startswith("[RAM69-PATH]"):
+            ram69_path_log_events += 1
+            try:
+                producer = parse_ram69_producer(line)
+            except ValueError as error:
+                raise RuntimeError(f"invalid RAM69 trace at log line {number}") from error
+            if producer is not None:
+                ram69_producer_samples.append(producer)
         stopped = TRACE_STOP.fullmatch(line)
         if stopped:
             observed_stop_ticks = int(stopped.group(1))
@@ -398,6 +466,24 @@ def main():
             movc_reads.append({"pc": pc, "opcode": opcode, "dptr": dptr,
                                "acc": acc, "address": address, "mapped": mapped,
                                "value": value, "count": int(count)})
+        if line.startswith("[MOVC-BUCKET]"):
+            match = MOVC_BUCKET.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid MOVC bucket at log line {number}")
+            start, address, count = match.groups()
+            if int(address, 16) >= len(candidate):
+                raise RuntimeError(f"MOVC bucket outside ROM at log line {number}")
+            movc_buckets.append({"start_tick": int(start), "address": address,
+                                 "count": int(count)})
+        if line.startswith("[INDIRECT-IRAM-READ]"):
+            match = INDIRECT_IRAM.fullmatch(line)
+            if not match:
+                raise RuntimeError(f"invalid indirect IRAM summary at log line {number}")
+            pc, opcode, address, value, count, first_tick = match.groups()
+            indirect_iram_reads.append({"pc": pc, "opcode": opcode,
+                                        "address": address, "value": value,
+                                        "count": int(count),
+                                        "first_tick": int(first_tick)})
         if "Startup delay complete - Beginning pulse injection" in line:
             crank_started = True
         ram47 = RAM47.match(line)
@@ -537,6 +623,11 @@ def main():
         raise RuntimeError("PC summary and hit list disagree")
     if args.trace_movc and not movc_reads:
         raise RuntimeError("MOVC tracing was enabled but no reads were recorded")
+    if args.movc_bucket_ticks is not None and (
+            not movc_buckets or
+            sum(row["count"] for row in movc_buckets) !=
+            sum(row["count"] for row in movc_reads)):
+        raise RuntimeError("MOVC bucket totals disagree with detailed reads")
     output_latches = {}
     for channel in (0, 1):
         periods = [b - a for a, b in zip(p5_starts[channel], p5_starts[channel][1:])]
@@ -605,10 +696,19 @@ def main():
               "firmware_sha256": firmware_hash,
               "emulator_sha256": emulator_sha256,
               "hardware_profile": "Fiat Tipo 11.88 MHz; P4 K-line; P1.0 crank",
+              "oscillator_hz": 11880000,
+              "machine_cycles_per_second": 990000,
               "p4_6_force_low_experimental": p4_6_force_low == "1",
               "p4_6_low_from_tick_experimental": (
                   None if p4_6_low_from_tick is None else int(p4_6_low_from_tick)),
               "p4_7_force_low_experimental": p4_7_force_low == "1",
+              "p4_3_force_low_experimental": p4_3_force_low == "1",
+              "upper_ca_zero_at_39b2_experimental":
+                  environment.get("MA17_ZERO_UPPER_CA_AT_39B2") == "1",
+              "ram2c_bit7_clear_once_at_1840_experimental":
+                  environment.get("MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840") == "1",
+              "ram5b_write_trace_after_tick":
+                  environment.get("MA17_TRACE_RAM5B_WRITE_AFTER_TICK"),
               "emulator_exit": process.returncode,
               "duration_seconds": None if args.stop_ticks is not None else args.seconds,
               "wall_timeout_seconds": args.seconds if args.stop_ticks is not None else None,
@@ -623,8 +723,14 @@ def main():
               "ram57_override_hex": ram57_override,
               "ram78_override_hex": ram78_override.upper()
               if ram78_override is not None else None,
+              "r6_1c19_override_hex": r6_1c19_override.upper()
+              if r6_1c19_override is not None else None,
               "ram4f_override_hex": ram4f_override.upper()
               if ram4f_override is not None else None,
+              "ram7f_override_at_1e98_hex": ram7f_override.upper()
+              if ram7f_override is not None else None,
+              "upper9d_override_at_1e8b_hex": upper9d_override.upper()
+              if upper9d_override is not None else None,
               "idle_position_r4_override_hex": idle_r4_override.upper()
               if idle_r4_override is not None else None,
               "movc_7b45_override_hex": environment.get("MA17_OVERRIDE_MOVC_7B45"),
@@ -640,9 +746,38 @@ def main():
               "movc_matrix_donor_sha256": matrix_donor_hash,
               "matrix_path_trace_enabled": "MA17_TRACE_MATRIX_PATH" in environment,
               "xram_f80c_override_hex": environment.get("MA17_OVERRIDE_XRAM_F80C"),
+              "xram_read_override_at_hex": environment.get(
+                  "MA17_OVERRIDE_XRAM_READ_AT"),
               "xram_f80c_trace_enabled": "MA17_TRACE_XRAM_F80C" in environment,
+              "xram_f891_trace_enabled": "MA17_TRACE_XRAM_F891" in environment,
+              "xram_f802_trace_enabled": "MA17_TRACE_XRAM_F802" in environment,
+              "xram_f8a2_trace_enabled": "MA17_TRACE_XRAM_F8A2" in environment,
+              "xram_f88e_trace_enabled": "MA17_TRACE_XRAM_F88E" in environment,
+              "xram_f8f2_trace_enabled": "MA17_TRACE_XRAM_F8F2" in environment,
+              "xram_trace_address_hex": environment.get("MA17_TRACE_XRAM_ADDRESS"),
+              "xram_trace_pc_hex": environment.get("MA17_TRACE_XRAM_PC"),
+              "xram_f87f_trace_enabled": "MA17_TRACE_XRAM_F87F" in environment,
+              "iram_read_override_at_hex": environment.get(
+                  "MA17_OVERRIDE_IRAM_READ_AT"),
+              "iram_read_override_after_tick": environment.get(
+                  "MA17_OVERRIDE_IRAM_READ_AFTER_TICK"),
+              "ram46_table_trace_enabled": "MA17_TRACE_RAM46_TABLE" in environment,
+              "upper_85_86_trace_enabled": "MA17_TRACE_UPPER_85_86" in environment,
+              "boot_xram_fields_trace_enabled":
+                  "MA17_TRACE_BOOT_XRAM_FIELDS" in environment,
+              "xram_f891_47a2_override_hex": environment.get(
+                  "MA17_OVERRIDE_XRAM_F891_47A2"),
+              "xram_f891_564a_override_hex": environment.get(
+                  "MA17_OVERRIDE_XRAM_F891_564A"),
+              "xram_f891_564a_return_filter_hex": environment.get(
+                  "MA17_OVERRIDE_XRAM_F891_564A_RETURN"),
+              "path_129d_trace_enabled": "MA17_TRACE_129D_PATH" in environment,
               "lambda_bound_trace_enabled": "MA17_TRACE_LAMBDA_BOUNDS" in environment,
               "coolant_gate_trace_enabled": "MA17_TRACE_COOLANT_GATE" in environment,
+              "post_coolant_axis_trace_enabled":
+              "MA17_TRACE_POST_COOLANT_AXIS" in environment,
+              "curve_799e_boundary_trace_enabled":
+              "MA17_TRACE_799E_BOUNDARY" in environment,
               "ram78_gate_trace_enabled": "MA17_TRACE_RAM78_GATE" in environment,
               "terminal_segment_trace_enabled":
               "MA17_TRACE_TERMINAL_SEGMENT" in environment,
@@ -650,9 +785,15 @@ def main():
               "ram5b_gate_trace_enabled": "MA17_TRACE_RAM5B_GATE" in environment,
               "matrix_7939_index_trace_enabled": "MA17_TRACE_7939_INDEX" in environment,
               "ram5b_read_override_hex": environment.get("MA17_OVERRIDE_RAM5B_READ"),
+              "ram6e_read_override_hex": ram6e_read_override,
               "tps_trace_after_tick": environment.get("MA17_TRACE_TPS_AFTER_TICK"),
+              "trace_78xx_after_tick": environment.get(
+                  "MA17_TRACE_78XX_AFTER_TICK"),
+              "pc_trace_window": environment.get("MA17_TRACE_PC_WINDOW"),
               "ram4d_path_trace_enabled": "MA17_TRACE_RAM4D_PATH" in environment,
               "cc3_trace_after_tick": environment.get("MA17_TRACE_CC3_AFTER_TICK"),
+              "cc3_decision_trace_enabled": trace_cc3_decision == "1",
+              "cutoff_path_trace_enabled": "MA17_TRACE_CUTOFF_PATH" in environment,
               "adc_10bit_input_values": adc_10bit_input_values,
               "adc_10bit_step_values": adc_10bit_step_values,
               "adc_10bit_step_sequences": adc_10bit_step_sequences,
@@ -664,7 +805,14 @@ def main():
                   "enabled": args.trace_movc,
                   "distinct_read_states": len(movc_reads),
                   "total_reads": sum(row["count"] for row in movc_reads),
-                  "reads": movc_reads},
+                  "reads": movc_reads,
+                  "bucket_ticks": args.movc_bucket_ticks,
+                  "buckets": movc_buckets},
+              "indirect_iram_observation": {
+                  "target_address": environment.get(
+                      "MA17_TRACE_INDIRECT_IRAM_ADDRESS"),
+                  "total_reads": sum(row["count"] for row in indirect_iram_reads),
+                  "reads": indirect_iram_reads},
               "lookup_observation": {
                   "enabled": args.trace_lookup,
                   "total_calls": sum(row["count"] for row in lookup_rows),
@@ -692,6 +840,20 @@ def main():
                   **{key: air_gate_counts[key] for key in
                      ("2e6_set_at_3cb7", "r2_below_6f_at_3cb7",
                       "carry_set_at_3d0c")}},
+              "ram69_producer_observation": {
+                  "enabled": "MA17_TRACE_RAM69" in environment,
+                  "samples_at_3b06": len(ram69_producer_samples),
+                  "path_log_events": ram69_path_log_events,
+                  "sample_limit_reached": ram69_path_log_events >= 2000,
+                  "flag_bit4_set_samples": sum(
+                      bool(int(row["flags2B"], 16) & 0x10)
+                      for row in ram69_producer_samples),
+                  "flag_values": sorted({row["flags2B"] for row in
+                                         ram69_producer_samples}),
+                  "output_values": sorted({row["RAM69"] for row in
+                                           ram69_producer_samples}),
+                  "rpm_bytes": sorted({row["RAM47"] for row in
+                                       ram69_producer_samples})},
               "fault_xram_observation": dict(fault_xram_changes),
               "adaptation_xram_observation": dict(adaptation_xram_changes),
               "lambda_bound_xram_observation": dict(lambda_bound_xram_changes),

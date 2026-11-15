@@ -29,12 +29,45 @@ namespace ma17 {
 using MovcKey = std::tuple<uint16_t, uint8_t, uint16_t, uint8_t,
                            uint16_t, uint16_t, uint8_t>;
 using MovcCounts = std::map<MovcKey, unsigned long long>;
+using MovcBucketCounts = std::map<std::pair<uint64_t, uint16_t>,
+                                  unsigned long long>;
 using LookupKey = std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t,
                              uint8_t, uint8_t, uint8_t, uint8_t, uint8_t>;
 using LookupCounts = std::map<LookupKey, unsigned long long>;
 static MovcCounts *movc_counts = nullptr;
+static MovcBucketCounts *movc_bucket_counts = nullptr;
+static uint64_t movc_bucket_ticks = 0;
+static uint64_t movc_tick = 0;
 static em8051operation original_movc_pc = nullptr;
 static em8051operation original_movc_dptr = nullptr;
+static std::array<em8051operation, 256> original_indirect_reads{};
+using IndirectReadKey = std::tuple<uint16_t, uint8_t, uint8_t>;
+using IndirectReadCounts = std::map<IndirectReadKey,
+                                    std::pair<unsigned long long, uint64_t>>;
+static IndirectReadCounts *indirect_read_counts = nullptr;
+static int indirect_read_address = -1;
+
+static uint8_t trace_indirect_read(em8051 *cpu) {
+    const uint16_t pc = cpu->mPC;
+    const uint8_t opcode = cpu->mCodeMem[pc & cpu->mCodeMemMaxIdx];
+    const uint8_t bank = cpu->mSFR[REG_PSW] & 0x18u;
+    // SAB80C517 Instruction Set: @R0/@R1 and stack POP/RET/RETI read
+    // indirect RAM; 80h..FFh select upper IRAM, not SFR space.
+    const bool stack_read = opcode == 0x22 || opcode == 0x32 || opcode == 0xD0;
+    const uint8_t address = stack_read ? cpu->mSFR[REG_SP]
+                                       : cpu->mLowerData[bank + (opcode & 1u)];
+    const int count = opcode == 0x22 || opcode == 0x32 ? 2 : 1;
+    for (int index = 0; index < count; ++index) {
+        const uint8_t effective = static_cast<uint8_t>(address - index);
+        if (effective == indirect_read_address) {
+            auto &sample = (*indirect_read_counts)[
+                {pc, opcode, cpu->mUpperData[effective - 0x80u]}];
+            if (sample.first == 0) sample.second = movc_tick;
+            ++sample.first;
+        }
+    }
+    return original_indirect_reads[opcode](cpu);
+}
 
 struct MatrixDonor {
     int base = -1;
@@ -61,6 +94,10 @@ static uint8_t trace_movc(em8051 *cpu, uint8_t opcode,
     const uint8_t delay = original(cpu);
     const uint8_t value = cpu->mSFR[REG_ACC];
     ++(*movc_counts)[{pc, opcode, dptr, acc, address, mapped, value}];
+    if (movc_bucket_counts) {
+        const uint64_t start = movc_tick / movc_bucket_ticks * movc_bucket_ticks;
+        ++(*movc_bucket_counts)[{start, mapped}];
+    }
     static const int forced_7b45 = [] {
         const char *raw = std::getenv("MA17_OVERRIDE_MOVC_7B45");
         if (!raw) return -1;
@@ -119,12 +156,14 @@ static uint8_t trace_movc(em8051 *cpu, uint8_t opcode,
         if (end == base || *end != '\0' ||
             (parsed != 0x743A && parsed != 0x7444 &&
              parsed != 0x744E && parsed != 0x7462 &&
-             parsed != 0x746C && parsed != 0x753E &&
+             parsed != 0x746C && parsed != 0x752A && parsed != 0x753E &&
              parsed != 0x7581 && parsed != 0x7662 &&
              parsed != 0x7743 &&
              parsed != 0x7895 && parsed != 0x78BD && parsed != 0x7925 &&
              parsed != 0x7939 && parsed != 0x7B46 &&
+             parsed != 0x7BBE && parsed != 0x7C36 &&
              parsed != 0x7CAE && parsed != 0x7D26 && parsed != 0x7D9E &&
+             parsed != 0x7E16 &&
              parsed != 0x7ED9 && parsed != 0x7F15 && parsed != 0x7F51)) {
             fprintf(stderr, "Invalid MA17_OVERRIDE_MOVC_MATRIX_BASE: %s\n", base);
             std::exit(2);
@@ -143,10 +182,12 @@ static uint8_t trace_movc(em8051 *cpu, uint8_t opcode,
         // substitution covers one pointer-verified ROM table at a time.
         donor.size = (parsed == 0x743A || parsed == 0x7444 ||
                       parsed == 0x744E || parsed == 0x7462 ||
-                      parsed == 0x746C || parsed == 0x753E) ? 10 :
+                      parsed == 0x746C || parsed == 0x752A ||
+                      parsed == 0x753E) ? 10 :
                      (parsed == 0x7895 || parsed == 0x78BD ||
                       parsed == 0x7925 || parsed == 0x7939) ? 20 :
-                     (parsed == 0x7B46 ||
+                     (parsed == 0x7B46 || parsed == 0x7BBE ||
+                      parsed == 0x7C36 || parsed == 0x7E16 ||
                       (parsed >= 0x7CAE && parsed <= 0x7D9E)) ? 120 :
                      (parsed < 0x7ED9 ? 225 : 60);
         return donor;
@@ -293,6 +334,78 @@ static void run_tick_batch(EmulatorLoopContext &context,
         }
         return static_cast<int>(value);
     }();
+    static const int forced_ram6e_read = [] {
+        const char *raw = std::getenv("MA17_OVERRIDE_RAM6E_READ");
+        if (!raw) return -1;
+        char *end = nullptr;
+        const unsigned long value = std::strtoul(raw, &end, 16);
+        if (end == raw || *end != '\0' || end - raw != 2 || value > 0xFF) {
+            std::fprintf(stderr, "Invalid MA17_OVERRIDE_RAM6E_READ: %s\n", raw);
+            std::exit(2);
+        }
+        return static_cast<int>(value);
+    }();
+    static const std::vector<std::array<int, 3>> forced_iram_reads = [] {
+        std::vector<std::array<int, 3>> settings;
+        const char *raw = std::getenv("MA17_OVERRIDE_IRAM_READ_AT");
+        if (!raw) return settings;
+        const char *hex = "0123456789abcdefABCDEF";
+        const std::size_t length = std::strlen(raw);
+        if (!length || (length + 1) % 11 != 0) {
+            std::fprintf(stderr, "MA17_OVERRIDE_IRAM_READ_AT expects "
+                                 "PC:ADDRESS:VALUE[,PC:ADDRESS:VALUE...] in hex\n");
+            std::exit(2);
+        }
+        for (std::size_t pos = 0; pos < length; pos += 11) {
+            if ((pos && raw[pos - 1] != ',') || raw[pos + 4] != ':' ||
+                raw[pos + 7] != ':' || std::strspn(raw + pos, hex) != 4 ||
+                std::strspn(raw + pos + 5, hex) != 2 ||
+                std::strspn(raw + pos + 8, hex) != 2) {
+                std::fprintf(stderr, "Invalid MA17_OVERRIDE_IRAM_READ_AT entry\n");
+                std::exit(2);
+            }
+            std::array<int, 3> setting{
+                static_cast<int>(std::strtoul(raw + pos, nullptr, 16)),
+                static_cast<int>(std::strtoul(raw + pos + 5, nullptr, 16)),
+                static_cast<int>(std::strtoul(raw + pos + 8, nullptr, 16))};
+            if (std::any_of(settings.begin(), settings.end(),
+                            [&](const auto &other) { return other[0] == setting[0]; })) {
+                std::fprintf(stderr, "Duplicate MA17_OVERRIDE_IRAM_READ_AT PC\n");
+                std::exit(2);
+            }
+            settings.push_back(setting);
+        }
+        return settings;
+    }();
+    for (const auto &setting : forced_iram_reads) {
+        const uint8_t opcode = cpu.mCodeMem[setting[0] & cpu.mCodeMemMaxIdx];
+        if (setting[1] >= 0x80 ||
+            (opcode != 0xE5 && opcode != 0x95 &&
+             !(opcode >= 0xA8 && opcode <= 0xAF && setting[1] >= 0x20)) ||
+            cpu.mCodeMem[(setting[0] + 1) & cpu.mCodeMemMaxIdx] != setting[1]) {
+            std::fprintf(stderr, "MA17_OVERRIDE_IRAM_READ_AT requires "
+                                 "MOV A/Rn,direct or SUBB A,direct "
+                                 "from lower IRAM\n");
+            std::exit(2);
+        }
+    }
+    static const bool clear_ram2c_bit7_at_1840 = [] {
+        const char *raw = std::getenv("MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840");
+        if (!raw) return false;
+        if (raw[0] != '1' || raw[1] != '\0') {
+            std::fprintf(stderr, "MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840 must be 1\n");
+            std::exit(2);
+        }
+        return true;
+    }();
+    if (clear_ram2c_bit7_at_1840 &&
+        (cpu.mCodeMem[0x1840 & cpu.mCodeMemMaxIdx] != 0x30 ||
+         cpu.mCodeMem[0x1841 & cpu.mCodeMemMaxIdx] != 0x67 ||
+         cpu.mCodeMem[0x1842 & cpu.mCodeMemMaxIdx] != 0x08)) {
+        std::fprintf(stderr, "MA17_CLEAR_RAM2C_BIT7_ONCE_AT_1840 requires "
+                             "Fiat JNB 2Ch.7,184Bh at 1840h\n");
+        std::exit(2);
+    }
     if (forced_ram5b_read >= 0 &&
         (cpu.mCodeMem[0x1866 & cpu.mCodeMemMaxIdx] != 0xE5 ||
          cpu.mCodeMem[0x1867 & cpu.mCodeMemMaxIdx] != 0x5B)) {
@@ -300,12 +413,58 @@ static void run_tick_batch(EmulatorLoopContext &context,
                              "MOV A,5Bh at 1866h\n");
         std::exit(2);
     }
+    if (forced_ram6e_read >= 0 &&
+        (cpu.mCodeMem[0x1773 & cpu.mCodeMemMaxIdx] != 0xAC ||
+         cpu.mCodeMem[0x1774 & cpu.mCodeMemMaxIdx] != 0x6E)) {
+        std::fprintf(stderr, "MA17_OVERRIDE_RAM6E_READ requires Fiat "
+                             "MOV R4,6Eh at 1773h\n");
+        std::exit(2);
+    }
+    static bool ram2c_gate_used = false;
+    static const unsigned long long forced_iram_read_after_tick = [] {
+        const char *raw = std::getenv("MA17_OVERRIDE_IRAM_READ_AFTER_TICK");
+        if (!raw) return 0ULL;
+        char *end = nullptr;
+        const unsigned long long value = std::strtoull(raw, &end, 10);
+        if (end == raw || *end != '\0') {
+            std::fprintf(stderr, "Invalid MA17_OVERRIDE_IRAM_READ_AFTER_TICK: %s\n",
+                         raw);
+            std::exit(2);
+        }
+        return value;
+    }();
+    static const std::array<unsigned long long, 2> pc_window = [] {
+        const char *raw = std::getenv("MA17_TRACE_PC_WINDOW");
+        if (!raw) return std::array<unsigned long long, 2>{1, 0};
+        char *separator = nullptr;
+        const unsigned long long first = std::strtoull(raw, &separator, 10);
+        char *end = nullptr;
+        const unsigned long long last = separator && *separator == ':'
+            ? std::strtoull(separator + 1, &end, 10) : 0;
+        if (separator == raw || !separator || *separator != ':' ||
+            end == separator + 1 || !end || *end != '\0' ||
+            last < first || last - first > 1000) {
+            std::fprintf(stderr, "MA17_TRACE_PC_WINDOW expects START:END "
+                                 "within 1000 ticks\n");
+            std::exit(2);
+        }
+        return std::array<unsigned long long, 2>{first, last};
+    }();
     for (int i = 0; i < context.steps_per_batch &&
                     (!stop_ticks || context.ticks < stop_ticks); ++i) {
         context.ticks++; // One count per emulated machine-cycle tick.
+        movc_tick = static_cast<uint64_t>(context.ticks);
         set_adc_tick(static_cast<uint64_t>(context.ticks));
         tick_crank_input(&cpu, context.ticks, context.crank);
         apply_pre_tick_experiments(cpu);
+        if (static_cast<unsigned long long>(context.ticks) >= pc_window[0] &&
+            static_cast<unsigned long long>(context.ticks) <= pc_window[1]) {
+            // SAB80C517 interrupt vectors: record foreground and ISR PCs
+            // without changing interrupt state or instruction timing.
+            std::fprintf(stderr, "[PC-WINDOW] tick=%lld PC=%04X PSW=%02X "
+                                 "TCON=%02X\n", context.ticks, cpu.mPC,
+                         cpu.mSFR[0xD0 - 0x80], cpu.mSFR[0x88 - 0x80]);
+        }
         if (context.trace_pc && cpu.mPC < pc_seen.size())
             pc_seen[cpu.mPC] = 1;
         if (context.trace_pc) {
@@ -331,14 +490,71 @@ static void run_tick_batch(EmulatorLoopContext &context,
         // MOV A,5Bh (E5 5B). Restore RAM after that single read.
         const bool override_ram5b = forced_ram5b_read >= 0 && cpu.mPC == 0x1866;
         const uint8_t saved_ram5b = cpu.mLowerData[0x5B];
+        const bool override_ram6e = forced_ram6e_read >= 0 &&
+            cpu.mPC == 0x1773 &&
+            (cpu.mLowerData[0x5C] || cpu.mLowerData[0x5D]);
+        const uint8_t saved_ram6e = cpu.mLowerData[0x6E];
+        const auto iram_setting = std::find_if(
+            forced_iram_reads.begin(), forced_iram_reads.end(),
+            [&](const auto &setting) { return cpu.mPC == setting[0]; });
+        const bool override_iram_read = iram_setting != forced_iram_reads.end() &&
+            context.ticks >= 0 &&
+            static_cast<unsigned long long>(context.ticks) >=
+                forced_iram_read_after_tick;
+        const uint8_t saved_iram_read = override_iram_read
+            ? cpu.mLowerData[(*iram_setting)[1]] : 0;
+        const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+        const bool override_ram2c = clear_ram2c_bit7_at_1840 &&
+            !ram2c_gate_used &&
+            cpu.mPC == 0x1840 && (cpu.mLowerData[0x2C] & 0x80u) &&
+            (cpu.mLowerData[bank + 6] || cpu.mLowerData[bank + 7]);
+        const uint8_t saved_ram2c = cpu.mLowerData[0x2C];
+        if (override_ram2c) {
+            // SAB80C517 Instruction Set: JNB reads bit 67h (IRAM 2Ch.7).
+            // Restore the byte immediately after this original instruction.
+            std::fprintf(stderr, "[RAM2C-BIT7-GATE] PC=1840 original=%02X "
+                                 "R7:R6=%02X%02X\n", saved_ram2c,
+                         cpu.mLowerData[bank + 7], cpu.mLowerData[bank + 6]);
+            cpu.mLowerData[0x2C] &= 0x7Fu;
+            ram2c_gate_used = true;
+        }
         if (override_ram5b) {
             std::fprintf(stderr,
                          "[RAM5B-READ-OVERRIDE] PC=1866 original=%02X supplied=%02X\n",
                          saved_ram5b, static_cast<unsigned>(forced_ram5b_read));
             cpu.mLowerData[0x5B] = static_cast<uint8_t>(forced_ram5b_read);
         }
+        if (override_ram6e) {
+            // SAB80C517 Instruction Set: AC 6E reads lower IRAM 6Eh
+            // into banked R4; restore the source after this instruction.
+            static int announced = 0;
+            if (announced++ < 8)
+                std::fprintf(stderr, "[RAM6E-READ-OVERRIDE] PC=1773 "
+                                     "original=%02X supplied=%02X\n",
+                             saved_ram6e, static_cast<unsigned>(forced_ram6e_read));
+            cpu.mLowerData[0x6E] = static_cast<uint8_t>(forced_ram6e_read);
+        }
+        if (override_iram_read) {
+            // SAB80C517.PDF, Instruction Set: MOV A/Rn,direct and
+            // SUBB A,direct read lower IRAM; restore after this opcode.
+            static int announced = 0;
+            if (announced++ < 8)
+                std::fprintf(stderr,
+                             "[IRAM-READ-OVERRIDE] PC=%04X addr=%02X "
+                             "stored=%02X supplied=%02X\n",
+                             static_cast<unsigned>((*iram_setting)[0]),
+                             static_cast<unsigned>((*iram_setting)[1]),
+                             saved_iram_read,
+                             static_cast<unsigned>((*iram_setting)[2]));
+            cpu.mLowerData[(*iram_setting)[1]] =
+                static_cast<uint8_t>((*iram_setting)[2]);
+        }
         tick(&cpu);
+        if (override_iram_read)
+            cpu.mLowerData[(*iram_setting)[1]] = saved_iram_read;
         if (override_ram5b) cpu.mLowerData[0x5B] = saved_ram5b;
+        if (override_ram6e) cpu.mLowerData[0x6E] = saved_ram6e;
+        if (override_ram2c) cpu.mLowerData[0x2C] = saved_ram2c;
 
         if (context.trace_pc) {
             trace_cc3_and_ram67(cpu, context.ticks, last_pc, timer2_before);
@@ -363,8 +579,54 @@ void run_emulator_loop(EmulatorLoopContext &context) {
     uint16_t last_pc = cpu.mPC;
     std::array<uint8_t, 0x8000> pc_seen{};
     MovcCounts local_movc_counts;
+    MovcBucketCounts local_movc_bucket_counts;
     LookupCounts lookup_counts;
+    IndirectReadCounts local_indirect_read_counts;
     const bool trace_movc_enabled = std::getenv("MA17_TRACE_MOVC") != nullptr;
+    if (const char *setting = std::getenv("MA17_TRACE_INDIRECT_IRAM_ADDRESS")) {
+        char *end = nullptr;
+        errno = 0;
+        const unsigned long parsed = std::strtoul(setting, &end, 16);
+        if (end == setting || *end != '\0' || errno || parsed < 0x80 ||
+            parsed > 0xFF || !cpu.mUpperData) {
+            fprintf(stderr, "Invalid MA17_TRACE_INDIRECT_IRAM_ADDRESS=%s; "
+                            "expected upper IRAM hex address 80..FF\n", setting);
+            std::exit(2);
+        }
+        indirect_read_address = static_cast<int>(parsed);
+        indirect_read_counts = &local_indirect_read_counts;
+        // Matched against every read_mem_indir caller in emu8051/opcodes.c.
+        constexpr std::array<uint8_t, 13> bases{
+            0x06, 0x16, 0x26, 0x36, 0x46, 0x56, 0x66,
+            0x86, 0x96, 0xB6, 0xC6, 0xD6, 0xE6};
+        for (const uint8_t base : bases) {
+            for (uint8_t opcode = base; opcode <= base + 1; ++opcode) {
+                original_indirect_reads[opcode] = cpu.op[opcode];
+                cpu.op[opcode] = &trace_indirect_read;
+            }
+        }
+        for (const uint8_t opcode : {uint8_t{0x22}, uint8_t{0x32},
+                                     uint8_t{0xD0}}) {
+            original_indirect_reads[opcode] = cpu.op[opcode];
+            cpu.op[opcode] = &trace_indirect_read;
+        }
+    }
+    if (const char *setting = std::getenv("MA17_MOVC_BUCKET_TICKS")) {
+        char *end = nullptr;
+        errno = 0;
+        const unsigned long long parsed = std::strtoull(setting, &end, 10);
+        if (!trace_movc_enabled || !*setting || *end != '\0' || errno ||
+            parsed == 0 || !std::all_of(setting, static_cast<const char *>(end),
+                                      [](char digit) {
+                return digit >= '0' && digit <= '9';
+            })) {
+            fprintf(stderr, "Invalid MA17_MOVC_BUCKET_TICKS=%s; requires "
+                    "MA17_TRACE_MOVC and a positive tick count\n", setting);
+            std::exit(2);
+        }
+        movc_bucket_ticks = static_cast<uint64_t>(parsed);
+        movc_bucket_counts = &local_movc_bucket_counts;
+    }
     if ((std::getenv("MA17_OVERRIDE_MOVC_7B45") ||
          std::getenv("MA17_OVERRIDE_MOVC_7580") ||
          std::getenv("MA17_OVERRIDE_MOVC_7581_DELTA") ||
@@ -462,6 +724,12 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                     "address=%04X mapped=%04X value=%02X count=%llu\n",
                     pc, opcode, dptr, acc, address, mapped, value, count);
         }
+        for (const auto &[key, count] : local_movc_bucket_counts) {
+            fprintf(stderr, "[MOVC-BUCKET] start=%llu address=%04X "
+                    "count=%llu\n", static_cast<unsigned long long>(key.first),
+                    key.second, count);
+        }
+        movc_bucket_counts = nullptr;
     }
     if (trace_lookup_enabled) {
         for (const auto &[key, count] : lookup_counts) {
@@ -474,6 +742,20 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                     rpm, load, selector, flags, r0, r4, r5, r6,
                     result_a, result_b, count);
         }
+    }
+    if (indirect_read_counts) {
+        for (const auto &[key, sample] : local_indirect_read_counts) {
+            const auto &[pc, opcode, value] = key;
+            fprintf(stderr, "[INDIRECT-IRAM-READ] pc=%04X opcode=%02X "
+                            "address=%02X value=%02X count=%llu first_tick=%llu\n",
+                    pc, opcode, static_cast<unsigned>(indirect_read_address),
+                    value, sample.first,
+                    static_cast<unsigned long long>(sample.second));
+        }
+        for (size_t opcode = 0; opcode < original_indirect_reads.size(); ++opcode)
+            if (original_indirect_reads[opcode])
+                cpu.op[opcode] = original_indirect_reads[opcode];
+        indirect_read_counts = nullptr;
     }
 }
 

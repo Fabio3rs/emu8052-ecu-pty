@@ -61,7 +61,8 @@ static ma17::PortController g_ports{
     g_uart, g_instr_counter, start,
     std::getenv("MA17_P4_6_FORCE_LOW") != nullptr,
     std::getenv("MA17_P4_7_FORCE_LOW") != nullptr,
-    p46_low_start_tick()};
+    p46_low_start_tick(),
+    std::getenv("MA17_P4_3_FORCE_LOW") != nullptr};
 
 static void uart_on_scanner_byte(uint8_t byte) {
     g_uart_scheduler.on_scanner_byte(byte);
@@ -196,11 +197,11 @@ int main(int argc, char **argv) {
     // off
 
     // Fiat clock model: 11.88 MHz / 12 = 990,000 machine-cycle ticks/s.
-    constexpr int64_t MIPS = 990000;
+    constexpr int64_t machine_cycles_per_second = 990000;
     const int steps_per_tick = 500;
     constexpr std::chrono::nanoseconds tick_duration_ns =
         std::chrono::nanoseconds(std::chrono::seconds(1)) /
-        (MIPS / steps_per_tick);
+        (machine_cycles_per_second / steps_per_tick);
 
     fprintf(stderr, "[DEBUG] Emulation timing: %d steps/tick, ~%lld ns/step\n",
             steps_per_tick,

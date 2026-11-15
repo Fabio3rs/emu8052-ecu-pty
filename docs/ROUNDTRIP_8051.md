@@ -61,16 +61,26 @@ buscar código externo conforme o estado de EA.
 O dump e o listing IDA não identificam, por si só, a marcação física do chip.
 O mapa de periféricos usado aqui inclui os recursos de XRAM do C517A.
 
-O perfil MA1.7 é selecionado **apenas** quando o hash de entrada é
-`a34734350611cf561eb39ac1a63097defcaaff642cd7780526f632dda40f8e1f`.
-Esse é exclusivamente o perfil do dump Fiat Tipo; o Renault não recebe esses
-vetores extras nem os aliases do Fiat durante o round-trip.
-Ele adiciona vetores de interrupção conferidos com o listing IDA, além do
+O perfil C517A Fiat é selecionado pelos cinco hashes únicos de `G`,
+`A`/`A+`, `S88`, `S37` e `S36` registrados em
+`docs/MA17_CALIBRATION_CATALOG.json`; o nome do arquivo não determina
+o perfil. As seis imagens usam `XPAGE=91h` e `SYSCON=B1h` no boot e
+possuem os mesmos endereços de vetor não apagados. A S36 muda o destino
+do vetor em `53h`, preservando seu endereço. O Renault permanece em seu
+perfil separado. O perfil Fiat adiciona os vetores conferidos com o
+listing IDA, além do
 reset. Os 12.469 inícios de instrução marcados pelo IDA ficam dentro das
 regiões que o `disasm51` classifica como código. Isso é uma checagem cruzada,
 não prova que toda classificação do IDA ou do `disasm51` esteja correta.
 Saltos indiretos e rotinas que alteram o endereço de retorno podem requerer
 `--indirect`, `--entry` ou `--no-return-from` em outros firmwares.
+
+Com esse perfil, as seis imagens Fiat remontam 32.768 bytes sem divergências,
+avisos de SFR desconhecido ou erros do assembler. A classificação estática
+produz 23.420 bytes de código em G/S88, 23.615 em A/A+/S37 e 22.282
+em S36; a diferença de S36 coincide com a mudança de destino do vetor
+`53h` e requer análise de alcançabilidade própria. Esses números não
+demonstram que todo código executável tenha sido descoberto.
 
 ## Resultado observado
 

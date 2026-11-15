@@ -227,7 +227,7 @@ atividade real ainda depende da habilitação da interrupção.
 | 54CFh | `scale_a_by_rom_offset0f_shr4_saturate` | Multiplica `A` por `ROM[DPTR+0Fh]` e retorna `min(255, floor(produto/16))`; uma chamada em 2B5Eh | Fórmula deduzida dos opcodes, sem execução específica dessa entrada; unidade do produto desconhecida |
 | 54E8h | `consume_up_to_five_xram3e_into_iram1f` | Com `RAM[20h].5=0`, subtrai de `XRAM[3Eh]` até cinco unidades e grava o valor consumido em `RAM[1Fh]` e `A`; com o bit ligado, preserva XRAM e devolve 5 se o byte era não zero, senão 0; PC observado | Papel físico e unidade desse contador ainda desconhecidos |
 | 54FEh | `decrement_xram3e_unless_205_and_update_iram1f` | Se XRAM 3Eh não é zero, decrementa e grava o contador quando `RAM[20h].5=0`; grava `05h` em `RAM[1Fh]`; se zero, grava `00h` | Unidade do contador e papel físico desse estado ainda desconhecidos |
-| 550Dh | `update_packed_xram_r0_state_from_r2` | Cinco chamadas em 2AB4h..2C07h com `R0=39h`; separa o byte em `XRAM[@R0]` em dois nibbles, compara `XRAM[35h]` com `R2`, atualiza o contador e as flags do estado, eventualmente regrava `XRAM[35h]` e o estado compactado; devolve o nibble baixo em `A` | Conclusão estática; nenhum PC observado nos rastros atuais; papel físico do estado desconhecido |
+| 550Dh | `update_packed_xram_r0_state_from_r2` | Cinco chamadas em 2AB4h..2C07h com `R0=39h`; separa o byte em `XRAM[@R0]` em dois nibbles, compara `XRAM[35h]` com `R2`, atualiza o contador e as flags do estado, eventualmente regrava `XRAM[35h]` e o estado compactado; devolve o nibble baixo em `A` | PC observado no trace G de 15 milhões de ticks; papel físico do estado desconhecido |
 | 5571h | `write_xram3e_and_set_r0_low_nibble` | Três chamadas em 2AC4h..2B1Ah com `R0=39h`; grava `A` em `XRAM[3Eh]` e força o nibble baixo de `XRAM[@R0]` a `Fh` | Conclusão estática; unidade de `XRAM[3Eh]` e papel físico do estado desconhecidos |
 | 5579h | `adjust_xram_r1_using_rom_offset25` | Lê `ROM[DPTR+25h]` e `XRAM[@R1]`; se o byte XRAM tem bit 7 limpo, devolve-o; caso contrário, subtrai o byte da ROM e aceita a diferença apenas sem empréstimo e com bit 7 ainda ligado, devolvendo `80h` nos outros casos; chamadas em 255Eh e 257Ah | Conclusão estática; papel físico do limite desconhecido |
 | 558Ah | `test_xram_range_55aa_r0_to_b` | Escreve e verifica `55h` e `AAh` entre `R0` e `B` exclusivo; marca `RAM[2Bh].1` em divergência e `F0` para intervalo inválido; PC observado na inicialização | O teste altera o conteúdo da faixa; a restauração depende do chamador |
@@ -300,6 +300,56 @@ As seis chamadas de `52F2h` usam ponteiros em `7068h→7952h` (`RAM[63h]`),
 respectivamente, contagens `02h`, `03h`, `04h`, `03h`, `03h` e `03h`.
 Essa associação é uma leitura direta dos bytes da ROM; ela ainda não
 identifica o significado físico de cada curva.
+Para `7068h→7952h`, a comparação G em `1282h` usa a curva como limite
+contra `RAM[47h]`: trocar somente o retorno de `MOVC 532Fh/7956h`
+de `10h` para `80h` inverteu o ramo em 33 passagens do ensaio. `RAM[63h]`
+vem de ADC3 no perfil emulado; `ADC3` é um canal lógico, não uma
+identificação do pino do encapsulamento ou do sensor na placa Fiat.
+Na curva `705Eh→78F9h`, `3D28h` escreve o carry em `RAM[25h].3`.
+Uma troca controlada do retorno `MOVC` alterou esse bit quando as
+guardas `2Eh.6/28h.1` estavam limpas. `25h.3` é bit de RAM interna,
+não `P2.5`, nem outro pino físico identificado.
+As matrizes `7060h→78FDh` e `7062h→7911h` alimentam, respectivamente,
+RAM superior `B1h` via `MOV @R1,A` em `3DAAh` e RAM baixa `58h` via
+`MOV 58h,A` em `3DB1h`. São endereços internos do SAB80C517A,
+não pinos. O código G lê `B1h` em `1893h/1915h` para testar o sinal;
+uma intervenção na matriz alcançou o ramo `1897h`. `58h` pode ser
+copiado para o contador `3Ch` em `18FDh/1906h`, ainda sem visita nos
+três boots testados. A ligação a qualquer circuito externo está aberta.
+A curva `706Ah→7958h` usa RAM `47h` como eixo de RPM e alimenta o
+cálculo G em `15B2h..15CFh`, que pode alterar RAM `59h` em `1644h`.
+Uma intervenção `MOVC` confirmou a mudança inicial de `59h=05h→01h`;
+`59h` é RAM baixa, não um pino. A rota posterior até o agendador CC3
+precisa ser separada de outras entradas antes de atribuir um atuador.
+No ensaio G a 1.000 RPM, a mesma intervenção reduziu as três primeiras
+larguras baixas do **pino modelado** `P1.3/CC3` de 5381/5380/5380 para
+4373/4372/4372 ticks. Fornecer `59h=05h` e `5Ah=00h` somente às leituras
+`MOV R3,59h`/`MOV R2,5Ah` em 1D5Ch/1D5Eh não restaurou essas larguras.
+O assembly revela leituras anteriores: `MOV R7,59h` em 1C99h e
+`MOV R5,5Ah` em 1C9Bh, seguidas da multiplicação em 1C9Dh. Fornecer
+`05h/00h` **nessas duas leituras** restaurou exatamente as três primeiras
+larguras nativas de CC3. Fornecer somente `59h=05h` produziu
+5397/5396/5396 ticks; somente `5Ah=00h`, 4357/4356/4356 ticks.
+Na primeira publicação em 1ED3h após a estabilização de `RAM63h`, o par
+`R3:R2` foi `05:44` nativo, `04:48` com a curva doada, `05:48` com
+apenas a leitura 59h restaurada, `04:44` com apenas 5Ah e `05:44` com
+ambas. Isso estabelece mediação digital nas leituras de 1C99h/1C9Bh
+para esse estado emulado. O latch, o pino do encapsulamento e o terminal
+físico do bico continuam evidências distintas.
+O contraste nos primeiros pulsos também apareceu a 750, 1.500 e
+3.000 RPM com ADC fixo. A 3.000 RPM, o resgate antecipado restaurou
+`5381/5381/5381` ticks frente a `4373/4373/4373` no braço doador;
+o controle nativo com o mesmo fornecimento manteve os três valores.
+Com `ADC1=40` a 1.000 RPM, o mesmo resgate antecipado restaurou
+`6309/6308/6308` ticks frente a `5301/5300/5300` do braço doador.
+`ADC1` aqui designa somente o canal estimulado no harness; esse teste
+não identifica seu terminal no encapsulamento nem a carga de `P1.3`.
+Os resgates também reproduziram os três primeiros pulsos nativos com
+`ADC3=40` (`6405/6404/6404`) e `ADC6=180` (`6901/6900/6900`), usando
+os pares estabilizados `RAM59h:5Ah=06:00` e `06:7C`. Os controles
+nativos preservaram essas larguras. O fornecimento constante alcança
+também a primeira leitura durante o boot, portanto a neutralidade
+comprovada aqui se refere aos pulsos observados, não ao estado inteiro.
 
 A faixa `5269h..5278h` permanece **ambígua** e está preservada como `DB`.
 O assembly modular marca a faixa com um comentário `ambiguous DB`; o
@@ -617,18 +667,155 @@ do scanner, não identificações demonstradas pela igualdade dos bytes:
 | 1 | IRAM 66h | 60h | Trilha 1 do TPS |
 | 2 | IRAM 47h | 28h | RPM |
 | 3 | IRAM 62h | 65h | Temperatura do ar |
-| 4 | MOVX 0Ch, página corrente | 80h | Integrador lambda |
+| 4 | MOVX 0Ch, página corrente | 80h | Estado interno; scanner chama de "integrador lambda" (não confirmado) |
 | 5 | MOVX 6Ch, página corrente | 00h | Correção de combustível de longo prazo |
 | 6 | MOVX 6Fh, página corrente | 00h | Aditivo de combustível de marcha lenta |
 | 7 | MOVX 3Dh, página corrente | 07h | Posição do atuador de marcha lenta |
 | 8 | IRAM 61h | 83h | Tensão de bateria |
 | 9 | MOVX 69h, página corrente | 00h | Adaptação de purga EVAP |
 
-O atuador de lenta descrito para esta ECU é um motor DC com ponte H que
-move o batente mínimo da borboleta; um interruptor na ponta informa o
-contato da borboleta. Isso orienta a busca por uma entrada discreta,
+### Registro de pinos candidatos (ROM Fiat G)
+
+Os nomes abaixo são **pinos do SAB80C517 ou latches de porta**, não
+terminais identificados no conector da ECU. Os PCs são da ROM Fiat G;
+as revisões Renault não herdam automaticamente esse mapa. Uma escrita no
+latch também não prova o nível elétrico quando a função alternativa do
+pino está habilitada.
+
+A curva `70D6h→79C4h` escreve em `F8:E1h` no ensaio G. `P2=F8h` nesse
+acesso `MOVX @R0,A` seleciona a página de XRAM; `F8:E1h` é endereço de
+memória, não um novo pino ou saída física identificada. O código lê o byte
+em `35D1h` antes de ajustar `R2`; seu destino posterior ainda é aberto.
+
+| Pino | Origem no firmware ou no modelo | Observação e hipótese | Pendente |
+| --- | --- | --- | --- |
+| `P2/XPAGE` | `MOVX @R0,A` em `35C2h` acessa `F8:E1h` no trace G; `35E0h` depois escreve `P2=F9h` | O manual SAB80C517 descreve a página de `MOVX @Ri` via `P2/XPAGE`; aqui `F8h` é parte do endereço de XRAM, não identificação de saída de atuador | Confirmar a multiplexação elétrica de P2/XPAGE na placa antes de inferir níveis nos terminais |
+| `P4.5` | Leitura de `P4` pelo caminho serial; `PortController` injeta o nível do transceptor K-Line | O modelo inverte o nível da linha K; é uma associação do harness, não uma medição na placa Fiat | Confirmar trilha e transceptor da ECU |
+| `P4.3/CM3` | `2374h` e `4991h` testam o bit; G/S88 `49ADh..49C8h` e família A `4A70h..4A8Bh` copiam seu nível para bit 2 de `XRAM[F8E2h]` | No boot G com TPS 40/95, nível baixo mudou `F8E2h` de `57h/77h` para `53h/73h`, sem mudar os resumos modelados de CC3 e saídas. `7375h..7377h=09 03 05` bloqueia o efeito do pino em `2374h` para `RAM57h=0/1/2`; o manual permite CM3 | Identificar modo e ligação elétrica; não atribuir ainda o contato de lenta |
+| `P4.6/CM6` | `2D57h/2D60h` leem o bit para `24h.4/2Fh.0`; `481Ah` usa `2Fh.0` para escolher a curva de `RAM[4Fh]` | Forçar entrada baixa no emulador muda a curva e o cálculo de CC3; o manual permite função alternativa CM6 | Determinar origem elétrica e modo CM6 na placa |
+| `P4.7/CM7` | `21D4h` e `2206h` amostram o bit; `48ECh/4951h` o usam em limites de curva | Entrada candidata a uma condição operacional; a associação ao pedido de A/C é hipótese | Rastrear circuito e estados em que `22h.5` libera a rota |
+| `P5.3` | `220Fh` escreve o complemento da condição calculada em `22h.4` | Com TPS `40/95`, o latch fica alto nas 230 passagens iniciais; após `A6h` zerar, fornecer `0Eh` à leitura `F8:39h` gera 439 amostras baixas. Com TPS `100/155` e `ADC3=20`, a ROM G alcança 439 amostras baixas sem essa intervenção. São níveis do latch modelado, sem identificação do atuador | Medir nível físico e correlacionar com embreagem do A/C |
+| `P5.0/P5.1` | Vetor TF1 `001Bh→0090h`; escritas em `0090h..00AFh` e `0252h..027Bh` | Pulsos alternados a cada meia volta, compatíveis com os dois canais wasted spark | Identificar drivers, polaridade e ligação aos primários |
+| `P1.7/T2` | O manual SAB80C517 o define como entrada externa ou de habilitação do Timer 2 quando `T2I1=1`; o código classificado das seis ROMs inicia `T2CON=85h` e não contém escrita que ligue `T2I1` | A busca nos bytes das seis ROMs não encontrou `CLR/SETB/CPL/MOV bit,C` para `T2I1` (`C9h`). O aparente `JBC C9h` em `5690h` (G/S88) ou `5753h` (A/A+/S37/S36) atravessa `POP 10h; XCH A,R1`. As curvas guardadas por `T2I1=1` foram selecionadas apenas em execução isolada; não há sinal de `P1.7` medido na ECU | Verificar código ainda não classificado, outras formas de escrever `T2CON` e conexão do terminal físico antes de atribuir função |
+| `P1.3/CC3` | `058Eh..05DBh` programa `CCL3/CCH3` e comuta o latch; comparação Timer 2 modelada | Pulso separado de P5.0/1. No degrau TPS G a 3.000 RPM, doar `7520h=6Fh` mudou o pulso iniciado no tick 907.122 de 8.156 para 9.488 ticks; zerar `78h` em `1D4Bh` removeu essa diferença. A curva `7958h` alterou três pulsos iniciais a 1.000 RPM; fornecer os valores nativos de RAM 59h/5Ah nas leituras em 1C99h/1C9Bh restaurou os três. Candidato à temporização de outro atuador, possivelmente bico | Confirmar estágio de potência e terminal físico do injetor |
+| `P1.1` | `0352h` liga e `0433h` desliga o latch | Período de meia volta no perfil testado; função física indeterminada | Medir sinal elétrico e rastrear consumidores |
+
+Para `P5.0/P5.1`, há agora uma intervenção adicional na ROM G: com
+`RAM[57h]=1/2` **forçada**, doar somente as células de `7BBEh`/`7C36h`
+de S88 altera `RAM[69h]` e as larguras dos pulsos P5 modelados; no
+modo 1, cruzar `RAM[69h]` no leitor Timer 1 `043Bh` reproduz ou quase
+restaura essas medianas. Isso documenta uma rota digital de temporização
+sob estado preparado. Os níveis elétricos, drivers e terminais das duas
+bobinas wasted spark continuam sem identificação na placa Fiat.
+
+Para `P1.3/CC3`, a tabela constante `7036h→7AE0h` alimenta XRAM
+`F8:7Fh`; a leitura em `480Dh` medeia, no ensaio G com ADC3 variável,
+uma alteração de 68 ticks na largura baixa modelada de CC3.
+`F8:7Fh` não é pino, e esse resultado não identifica o terminal do
+bico monoponto nem a polaridade do seu estágio de potência.
+
+`ADC6` é por enquanto um **canal no modelo**, não um pino do encapsulamento
+ou terminal da ECU identificado. Na ROM G/S88, a leitura alimenta `66h`
+em `0744h`; o caminho `11D1h→1255h..125Eh→19DEh..1A38h` alcança a
+guarda de `78h`. O degrau de 10 bits `409→410` abriu essa guarda no
+estado ensaiado a 1.000 RPM. Falta associar o canal ao pino analógico,
+à trilha do TPS e à tensão física; não atribuir a ele um nome de pino
+até verificar o esquema ou a placa.
+
+Outra rota de `P1.3/CC3` passa pelo leitor `MOVX A,@R0` em `2027h`,
+com `R0=A3h` e página `P2=F8h` no ensaio Fiat. `45F8h` escreve essa
+posição a partir da curva ROM `79A8h`; alterar só o retorno do `MOVC`
+em `79ADh` mudou um pulso baixo modelado de 233 para 57 ticks antes
+da chamada `2036h→5469h`. Fornecer `FFh` apenas à leitura `2027h`
+restaurou os 233 ticks com `F8:A3h` ainda armazenando `40h`.
+Esse é um vínculo digital entre tabela,
+XRAM e pino modelado; falta verificar a fiação e a função física.
+O leitor `2027h` depende de um contador: com `ADC0/6=120/95`,
+`2011h` desvia para `203Dh`, `204Fh` incrementa `F8:A2h` de `00h`
+para `01h`, `2016h` lê `01h` e `203Ah` limpa o contador após agendar
+CC3. Com `ADC0/6=120/180`, a leitura em `2016h` permanece `00h` e
+`2027h` não é alcançado nos seis milhões de ticks testados. Em `2011h`
+o primeiro caso tinha `PSW.F0=1` e `IRAM23h=2Fh`. A instrução
+`SETB 23h.3` em `142Eh` só foi alcançada nesse primeiro perfil; seu
+ramo começa em `1427h`, compara `R4` com `05h` e lê ROM via `MOVC`.
+Ainda falta demonstrar qual condição de entrada levou a esse estado.
+A associação de `P1.3`
+ao terminal físico do bico continua hipótese, não identificação.
+
+Segundo a descrição do hardware fornecida pelo usuário, esta ECU tem um
+bico monoponto e duas bobinas wasted spark para quatro cilindros em quatro
+tempos. O atuador de lenta é um motor DC com engrenagem sem-fim e ponte H:
+ele move o batente mínimo da borboleta, e o interruptor integrado indica
+quando ela encosta no batente. Isso orienta a busca por uma entrada discreta,
 controle das duas direções do motor e realimentação pelo TPS. Ainda
 não há identificação elétrica dessas três conexões no firmware Fiat.
+O usuário também informa uma saída física para liberar o acoplamento do
+ar-condicionado. A hipótese de que a ECU exija operação estável do motor
+antes de ativá-la ainda carece de rastreamento de entrada, condição e pino;
+nenhum nome do IDA ou do scanner foi tomado como prova dessa associação.
+Um candidato verificável está em `21D4h..220Fh`: a ROM lê `P4.7`, usa
+`DPTR=7200h` para consultar `72C3h=0Eh` e `72C4h/72C5h=0Dh/0Eh`,
+compara o limite escolhido com `RAM[63h]`, e escreve o complemento do
+carry resultante em `P5.3`. Antes da escrita, `C` é a conjunção da
+comparação `ROM[72C4h/72C5h] < RAM[63h]`, `P4.7=1`, `22h.5=0` e
+`PSW.5=1`; `22h.4` guarda a mesma condição. Em duas partidas G a
+1.000 RPM/2,4 milhões de ticks, com `P4.7` padrão ou forçado baixo,
+o probe `MA17_TRACE_P53_GATE=1` registrou 230 passagens por `220Fh`
+em cada caso. A mudança de `P4.7` alterou `PSW.5` na rota anterior,
+mas `22h.5` permaneceu ligado nas 230 passagens e `P5.3` ficou alto.
+Num trace da rota produtora, `21C6h` (que liga `22h.5`) foi visitado
+230 vezes e `21CAh` (que o limpa) nenhuma; em 229 passagens por
+`21C6h`, `28h.1=1`. Os opcodes `2174h..2180h` incluem `28h.1` na
+condição que segue para `21C6h`. Isso identifica uma guarda ativa no
+estado testado, sem estabelecer a função física de `28h.1`. Com TPS
+experimental `ADC0/6=40/95`, `28h=00h` nas 230 visitas, mas `21C6h`
+continuou a ligar `22h.5`: `2Eh.0=1` desviou diretamente de `216Ah`
+nas primeiras 21, e as outras 209 passaram por `21C2h` antes de
+`21C6h`. Nestas 209, RAM superior `9Eh.6=1` e o contador em RAM
+superior `A6h` permaneceu não zero (`64h..50h`); `2167h` desviou da
+checagem de `28h.1` em `2174h`. `2Dh.5` só decidiu se o contador seria
+decrementado antes de `21C6h`. Logo, limpar `28h.1` isoladamente não
+libera essa saída.
+Assim, o ensaio identifica a dependência digital e o bloqueio neste
+estado, sem demonstrar que `P4.7` seja o pedido de A/C nem que `P5.3`
+seja a saída física da embreagem. A associação com estabilidade do motor
+depende de rastrear os produtores de `22h.5` e medir outros estados.
+Num ensaio G de 15 milhões de ticks, `A6h` zerou por volta do tick
+10.505.322; `27h.1/.3` continuaram bloqueando a saída. Ao substituir
+somente a leitura XRAM `F8:39h` por `0Eh` e usar `ADC3=20`, o código
+limpou `22h.5` e o latch P5.3 ficou baixo em 439 amostras. Isso
+confirma uma rota digital sob intervenção, sem identificar o terminal
+da ECU nem a polaridade elétrica do eventual driver.
+Com TPS `ADC0/6=100/155` e `ADC3=20`, o mesmo perfil G alcançou
+`21CAh` 440 vezes e registrou 439 amostras de P5.3 baixo **sem**
+substituir a leitura `F8:39h`. Nesse estado, `27h=04h`, `28h=00h` e
+`746Ch` foi lida 922 vezes. A origem elétrica das duas pistas TPS e a
+ligação física de P5.3 continuam sem confirmação.
+Há também uma leitura de `P4.7` em `48ECh`: no estado G testado,
+ela decide se a curva ROM `74A8h` recebe um piso antes de gravar
+`RAM46h` em `48FFh`. Com o pino modelado alto, o valor `22h` virou
+`25h`; com o pino forçado baixo, permaneceu `22h`. Uma intervenção
+somente no `MOVC 532Fh/74A8h` que entregou `42h` resultou em `42h`
+nos dois estados. O ramo alternativo `T2CON.1=1` seleciona
+`7010h→74C6h` com `IRAM57h=0`, ou `7012h/7014h` com
+`IRAM57h=1/2`, e pula esse piso mesmo com `P4.7` alto. Com
+`T2CON.1=0`, os seletores `1/2` usam `700Ch/700Eh` e ainda passam
+pela guarda de `P4.7`. Esses estados foram preparados na execução
+isolada dos opcodes originais das seis ROMs; sua seleção natural não
+foi demonstrada. Essa segunda dependência digital de `P4.7` não
+identifica a função do terminal na ECU; consulte o manual SAB80C517
+para o pino multifunção e meça a placa antes de associá-lo ao A/C.
+Em uma intervenção tardia somente no `MOVC 532Fh/74A8h`, o valor
+armazenado em `RAM46h` passou de `25h` para `42h` e a guarda `23AFh`
+da rota de posição de lenta mudou de carry zero para um, impedindo
+`23B9h`. Fornecer `25h` somente à leitura `MOV A,46h` em `2307h`
+restaurou `231Ch` (`CLR 20h.3`) e `23B9h`, mesmo com `RAM46h`
+armazenando `42h`. A subtração em `23A1h` deixou carry zero nos
+quatro braços; `20h.3` explica a diferença posterior em `23AFh`.
+Isso estabelece a mediação digital de `RAM46h` nessa guarda, mas
+não isola a leitura de `P4.7` até o atuador: `IRAM20h/24h` também
+mudaram; este ensaio não demonstrou alteração de `XRAM[F8:3Dh]`
+nem incluiu medição física do pino.
 O scanner chama o campo `MOVX` de endereço baixo `3Dh` de posição do
 atuador (`F8:3Dh` na hipótese de página); isto **não é** o mesmo
 endereço que a `IRAM[3Dh]` usada pelo código em `30F0h` para definir
@@ -978,6 +1165,41 @@ assumido de 12 MHz; o harness Fiat usa 11,88 MHz. A interpretação como
 largura física de pulso ainda depende de validar o modo efetivo do Timer 2,
 o circuito de saída e o pino do injetor.
 
+No perfil Fiat G, substituir `ROM[73C6h]` só na leitura `MOVC` em 52A2h
+mudou a mediana de `RAM[14h:15h]` entregue ao agendamento de CC3 de 1.505
+para 1.491 ticks. Intervir apenas na leitura de `XRAM[F8:91h]` em 47A2h
+mudou `R5:R6`, mas não essa mediana; intervir nas duas leituras confirmou
+a separação. Outro teste cruzado localizou a mediação na leitura de
+`XRAM[F8:91h]` em `564Ah`: fornecer `14h` ali reproduziu 1.491 ticks
+com a tabela original, e fornecer `34h` ali restaurou 1.505 ticks com
+a tabela experimental. É evidência digital do caminho até o registrador
+CC3 e o pino multifunção `P1.3/CC3`. A leitura relevante em `564Ah`
+ocorre na chamada de `129Dh` (retorno `12A0h`); as chamadas de
+`154Fh` e `15D2h` não reproduziram o efeito neste estado. Isso não
+revela qual conector ou carga da ECU recebe o sinal. Em um segundo
+cruzamento, a leitura `MOVC` da curva `7426h` alterou a RAM superior
+`[87h]` e a temporização CC3; alterar a curva `7412h` mudou
+`RAM[4Ah:4Bh]` sem mudar CC3 nesse mesmo estado. A ligação digital
+foi estreitada até a saída da curva `7426h`: `1562h` usa `[87h]`,
+`1644h` grava `RAM[59h:5Ah]`, `1D60h` lê esse par e `1ED3h` grava
+`RAM[14h:15h]`. A S88 repetiu o efeito digital sobre CC3 com a mesma
+curva e a mesma leitura `MOVC`, embora seus tempos absolutos diferissem.
+A substituição das duas células `742Eh:742Fh` pelos valores da A/A+
+também deslocou a temporização modelada de CC3 em G e S88 sob a
+condição de borda ADC3 testada. Outro par, `7429h:742Ah`, produziu
+o mesmo tipo de efeito com `ADC3=80` e `RAM[28h]=00h` nas amostras
+observadas; isso compara calibrações digitais,
+sem identificar a carga física do pino.
+Nesses contrastes de `7426h`, as larguras baixas medianas modeladas
+de `P5.0` e `P5.1` permaneceram iguais entre controle e intervenção
+em 750, 1.000, 1.500, 2.000, 3.000 e 4.000 RPM nas ROMs G e S88,
+apesar da mudança em CC3. A fiação das
+duas saídas P5 e de `P1.3/CC3` continua sem verificação elétrica.
+Com rotação fixa de 1.000 RPM, contrastes adicionais nas entradas
+`ADC3=40/160` selecionaram outros pares da curva `7426h`; em G/S88,
+as células A/A+ mudaram CC3 sem mudar as medianas de P5.0/P5.1.
+Ver `MA17_FIRMWARE_VARIANTS_ANALYSIS.md`, seção `73C0h`.
+
 Esses números são valores do parâmetro de agendamento, não durações
 elétricas medidas. A única entrada `CC3` visitada nesses ensaios foi 058Eh;
 as chamadas de 5469h em 1B1Ch/2036h continuam comprovadas apenas por
@@ -1243,6 +1465,20 @@ um teste automatizado cobre esse contraste. Os relatórios estão em
 Esse padrão é compatível com um caminho de injeção separado das duas
 saídas candidatas de ignição, mas não prova o pinout nem a polaridade do
 driver do bico monoponto.
+
+Em um degrau de TPS `180/247→40/95` a 3.000 RPM, o firmware G
+continuou calculando `IRAM[14h:15h]` diferente de zero, mas parou de
+produzir bordas em `P1.3/CC3`. O segundo teste em `0591h` (`JB 26h.7`)
+desvia do agendamento quando `IRAM[26h].7=1`. Nas capturas tardias,
+esse bit passou a 1 entre os ticks 2.184.194 e 2.194.094 no controle;
+com `P4.6` baixo experimentalmente a partir do degrau, entre 1.877.295
+e 1.887.195. O cut-off de desaceleração conhecido ocorre acima de
+1.500 RPM com o interruptor de lenta pressionado, mas **P4.6 ainda não
+está identificado como o contato físico**. A guarda digital de CC3 pode
+acionar perto de 1.425 RPM no modelo e não determina esse limiar físico.
+A observação confirma bloqueio digital de CC3;
+não comprova corte físico do bico nem suficiência do TPS fechado. Detalhes
+em [MA17_FIRMWARE_VARIANTS_ANALYSIS.md](MA17_FIRMWARE_VARIANTS_ANALYSIS.md).
 
 No ensaio anterior de três segundos com ADC 7 no valor padrão 105, o PC
 entrou 94 vezes em 058Eh. Em todas as entradas amostradas,
