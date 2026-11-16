@@ -6,6 +6,7 @@
 #include "engine/ExhaustLambda.hpp"
 #include "engine/IdleActuator.hpp"
 #include "ecu_hw/Ma17IgnitionStage.hpp"
+#include "ecu_hw/Ma17DiagnosticLamp.hpp"
 #include "ecu_hw/Ma17IdleBridge.hpp"
 #include "ecu_hw/Ma17LambdaHeater.hpp"
 
@@ -78,6 +79,7 @@ struct EmulatorLoopContext {
     long long lambda_restore_tick = 0;
     double exhaust_flow_kg_s = 0.0;
     ecu_hw::Ma17IgnitionStage ignition_stage{};
+    ecu_hw::Ma17DiagnosticLamp diagnostic_lamp{};
     ecu_hw::Ma17InjectorStage *injector_stage = nullptr;
     double injected_mass_pending_kg = 0.0;
     long long injector_disconnect_tick = 0;

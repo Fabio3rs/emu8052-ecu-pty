@@ -112,3 +112,7 @@ add_test(NAME PhysicalAdc4.ConditionalRomRatio
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_adc4_ratio.py
             $<TARGET_FILE:emu8051-tty>
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+add_test(NAME PhysicalPower.RetainedXramAcrossKeyAndProcess
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_power_retention.py
+            $<TARGET_FILE:emu8051-tty>
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)

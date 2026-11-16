@@ -710,6 +710,142 @@ mudou 15 vezes no mesmo ensaio, em `06CAh`, acompanhando `RAM[1Dh]`
 e `T2CON.1`; a cadência não identifica relé, bomba ou outra carga.
 Ambos permanecem sinais brutos sem binding ao terminal 28.
 
+**Luz de avaria (observação do veículo):** o terminal 31 do conector é
+identificado como luz de avaria na tabela de aplicação. Segundo a observação
+do proprietário, ela acende com a ignição ligada antes da partida e também
+em algumas condições com DTC presente. Sequência proposta para observar no
+veículo:
+
+| Estado | Comportamento a observar |
+| --- | --- |
+| Ignição desligada | Lâmpada apagada |
+| Ignição ligada, motor parado | Lâmpada acesa |
+| Motor de partida acionado | Registrar se e quando ocorre transição |
+| Motor funcionando | Lâmpada apaga após as condições previstas pela ECU, sem prazo ainda medido |
+
+Esta sequência orienta a simulação do painel, mas ainda falta medir a
+polaridade do comando e confirmar qual pino da CPU chega ao terminal 31.
+A transição de `P5.4` acima é uma pista, não prova do circuito da lâmpada.
+Também não está estabelecido se um DTC apenas histórico, sem falha presente,
+mantém a luz acesa.
+
+**Pista estática na ROM Fiat G:** o reset em `0C25h` arma `2Dh.0` e zera
+`F8:81h`. No Timer 0, `316Eh–317Ah` põe `P5.4` baixo somente quando
+`2Dh.0=1` e `F8:81h=0`; em qualquer outro caso põe o latch alto.
+Em `4140h–4167h`, o código só limpa `2Dh.0` depois de verificar
+`RAM28h[4:0]`, `RAM29h[6:0]`, `RAM2Bh.0` e algumas condições de
+temporização. Em `419Ah`, outra rota rearma `2Dh.0` e grava `F5h`
+em `F8:81h`; `314Eh` decrementa esse byte quando `T2CON.1=0` e
+`2Dh.5=1`. Isso combina com lâmpada ativa em nível baixo, autoteste
+antes da partida e eventual atraso para acender após falha. A função
+dos indicadores internos e a escala de tempo do contador ainda exigem
+validação; não se pode concluir que todo DTC acenda a lâmpada.
+
+O byte `ROM[5720h+R3]` controla essa seleção: no laço `4172h–41C5h`,
+`R3=1..8` examina falhas qualificadas de `RAM27h`, `9..16` de `RAM28h`
+e `17..23` de `RAM29h`. Somente uma posição ativa cujo byte da tabela
+tenha o bit 2 ligado pode rearmar `2Dh.0` em `419Ah`. O cruzamento com
+as triplas de diagnóstico acima resulta em:
+
+| Bits examinados | Bit 2 da tabela | Códigos base na tabela `6E27h` |
+| --- | --- | --- |
+| `27h.0..5` | 0 | `0402h`, `1A01h`, `3102h` |
+| `27h.6..7` | 1 | `1902h` |
+| `28h.0..4` | 1 | `0602h` |
+| `28h.5..7` | 0 | `0602h`, `0A02h` |
+| `29h.0..6` | 1 | `0A02h`, `0B02h`, `0D02h`, `0302h`, `FFFFh` |
+
+O laço aplica ainda máscaras de habilitação (`F8:84h..86h`) e guardas
+especiais antes de usar esses bits. Os códigos acima são entradas base,
+não prova de que cada DTC seja alcançável ou acenda a lâmpada. Em
+`4140h–4167h`, a limpeza examina falhas correntes em `RAM27h/28h/29h`
+e `2Bh.0`; os bancos históricos `F8:5Eh..60h` não aparecem nessa
+decisão direta.
+
+Contraste com a ROM original no motor físico condicional, 40 milhões de
+ticks: sem falha, `P5.4` subiu no tick 572.953 e ficou alto; TPS1
+elevado desde 10 milhões publicou `F84Eh=08h` até o fim, mas não fez
+`P5.4` cair; ECT aberto desde 10 milhões publicou `RAM28h/F84Fh=08h`
+e fez `P5.4` cair no tick 35.276.447. Em outro ensaio, ECT voltou no
+tick 40 milhões; `P5.4` subiu no tick 40.099.515, enquanto o banco
+histórico `F85Fh=08h` persistiu até 54,45 milhões. Isso sustenta a
+seleção por tipo de falha corrente e um atraso na ativação, sem medir a
+polaridade elétrica da lâmpada nem estabelecer prazo universal.
+
+O modelo de hardware expõe `Ma17DiagnosticLamp::lamp_on()` e o campo
+`lamp_on_candidate` na telemetria `diagnostic`. Ambos amostram `P5.4`
+como comando ativo em nível baixo; representam a hipótese observacional,
+não uma medição de tensão no terminal 31. Antes da primeira amostra da
+CPU, o getter retorna falso, pois a alimentação desligada ainda não é
+simulada como estado independente.
+
+### Alimentação permanente, chave e início da CPU
+
+O mapa de aplicação atribui o terminal 16 da ECU à linha 30 (bateria)
+e o 17 à linha 15 (chave); a continuidade nesta placa ainda não foi
+medida. A ROM preserva indícios de estado entre inicializações: em
+`088Fh..08C7h`, testa a escrita em `XRAM F8:FFh` e classifica o valor
+anterior (`01h`, `80h`, `FFh`, zero ou outro); em `08CFh..0929h`,
+compara outros bytes de XRAM com constantes da EPROM. Isso é compatível
+com RAM mantida pela linha 30, mas não identifica qual circuito recebe
+essa alimentação, nem prova que o núcleo da CPU permaneça energizado.
+
+A observação do proprietário é que alguns segundos sem a bateria apagam
+as adaptações. No [datasheet oficial do SAB80C515A](https://www.infineon.com/assets/row/public/documents/10/57/infineon-d80515a-ds-v08-95-en.pdf),
+a XRAM interna `F800h..FBFFh` preserva conteúdo em reset e em *hardware
+power down* enquanto VCC continuar presente, mas seu estado após remover
+a alimentação é indefinido. O mesmo documento atribui ao PLCC-68:
+
+| Terminal da CPU candidata | Função no 80C515A | Uso a verificar nesta ECU |
+| ---: | --- | --- |
+| 37 / 38 | VCC / VSS | Alimentação lógica contínua e massa |
+| 68 | `/HWPD`, ativo em baixo | Possível comando de repouso pela linha 15; **no 80C515 anterior é VCC** |
+| 10 | `/RESET`, ativo em baixo | Circuito de reset, separado de `/HWPD` |
+| 4 | `PE/SWD` | Habilita modos de economia por software; não comanda `/HWPD` |
+| 66 / 67 | `P5.1 / P5.0` | Saídas candidatas das duas bobinas |
+
+No 80C515A, `/HWPD=0` para a CPU e os osciladores e inicia um reset
+interno; `/HWPD=1` reativa osciladores e reinicia o programa. A XRAM
+permanece se VCC não cair. Essa é uma explicação de arquitetura coerente
+com a observação, **não** uma identificação elétrica do B58371 nem da
+trilha da chave. Prioridade de bancada: confirmar 37/38 pelos planos de
+alimentação, depois seguir 68 e 10 até o circuito de entrada; comparar
+o estado dessas redes com chave desligada/ligada sem presumir que 68
+aceite tensão de bateria. A distinção 515A/515 torna 68 especialmente
+sensível a uma identificação errada.
+
+O harness atual chama `reset(&cpu, true)` uma vez na partida e não modela
+linha 15, desligamento, retenção seletiva de RAM ou saída de standby.
+Para simular uma futura transição da chave sob a hipótese `/HWPD`, a
+XRAM deveria sobreviver ao reset de execução; uma remoção de bateria
+deveria invalidá-la. O ensaio opcional `MA17_WARM_REBOOT_TICK=N` reinicia
+CPU e periféricos no primeiro limite de lote após o tick N sem zerar
+RAM/ROM; o log `WARM-REBOOT` mostra o marcador `F8:FFh` antes/depois.
+O reset inicial representa bateria recém ligada quando não há arquivo;
+ao carregar XRAM salva, o bit `PCON.POF` é limpo para representar reset
+com alimentação mantida. O evento é instantâneo e ainda não simula a duração da chave
+desligada nem a tensão física em `/HWPD`.
+Para ensaios que atravessam processos, `MA17_XRAM_STATE_FILE=/caminho/estado.bin`
+carrega e salva os 1.024 bytes modelados de XRAM `F800h..FBFFh`.
+Arquivo ausente inicia com zeros; formato inválido causa erro. A gravação
+usa arquivo temporário seguido de renomeação. Cada ECU/ROM de ensaio
+deve usar seu próprio caminho: o arquivo não vincula automaticamente a
+imagem de firmware. Sem essa opção, as execuções continuam isoladas.
+Na própria ROM, o reset em `0850h` escreve `P4=EAh` e `P5=0Fh`; a rotina
+iniciada em `0AC1h` escreve `PCON=00h`. Nenhuma dessas escritas identifica uma
+entrada física de chave. `ADC1` é usado no modelo como monitor de tensão
+de bateria, sem ligação comprovada à linha 15. `P5.0/P5.1` são saídas
+candidatas das duas bobinas wasted spark, não entradas de alimentação.
+
+O bit que o emulador mantém alto para evitar uma espera infinita é
+`IRCON.0`, indicação interna de conversão ADC concluída: a ROM espera
+por ele em `0711h` e `644Dh`. Ele não representa um pino de power-on.
+`MA17_P5_FORCE_HIGH` é estímulo opcional de comparação e não participa
+da inicialização normal. O antigo retorno repetido ao vetor de reset
+foi atribuído ao defeito de `MOV @R1,B` que corrompia o stack pointer,
+documentado em `BUG_FIXED_SUCCESS.md`; a hipótese de um pino de energia
+forçado para evitar esse retorno não é sustentada pelo código atual.
+
 O [manual de reparos MA1.7 da Alfatest](https://pt.scribd.com/document/656677219/Alfatest-Bosch-MA-1-7)
 identifica no **conector da ECU**, não na CPU: terminal 8 como contato
 de lenta aterrado ao fechar; 9/10 como massa/sinal da sonda; 28 como
@@ -1435,7 +1571,7 @@ Os relatórios anteriores em `rpm-750/` e `rpm-2000/` antecedem essa
 correção de leitura de porta; use os relatórios `output-timing-fixed-*`
 para a temporização das saídas.
 O harness ainda força `IRCON.0=1` no callback de escrita para simular ADC
-sempre pronto (`src/main.cpp:cb_sfr_write_ircon`). Esse estímulo artificial
+sempre pronto (`src/ma17/AdcSimulator.cpp:write_ircon`). Esse estímulo artificial
 pode alterar o fluxo do firmware; o rastro atual não deve ser interpretado
 como reprodução elétrica completa da ECU. O marcador legado em XRAM F8F8h
 também é inicializado pelo harness, mas `RAM[47h]` é zerada pelo firmware na

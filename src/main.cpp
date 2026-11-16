@@ -3,12 +3,16 @@
 // profile is configured here.
 
 #include <atomic>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <numbers>
+#include <string>
 
 extern "C" {
 #include <signal.h>
@@ -167,6 +171,54 @@ static void sigusr1_handler(int) {
 
 // P4 port handling for K-line RX bit sampling
 static constexpr int SFR_P4 = 0xE8;
+static constexpr std::array<char, 8> xram_state_magic{
+    'M', 'A', '1', '7', 'X', 'R', 'M', '1'};
+static constexpr std::streamsize retained_xram_size = 0x400;
+
+static bool load_xram_state(em8051 &cpu, const char *path, bool &loaded) {
+    loaded = false;
+    if (!path) return true;
+    if (!*path) return false;
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) {
+        if (error) return false;
+        fprintf(stderr, "[XRAM-STATE] fresh file: %s\n", path);
+        return true;
+    }
+    if (std::filesystem::file_size(path, error) !=
+            static_cast<std::uintmax_t>(xram_state_magic.size() +
+                                        retained_xram_size) || error)
+        return false;
+    std::ifstream input(path, std::ios::binary);
+    std::array<char, 8> magic{};
+    input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+    if (magic != xram_state_magic) return false;
+    input.read(reinterpret_cast<char *>(cpu.mExtData + 0xF800),
+               retained_xram_size);
+    if (!input) return false;
+    loaded = true;
+    fprintf(stderr, "[XRAM-STATE] loaded: %s\n", path);
+    return true;
+}
+
+static bool save_xram_state(const em8051 &cpu, const char *path) {
+    if (!path) return true;
+    const std::string temporary =
+        std::string(path) + ".tmp." + std::to_string(getpid());
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    if (!output) return false;
+    output.write(xram_state_magic.data(),
+                 static_cast<std::streamsize>(xram_state_magic.size()));
+    output.write(reinterpret_cast<const char *>(cpu.mExtData + 0xF800),
+                 retained_xram_size);
+    output.close();
+    if (!output) return false;
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) return false;
+    fprintf(stderr, "[XRAM-STATE] saved: %s\n", path);
+    return true;
+}
 
 int main(int argc, char **argv) {
     const auto config = ma17::parse_emulator_config(argc, argv);
@@ -251,6 +303,14 @@ int main(int argc, char **argv) {
     fprintf(stderr, "[DEBUG] Chamando reset()...\n");
     fflush(stderr);
     reset(&cpu, true);
+    const char *xram_state_file = std::getenv("MA17_XRAM_STATE_FILE");
+    bool xram_state_loaded = false;
+    if (!load_xram_state(cpu, xram_state_file, xram_state_loaded)) {
+        fprintf(stderr, "[XRAM-STATE] invalid or unreadable state file\n");
+        return 2;
+    }
+    if (xram_state_loaded)
+        cpu.mSFR[REG_PCON] &= static_cast<uint8_t>(~0x10u); // Warm: POF=0.
 
     // Legacy startup marker; reset() clears XRAM before this initialization.
     // MOVX @R1 with P2=F8h addresses page F8h, not page 00h.
@@ -437,6 +497,10 @@ int main(int argc, char **argv) {
     ma17::run_emulator_loop(loop);
     if (config->physical_crank)
         ma17::set_adc_voltage_provider(nullptr, nullptr);
+    if (!save_xram_state(cpu, xram_state_file)) {
+        fprintf(stderr, "[XRAM-STATE] could not save state file\n");
+        return 2;
+    }
 
     printf("\n[emu8051-pty] Encerrando.\n");
     return 0;

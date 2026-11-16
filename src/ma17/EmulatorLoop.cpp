@@ -751,6 +751,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                 static_cast<uint8_t>((*iram_setting)[2]);
         }
         tick(&cpu);
+        context.diagnostic_lamp.sample_p5(cpu.mSFR[0xF8 - 0x80]);
         if (context.pump_relay_p34_candidate) {
             const bool p34_high =
                 (cpu.mSFR[0xB0 - 0x80] & 0x10u) != 0;
@@ -1023,7 +1024,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
             fprintf(stdout, "{\"type\":\"diagnostic\",\"tick\":%lld,"
                             "\"ram27\":%u,\"ram28\":%u,"
                             "\"f84e\":%u,\"f84f\":%u,\"f850\":%u,"
-                            "\"f85e\":%u,\"f85f\":%u,\"f860\":%u}\n",
+                            "\"f85e\":%u,\"f85f\":%u,\"f860\":%u,"
+                            "\"lamp_on_candidate\":%s}\n",
                     context.ticks, static_cast<unsigned>(cpu.mLowerData[0x27]),
                     static_cast<unsigned>(cpu.mLowerData[0x28]),
                     static_cast<unsigned>(cpu.mExtData[0xF84E]),
@@ -1031,7 +1033,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mExtData[0xF850]),
                     static_cast<unsigned>(cpu.mExtData[0xF85E]),
                     static_cast<unsigned>(cpu.mExtData[0xF85F]),
-                    static_cast<unsigned>(cpu.mExtData[0xF860]));
+                    static_cast<unsigned>(cpu.mExtData[0xF860]),
+                    context.diagnostic_lamp.lamp_on() ? "true" : "false");
         if (context.idle_bridge_candidate && context.ticks % 990000 == 0)
             fprintf(stdout, "{\"type\":\"idle_actuator\",\"tick\":%lld,"
                             "\"stem_m\":%.6f,\"stop_rad\":%.6f,"
@@ -1083,6 +1086,22 @@ static void run_tick_batch(EmulatorLoopContext &context,
         trace_reset_watchdog(cpu);
         trace_stack_range(cpu);
     }
+}
+
+static void reboot_cpu_with_retained_ram(em8051 &cpu) {
+    // Hypothesis: key-on releases /HWPD while battery-backed RAM retains data.
+    // reset(false) resets the core but also reinstalls opcode/SFR callbacks;
+    // restore the harness hooks and optional trace wrappers afterward.
+    std::array<em8051operation, 256> operations{};
+    std::array<em8051sfrread, 128> sfr_reads{};
+    std::array<em8051sfrwrite, 128> sfr_writes{};
+    std::copy(std::begin(cpu.op), std::end(cpu.op), operations.begin());
+    std::copy(std::begin(cpu.sfrread), std::end(cpu.sfrread), sfr_reads.begin());
+    std::copy(std::begin(cpu.sfrwrite), std::end(cpu.sfrwrite), sfr_writes.begin());
+    reset(&cpu, false);
+    std::copy(operations.begin(), operations.end(), std::begin(cpu.op));
+    std::copy(sfr_reads.begin(), sfr_reads.end(), std::begin(cpu.sfrread));
+    std::copy(sfr_writes.begin(), sfr_writes.end(), std::begin(cpu.sfrwrite));
 }
 
 void run_emulator_loop(EmulatorLoopContext &context) {
@@ -1157,6 +1176,16 @@ void run_emulator_loop(EmulatorLoopContext &context) {
         else
             fprintf(stderr, "[TRACE-STOP] invalid MA17_STOP_TICKS=%s\n", setting);
     }
+    long long warm_reboot_tick = 0;
+    if (const char *setting = std::getenv("MA17_WARM_REBOOT_TICK")) {
+        char *end = nullptr;
+        errno = 0;
+        warm_reboot_tick = std::strtoll(setting, &end, 10);
+        if (!*setting || *end != '\0' || errno || warm_reboot_tick <= 0) {
+            fprintf(stderr, "Invalid MA17_WARM_REBOOT_TICK=%s\n", setting);
+            std::exit(2);
+        }
+    }
     if (trace_movc_enabled) {
         original_movc_pc = cpu.op[0x83];
         original_movc_dptr = cpu.op[0x93];
@@ -1190,6 +1219,16 @@ void run_emulator_loop(EmulatorLoopContext &context) {
 
         run_tick_batch(context, pc_seen, last_pc, stop_ticks,
                        trace_lookup_enabled ? &lookup_counts : nullptr);
+        if (warm_reboot_tick && context.ticks >= warm_reboot_tick) {
+            const uint8_t retained_marker = cpu.mExtData[0xF8FF];
+            reboot_cpu_with_retained_ram(cpu);
+            fprintf(stderr,
+                    "[WARM-REBOOT] tick=%lld xram_f8ff=%02X retained=%02X "
+                    "pc=%04X\n", context.ticks, retained_marker,
+                    cpu.mExtData[0xF8FF], cpu.mPC);
+            last_pc = cpu.mPC;
+            warm_reboot_tick = 0;
+        }
         context.bridge.read_and_process();
         trace_performance(cpu, context.ticks, context.startup_time);
         if (stop_ticks && context.ticks >= stop_ticks) {

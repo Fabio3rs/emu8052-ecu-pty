@@ -171,7 +171,8 @@ void start_adc_conversion(em8051 *cpu, uint8_t) {
 }
 
 void write_ircon(em8051 *cpu, uint8_t address) {
-    // The Fiat Timer 0 ISR waits at 0711h for SAB80C517 IRCON.0 (ADC ready).
+    // The Fiat Timer 0 ISR waits at 0711h for IRCON.0 (ADC ready).
+    // This is an internal completion flag, not a power-on input or CPU pin.
     static int write_count = 0;
     if (write_count < 10)
         fprintf(stderr, "[IRCON-WRITE] #%d IRCON=0x%02X, forcing bit 0=1\n",

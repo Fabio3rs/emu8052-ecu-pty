@@ -485,7 +485,9 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         }
         for (char **entry = environ; *entry; ++entry) {
             if (strncmp(*entry, "MA17_", 5) == 0 &&
-                strncmp(*entry, "MA17_TRACE_", 11) != 0) {
+                strncmp(*entry, "MA17_TRACE_", 11) != 0 &&
+                strncmp(*entry, "MA17_WARM_REBOOT_TICK=", 22) != 0 &&
+                strncmp(*entry, "MA17_XRAM_STATE_FILE=", 21) != 0) {
                 fprintf(stderr, "Physical crank rejects MA17_* override: "
                                 "%.*s\n",
                         static_cast<int>(strcspn(*entry, "=")), *entry);
