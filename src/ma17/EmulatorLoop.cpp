@@ -3,6 +3,13 @@
 #include "CrankshaftSimulator.hpp"
 #include "ma17/AdcSimulator.hpp"
 #include "ma17/CrankInput.hpp"
+#include "engine/CrankDynamics.hpp"
+#include "engine/ThrottleAssembly.hpp"
+#include "engine/ThermalState.hpp"
+#include "ecu_hw/Ma17TpsCircuit.hpp"
+#include "ecu_hw/Ma17SensorCircuit.hpp"
+#include "ecu_hw/Ma17InjectorStage.hpp"
+#include "engine/IntakeFuel.hpp"
 #include "ma17/ExecutionTracer.hpp"
 #include "ma17/FiveBaudInjector.hpp"
 #include "ma17/PtyBridge.hpp"
@@ -25,6 +32,31 @@ extern "C" {
 #include <vector>
 
 namespace ma17 {
+
+static double tps1_pin_voltage(const EmulatorLoopContext &context) {
+    if (context.tps1_high_tick && context.ticks >= context.tps1_high_tick &&
+        (!context.tps1_restore_tick ||
+         context.ticks < context.tps1_restore_tick))
+        return context.tps_circuit->reference_voltage();
+    return context.tps_circuit->track1_voltage(context.throttle->angle_rad());
+}
+
+static double tps2_pin_voltage(const EmulatorLoopContext &context) {
+    if (context.tps2_high_tick && context.ticks >= context.tps2_high_tick &&
+        (!context.tps2_restore_tick ||
+         context.ticks < context.tps2_restore_tick))
+        return context.tps_circuit->reference_voltage();
+    return context.tps_circuit->track2_voltage(context.throttle->angle_rad());
+}
+
+static double ect_pin_voltage(const EmulatorLoopContext &context) {
+    if (context.ect_open_tick && context.ticks >= context.ect_open_tick &&
+        (!context.ect_restore_tick ||
+         context.ticks < context.ect_restore_tick))
+        return 5.0;
+    return context.sensor_circuit->coolant_voltage(
+        context.thermal->coolant_sensor_c());
+}
 
 using MovcKey = std::tuple<uint16_t, uint8_t, uint16_t, uint8_t,
                            uint16_t, uint16_t, uint8_t>;
@@ -453,9 +485,154 @@ static void run_tick_batch(EmulatorLoopContext &context,
     for (int i = 0; i < context.steps_per_batch &&
                     (!stop_ticks || context.ticks < stop_ticks); ++i) {
         context.ticks++; // One count per emulated machine-cycle tick.
+        const bool idle_contact_before =
+            context.throttle && context.throttle->contact_closed();
+        if (context.idle_bridge_candidate &&
+            context.ticks == context.idle_motor_disconnect_tick) {
+            context.idle_motor_connected = false;
+            fprintf(stdout, "{\"type\":\"idle_motor_disconnect\","
+                            "\"tick\":%lld}\n", context.ticks);
+        }
+        if (context.idle_bridge_candidate &&
+            context.ticks == context.idle_motor_reconnect_tick) {
+            context.idle_motor_connected = true;
+            fprintf(stdout, "{\"type\":\"idle_motor_reconnect\","
+                            "\"tick\":%lld}\n", context.ticks);
+        }
+        if (context.injector_stage &&
+            context.ticks == context.injector_disconnect_tick) {
+            context.injector_stage->set_connected(false);
+            fprintf(stdout, "{\"type\":\"injector_disconnect\","
+                            "\"tick\":%lld}\n", context.ticks);
+        }
+        if (context.injector_stage &&
+            context.ticks == context.injector_reconnect_tick) {
+            context.injector_stage->set_connected(true);
+            fprintf(stdout, "{\"type\":\"injector_reconnect\","
+                            "\"tick\":%lld}\n", context.ticks);
+        }
+        if (context.physical_crank &&
+            context.ticks == context.coil_disconnect_tick) {
+            context.ignition_stage.set_connected(context.coil_channel, false);
+            fprintf(stdout, "{\"type\":\"coil_disconnect\","
+                            "\"tick\":%lld,\"channel\":%u}\n",
+                    context.ticks, context.coil_channel);
+        }
+        if (context.physical_crank &&
+            context.ticks == context.coil_reconnect_tick) {
+            context.ignition_stage.set_connected(context.coil_channel, true);
+            fprintf(stdout, "{\"type\":\"coil_reconnect\","
+                            "\"tick\":%lld,\"channel\":%u}\n",
+                    context.ticks, context.coil_channel);
+        }
+        if (context.thermal && context.ticks % 990 == 0) {
+            context.thermal->advance_ticks(
+                990, context.intake ? std::max(0.0, context.intake->last_air_in_kg_s())
+                                    : 0.0,
+                context.coolant_heat_pending_j * 1000.0);
+            context.coolant_heat_pending_j = 0.0;
+        }
+        if (context.throttle && context.ticks == context.pedal_step_tick) {
+            if (context.pedal_rise_ticks) {
+                fprintf(stdout, "{\"type\":\"pedal_command\",\"tick\":%lld,"
+                                "\"target_pull_m\":%.6f,\"rise_ticks\":%lld}\n",
+                        context.ticks, context.pedal_pull_m,
+                        context.pedal_rise_ticks);
+            } else {
+                context.throttle->set_cable_pull_m(context.pedal_pull_m);
+                fprintf(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
+                                "\"pull_m\":%.6f,\"angle_rad\":%.6f,"
+                                "\"contact\":%s}\n",
+                        context.ticks, context.pedal_pull_m,
+                        context.throttle->angle_rad(),
+                        context.throttle->contact_closed() ? "true" : "false");
+            }
+        }
+        if (context.throttle && context.pedal_rise_ticks) {
+            const long long elapsed = context.ticks - context.pedal_step_tick;
+            if (elapsed > 0 && elapsed < context.pedal_rise_ticks &&
+                context.ticks % context.fluid_step_ticks == 0) {
+                context.throttle->set_cable_pull_m(
+                    context.pedal_pull_m * static_cast<double>(elapsed) /
+                    static_cast<double>(context.pedal_rise_ticks));
+            } else if (elapsed == context.pedal_rise_ticks) {
+                context.throttle->set_cable_pull_m(context.pedal_pull_m);
+                fprintf(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
+                                "\"pull_m\":%.6f,\"angle_rad\":%.6f,"
+                                "\"contact\":%s}\n",
+                        context.ticks, context.pedal_pull_m,
+                        context.throttle->angle_rad(),
+                        context.throttle->contact_closed() ? "true" : "false");
+            }
+        }
+        if (context.throttle && context.ticks == context.pedal_release_tick) {
+            context.throttle->set_cable_pull_m(0.0);
+            fprintf(stdout, "{\"type\":\"pedal_release\",\"tick\":%lld,"
+                            "\"angle_rad\":%.6f,\"contact\":%s}\n",
+                    context.ticks, context.throttle->angle_rad(),
+                    context.throttle->contact_closed() ? "true" : "false");
+        }
+        if (context.physical_crank && context.ticks == context.load_step_tick)
+            fprintf(stdout, "{\"type\":\"load_step\",\"tick\":%lld,"
+                            "\"torque_nm\":%.3f}\n",
+                    context.ticks, context.load_torque_nm);
+        if (context.throttle && context.ticks == context.tps1_high_tick) {
+            fprintf(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
+                            "\"channel\":6,\"voltage_v\":%.3f}\n",
+                    context.ticks, context.tps_circuit->reference_voltage());
+        }
+        if (context.throttle && context.ticks == context.tps1_restore_tick) {
+            fprintf(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
+                            "\"channel\":6}\n", context.ticks);
+        }
+        if (context.throttle && context.ticks == context.tps2_high_tick)
+            fprintf(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
+                            "\"channel\":0,\"voltage_v\":%.3f}\n",
+                    context.ticks, context.tps_circuit->reference_voltage());
+        if (context.throttle && context.ticks == context.tps2_restore_tick)
+            fprintf(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
+                            "\"channel\":0}\n", context.ticks);
+        if (context.thermal && context.ticks == context.ect_open_tick)
+            fprintf(stdout, "{\"type\":\"ect_open\",\"tick\":%lld,"
+                            "\"adc3_v\":5.0}\n", context.ticks);
+        if (context.thermal && context.ticks == context.ect_restore_tick)
+            fprintf(stdout, "{\"type\":\"ect_restore\",\"tick\":%lld}\n",
+                    context.ticks);
         movc_tick = static_cast<uint64_t>(context.ticks);
         set_adc_tick(static_cast<uint64_t>(context.ticks));
-        tick_crank_input(&cpu, context.ticks, context.crank);
+        if (context.physical_crank) {
+            if (context.ticks == context.crank_sensor_open_tick)
+                fprintf(stdout, "{\"type\":\"crank_sensor_open\","
+                                "\"tick\":%lld}\n", context.ticks);
+            if (context.ticks == context.crank_sensor_restore_tick)
+                fprintf(stdout, "{\"type\":\"crank_sensor_restore\","
+                                "\"tick\":%lld}\n", context.ticks);
+            const bool sensor_connected =
+                !context.crank_sensor_open_tick ||
+                context.ticks < context.crank_sensor_open_tick ||
+                (context.crank_sensor_restore_tick &&
+                 context.ticks >= context.crank_sensor_restore_tick);
+            const auto gaps_before = context.physical_input->missing_positions;
+            tick_physical_crank_input(&cpu, *context.physical_crank,
+                                      *context.physical_input,
+                                      context.ticks <= context.starter_stop_tick,
+                                      context.combustion.torque_nm(
+                                          context.physical_crank->angle_rad()),
+                                      context.load_step_tick &&
+                                              context.ticks >= context.load_step_tick
+                                          ? context.load_torque_nm
+                                          : 0.0,
+                                      sensor_connected);
+            if (context.physical_input->missing_positions != gaps_before) {
+                fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
+                                "\"position\":%d,\"rpm\":%.3f}\n",
+                        context.ticks,
+                        context.physical_input->last_missing_position,
+                        context.physical_crank->rpm());
+            }
+        } else {
+            tick_crank_input(&cpu, context.ticks, context.crank);
+        }
         apply_pre_tick_experiments(cpu);
         if (static_cast<unsigned long long>(context.ticks) >= pc_window[0] &&
             static_cast<unsigned long long>(context.ticks) <= pc_window[1]) {
@@ -486,6 +663,30 @@ static void run_tick_batch(EmulatorLoopContext &context,
         last_pc = cpu.mPC;
         const uint16_t timer2_before = static_cast<uint16_t>(
             (uint16_t(cpu.mSFR[0xCD - 0x80]) << 8) | cpu.mSFR[0xCC - 0x80]);
+        const uint8_t rpm_before = cpu.mLowerData[0x47];
+        const uint8_t idle_fault_before = cpu.mLowerData[0x27];
+        const uint8_t published_fault_before = cpu.mExtData[0xF84E];
+        const uint8_t ram28_before = cpu.mLowerData[0x28];
+        const uint8_t f84f_before = cpu.mExtData[0xF84F];
+        const uint8_t lambda_flags_before =
+            (cpu.mLowerData[0x2F] & 0x02u) | (cpu.mLowerData[0x2C] & 0x08u);
+        const uint8_t idle_state_before = cpu.mExtData[0xF847];
+        const uint8_t cc3_before = cpu.cc3_output_pin;
+        const uint8_t bridge_before = cpu.mSFR[0x90 - 0x80] & 0x60u;
+        const uint8_t ignition_before = cpu.mSFR[0xF8 - 0x80] & 0x03u;
+        const uint8_t p54_before = cpu.mSFR[0xF8 - 0x80] & 0x10u;
+        const uint8_t p17_before = cpu.mSFR[0x90 - 0x80] & 0x80u;
+        static constexpr std::array<uint8_t, 4> observed_ports{
+            0x90, 0xB0, 0xE8, 0xF8}; // P1, P3, P4, P5 latch addresses.
+        static const bool trace_port_latches =
+            std::getenv("MA17_TRACE_PORT_LATCHES") != nullptr;
+        std::array<uint8_t, 4> port_latches_before{};
+        if (trace_port_latches && context.physical_crank)
+            for (size_t port = 0; port < observed_ports.size(); ++port)
+                port_latches_before[port] =
+                    cpu.mSFR[observed_ports[port] - 0x80];
+        const uint8_t tps2_before = cpu.mLowerData[0x60];
+        const uint8_t tps1_before = cpu.mLowerData[0x66];
         // SAB80C517 User's Manual, Instruction Set: Fiat 1866h is
         // MOV A,5Bh (E5 5B). Restore RAM after that single read.
         const bool override_ram5b = forced_ram5b_read >= 0 && cpu.mPC == 0x1866;
@@ -550,6 +751,316 @@ static void run_tick_batch(EmulatorLoopContext &context,
                 static_cast<uint8_t>((*iram_setting)[2]);
         }
         tick(&cpu);
+        if (context.pump_relay_p34_candidate) {
+            const bool p34_high =
+                (cpu.mSFR[0xB0 - 0x80] & 0x10u) != 0;
+            const bool was_closed = context.pump_relay.closed();
+            const bool closed =
+                context.pump_relay.step(p34_high, context.ticks);
+            if (closed != was_closed)
+                fprintf(stdout, "{\"type\":\"pump_relay_candidate\","
+                                "\"tick\":%lld,\"closed\":%s,"
+                                "\"p34_high\":%s,\"pc\":%u}\n",
+                        context.ticks, closed ? "true" : "false",
+                        p34_high ? "true" : "false",
+                        static_cast<unsigned>(last_pc));
+        }
+        if (trace_port_latches && context.physical_crank) {
+            for (size_t port = 0; port < observed_ports.size(); ++port) {
+                const uint8_t changed = port_latches_before[port] ^
+                    cpu.mSFR[observed_ports[port] - 0x80];
+                for (unsigned bit = 0; bit < 8; ++bit) {
+                    if (changed & (1u << bit))
+                        fprintf(stderr,
+                                "[PORT-LATCH] tick=%lld pc=%04X port=%02X "
+                                "bit=%u high=%u ram47=%u\n",
+                                context.ticks, static_cast<unsigned>(last_pc),
+                                observed_ports[port], bit,
+                                (cpu.mSFR[observed_ports[port] - 0x80] >> bit) & 1u,
+                                static_cast<unsigned>(cpu.mLowerData[0x47]));
+                }
+            }
+        }
+        static const bool trace_output_candidates =
+            std::getenv("MA17_TRACE_OUTPUT_CANDIDATES") != nullptr;
+        if (trace_output_candidates &&
+            p17_before != (cpu.mSFR[0x90 - 0x80] & 0x80u))
+            fprintf(stderr, "[OUTPUT-CANDIDATE] tick=%lld pc=%04X "
+                            "p17=%u ram1d=%u ram2d=%02X ram47=%u "
+                            "t2con=%02X\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    (cpu.mSFR[0x90 - 0x80] >> 7) & 1u,
+                    static_cast<unsigned>(cpu.mLowerData[0x1D]),
+                    static_cast<unsigned>(cpu.mLowerData[0x2D]),
+                    static_cast<unsigned>(cpu.mLowerData[0x47]),
+                    static_cast<unsigned>(cpu.mSFR[0xC8 - 0x80]));
+        if (context.physical_crank &&
+            p54_before != (cpu.mSFR[0xF8 - 0x80] & 0x10u))
+            fprintf(stdout, "{\"type\":\"p54_raw\","
+                            "\"tick\":%lld,\"pc\":%u,\"p54\":%u,"
+                            "\"ram2d\":%u,\"xram_f881\":%u,"
+                            "\"ram47\":%u}\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    (cpu.mSFR[0xF8 - 0x80] >> 4) & 1u,
+                    static_cast<unsigned>(cpu.mLowerData[0x2D]),
+                    static_cast<unsigned>(cpu.mExtData[0xF881]),
+                    static_cast<unsigned>(cpu.mLowerData[0x47]));
+        if (context.physical_crank && cpu.mExtData[0xF847] != idle_state_before)
+            fprintf(stdout, "{\"type\":\"idle_state_raw\",\"tick\":%lld,"
+                            "\"pc\":%u,\"before\":%u,\"after\":%u,"
+                            "\"ram24\":%u,\"ram27\":%u,\"f84e\":%u}\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    static_cast<unsigned>(idle_state_before),
+                    static_cast<unsigned>(cpu.mExtData[0xF847]),
+                    static_cast<unsigned>(cpu.mLowerData[0x24]),
+                    static_cast<unsigned>(cpu.mLowerData[0x27]),
+                    static_cast<unsigned>(cpu.mExtData[0xF84E]));
+        if (context.physical_crank &&
+            (cpu.mLowerData[0x27] != idle_fault_before ||
+             cpu.mExtData[0xF84E] != published_fault_before))
+            fprintf(stdout, "{\"type\":\"idle_fault_raw\",\"tick\":%lld,"
+                            "\"pc\":%u,\"ram27\":%u,\"f84e\":%u,"
+                            "\"f83b\":%u,\"contact\":%s}\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    static_cast<unsigned>(cpu.mLowerData[0x27]),
+                    static_cast<unsigned>(cpu.mExtData[0xF84E]),
+                    static_cast<unsigned>(cpu.mExtData[0xF83B]),
+                    context.throttle->contact_closed() ? "true" : "false");
+        if (context.physical_crank &&
+            (cpu.mLowerData[0x28] != ram28_before ||
+             cpu.mExtData[0xF84F] != f84f_before))
+            fprintf(stdout, "{\"type\":\"sensor_fault_raw\",\"tick\":%lld,"
+                            "\"pc\":%u,\"ram28\":%u,\"f84f\":%u,"
+                            "\"ram63\":%u,\"ram60\":%u,\"ram66\":%u}\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    static_cast<unsigned>(cpu.mLowerData[0x28]),
+                    static_cast<unsigned>(cpu.mExtData[0xF84F]),
+                    static_cast<unsigned>(cpu.mLowerData[0x63]),
+                    static_cast<unsigned>(cpu.mLowerData[0x60]),
+                    static_cast<unsigned>(cpu.mLowerData[0x66]));
+        const uint8_t lambda_flags_after =
+            (cpu.mLowerData[0x2F] & 0x02u) | (cpu.mLowerData[0x2C] & 0x08u);
+        if (context.physical_crank && lambda_flags_after != lambda_flags_before)
+            fprintf(stdout, "{\"type\":\"lambda_class_raw\",\"tick\":%lld,"
+                            "\"pc\":%u,\"ram65\":%u,\"flags\":%u,"
+                            "\"f8e8\":%u,\"f8ea\":%u}\n",
+                    context.ticks, static_cast<unsigned>(last_pc),
+                    static_cast<unsigned>(cpu.mLowerData[0x65]),
+                    static_cast<unsigned>(lambda_flags_after),
+                    static_cast<unsigned>(cpu.mExtData[0xF8E8]),
+                    static_cast<unsigned>(cpu.mExtData[0xF8EA]));
+        if (context.physical_crank) {
+            const uint8_t bridge_after = cpu.mSFR[0x90 - 0x80] & 0x60u;
+            if (bridge_before != bridge_after)
+                fprintf(stdout, "{\"type\":\"bridge_candidate\","
+                                "\"tick\":%lld,\"p15\":%u,\"p16\":%u,"
+                                "\"pc\":%u,\"ram1c\":%u,\"ram1f\":%u,"
+                                "\"ram24\":%u,\"contact\":%s}\n",
+                        context.ticks, (bridge_after >> 5) & 1u,
+                        (bridge_after >> 6) & 1u,
+                        static_cast<unsigned>(last_pc),
+                        static_cast<unsigned>(cpu.mLowerData[0x1C]),
+                        static_cast<unsigned>(cpu.mLowerData[0x1F]),
+                        static_cast<unsigned>(cpu.mLowerData[0x24]),
+                        context.throttle->contact_closed() ? "true" : "false");
+            if (context.idle_bridge_candidate) {
+                const auto drive = context.idle_bridge.drive(bridge_after);
+                context.idle_actuator.step(
+                    context.idle_motor_connected ? drive.voltage_v : 0.0,
+                    context.idle_motor_connected && drive.brake,
+                    1.0 / 990000.0);
+                context.throttle->set_stop_angle_rad(
+                    context.idle_actuator.stop_angle_rad());
+            }
+        }
+        if (context.idle_bridge_candidate && context.throttle &&
+            context.throttle->contact_closed() != idle_contact_before)
+            fprintf(stdout, "{\"type\":\"idle_contact\",\"tick\":%lld,"
+                            "\"closed\":%s,\"cable_rad\":%.6f,"
+                            "\"stop_rad\":%.6f}\n",
+                    context.ticks,
+                    context.throttle->contact_closed() ? "true" : "false",
+                    context.throttle->cable_angle_rad(),
+                    context.throttle->stop_angle_rad());
+        if (context.physical_crank) {
+            const uint8_t ignition_after = cpu.mSFR[0xF8 - 0x80] & 0x03u;
+            const auto sparks = context.ignition_stage.step(
+                ignition_after, 1.0 / 990000.0);
+            for (unsigned channel = 0; channel < 2; ++channel) {
+                const uint8_t mask = static_cast<uint8_t>(1u << channel);
+                if (context.ignition_stage.attempted(channel)) {
+                    const auto event = context.combustion.spark(
+                        context.physical_crank->angle_rad(), channel,
+                        sparks[channel]);
+                    context.coolant_heat_pending_j +=
+                        event.burned_fuel_kg *
+                        context.combustion.fuel_energy_j_per_kg() * 0.25;
+                    context.exhaust.admit(event, context.exhaust_flow_kg_s,
+                                          context.ticks);
+                }
+                if ((ignition_before ^ ignition_after) & mask) {
+                    fprintf(stdout, "{\"type\":\"ignition_pin\","
+                                    "\"tick\":%lld,\"channel\":%u,"
+                                    "\"high\":%s,\"angle_rad\":%.6f,"
+                                    "\"rpm\":%.3f}\n",
+                            context.ticks, channel,
+                            ignition_after & mask ? "true" : "false",
+                            context.physical_crank->angle_rad(),
+                            context.physical_crank->rpm());
+                }
+            }
+        }
+        if (context.injector_stage) {
+            if (cpu.cc3_output_pin != cc3_before)
+                fprintf(stdout, "{\"type\":\"cc3_pin\",\"tick\":%lld,"
+                                "\"high\":%s,\"shadow_high\":%s,"
+                                "\"ram14_15\":%u,\"lambda_flags\":%u,"
+                                "\"ram65\":%u}\n",
+                        context.ticks, cpu.cc3_output_pin ? "true" : "false",
+                        cpu.mSFR[0x90 - 0x80] & 0x08u ? "true" : "false",
+                        (static_cast<unsigned>(cpu.mLowerData[0x14]) << 8) |
+                            cpu.mLowerData[0x15],
+                        static_cast<unsigned>(lambda_flags_after),
+                        static_cast<unsigned>(cpu.mLowerData[0x65]));
+            context.injected_mass_pending_kg += context.injector_stage->step(
+                cpu.cc3_output_pin != 0, 1.0 / 990000.0,
+                context.sensor_circuit ? context.sensor_circuit->supply_voltage()
+                                       : 12.5);
+            if (context.ticks % context.fluid_step_ticks == 0) {
+                const auto charge = context.intake->step(
+                    static_cast<double>(context.fluid_step_ticks) / 990000.0,
+                    context.physical_crank->rpm(), context.throttle->angle_rad(),
+                    context.thermal->air_c(), context.thermal->wall_c(),
+                    context.injected_mass_pending_kg);
+                context.combustion.admit(charge,
+                                         context.physical_crank->angle_rad());
+                const double fluid_dt_s =
+                    static_cast<double>(context.fluid_step_ticks) / 990000.0;
+                context.exhaust_flow_kg_s = charge.air_to_cylinders_kg /
+                                            fluid_dt_s;
+                const double heater_power_w = context.pump_relay_p34_candidate
+                    ? context.lambda_heater.power_w(
+                          context.sensor_circuit
+                              ? context.sensor_circuit->supply_voltage()
+                              : 12.5,
+                          context.pump_relay.closed())
+                    : 0.0;
+                context.exhaust.step(fluid_dt_s, context.ticks,
+                                     heater_power_w);
+                context.injected_mass_pending_kg = 0.0;
+            }
+        }
+        if (context.thermal && context.ticks % 990000 == 0) {
+            fprintf(stdout, "{\"type\":\"thermal\",\"tick\":%lld,"
+                            "\"air_c\":%.3f,\"wall_c\":%.3f,"
+                            "\"coolant_c\":%.3f,\"iat_c\":%.3f,"
+                            "\"ect_c\":%.3f,\"adc2_v\":%.4f,"
+                            "\"adc3_v\":%.4f,\"adc3_upper\":%u,"
+                            "\"ram61\":%u,"
+                            "\"ram62\":%u,\"ram63\":%u}\n",
+                    context.ticks, context.thermal->air_c(),
+                    context.thermal->wall_c(), context.thermal->coolant_c(),
+                    context.thermal->air_sensor_c(),
+                    context.thermal->coolant_sensor_c(),
+                    context.sensor_circuit->air_voltage(context.thermal->air_sensor_c()),
+                    ect_pin_voltage(context),
+                    static_cast<unsigned>(cpu.mUpperData[0xA8 - 0x80]),
+                    static_cast<unsigned>(cpu.mLowerData[0x61]),
+                    static_cast<unsigned>(cpu.mLowerData[0x62]),
+                    static_cast<unsigned>(cpu.mLowerData[0x63]));
+        }
+        if (context.intake && context.ticks % 990000 == 0)
+            fprintf(stdout, "{\"type\":\"intake\",\"tick\":%lld,"
+                            "\"pressure_pa\":%.1f,\"air_kg\":%.9f,"
+                            "\"air_in_kg\":%.9f,\"air_out_kg\":%.9f,"
+                            "\"injected_kg\":%.9f,\"film_kg\":%.9f,"
+                            "\"vapor_kg\":%.9f,\"delivered_kg\":%.9f,"
+                            "\"cc3_pulses\":%llu}\n",
+                    context.ticks, context.intake->pressure_pa(),
+                    context.intake->air_mass_kg(),
+                    context.intake->air_in_total_kg(),
+                    context.intake->air_delivered_total_kg(),
+                    context.intake->injected_total_kg(),
+                    context.intake->fuel_film_kg(),
+                    context.intake->fuel_vapor_kg(),
+                    context.intake->fuel_delivered_total_kg(),
+                    context.injector_stage->pulse_count());
+        if (context.physical_crank && context.ticks % 990000 == 0) {
+            const auto &by_cylinder = context.combustion.burns_by_cylinder();
+            fprintf(stdout, "{\"type\":\"combustion\",\"tick\":%lld,"
+                            "\"burns\":%llu,\"missed\":%llu,"
+                            "\"burned_fuel_kg\":%.9f,\"rpm\":%.3f,"
+                            "\"burns_cyl_1\":%llu,\"burns_cyl_2\":%llu,"
+                            "\"burns_cyl_3\":%llu,\"burns_cyl_4\":%llu}\n",
+                    context.ticks, context.combustion.burns(),
+                    context.combustion.missed_sparks(),
+                    context.combustion.burned_fuel_kg(),
+                    context.physical_crank->rpm(), by_cylinder[0],
+                    by_cylinder[1], by_cylinder[2], by_cylinder[3]);
+        }
+        if (context.physical_crank && context.ticks % 990000 == 0)
+            fprintf(stdout, "{\"type\":\"lambda\",\"tick\":%lld,"
+                            "\"physical\":%.3f,"
+                            "\"oxygen_equivalent\":%.3f,"
+                            "\"voltage_v\":%.4f,"
+                            "\"adc5_pin_v\":%.4f,"
+                            "\"temperature_c\":%.1f,\"valid\":%s,"
+                            "\"ram65\":%u}\n",
+                    context.ticks, context.exhaust.charge_lambda(),
+                    context.exhaust.lambda(),
+                    context.exhaust.voltage_v(),
+                    context.lambda_adc_pin_override_v >= 0.0 &&
+                            context.ticks >= context.lambda_stuck_tick &&
+                            (!context.lambda_restore_tick ||
+                             context.ticks < context.lambda_restore_tick)
+                        ? context.lambda_adc_pin_override_v
+                        : context.sensor_circuit->lambda_adc_voltage(
+                              context.exhaust.voltage_v()),
+                    context.exhaust.temperature_c(),
+                    context.exhaust.valid() ? "true" : "false",
+                    static_cast<unsigned>(cpu.mLowerData[0x65]));
+        if (context.physical_crank && context.ticks % 990000 == 0)
+            fprintf(stdout, "{\"type\":\"diagnostic\",\"tick\":%lld,"
+                            "\"ram27\":%u,\"ram28\":%u,"
+                            "\"f84e\":%u,\"f84f\":%u,\"f850\":%u,"
+                            "\"f85e\":%u,\"f85f\":%u,\"f860\":%u}\n",
+                    context.ticks, static_cast<unsigned>(cpu.mLowerData[0x27]),
+                    static_cast<unsigned>(cpu.mLowerData[0x28]),
+                    static_cast<unsigned>(cpu.mExtData[0xF84E]),
+                    static_cast<unsigned>(cpu.mExtData[0xF84F]),
+                    static_cast<unsigned>(cpu.mExtData[0xF850]),
+                    static_cast<unsigned>(cpu.mExtData[0xF85E]),
+                    static_cast<unsigned>(cpu.mExtData[0xF85F]),
+                    static_cast<unsigned>(cpu.mExtData[0xF860]));
+        if (context.idle_bridge_candidate && context.ticks % 990000 == 0)
+            fprintf(stdout, "{\"type\":\"idle_actuator\",\"tick\":%lld,"
+                            "\"stem_m\":%.6f,\"stop_rad\":%.6f,"
+                            "\"angle_rad\":%.6f,\"contact\":%s,"
+                            "\"ram60\":%u,\"ram66\":%u}\n",
+                    context.ticks, context.idle_actuator.stem_m(),
+                    context.throttle->stop_angle_rad(),
+                    context.throttle->angle_rad(),
+                    context.throttle->contact_closed() ? "true" : "false",
+                    static_cast<unsigned>(cpu.mLowerData[0x60]),
+                    static_cast<unsigned>(cpu.mLowerData[0x66]));
+        if (context.physical_crank && cpu.mLowerData[0x47] != rpm_before) {
+            fprintf(stdout, "[COSIM-RPM] tick=%lld physical_rpm=%.3f "
+                            "ram47=%u pc=%04X\n",
+                    context.ticks, context.physical_crank->rpm(),
+                    static_cast<unsigned>(cpu.mLowerData[0x47]), last_pc);
+        }
+        if (context.throttle &&
+            (cpu.mLowerData[0x60] != tps2_before ||
+             cpu.mLowerData[0x66] != tps1_before)) {
+            fprintf(stdout, "{\"type\":\"tps_ram\",\"tick\":%lld,"
+                            "\"angle_rad\":%.6f,\"adc0_v\":%.6f,"
+                            "\"adc6_v\":%.6f,\"ram60\":%u,\"ram66\":%u}\n",
+                    context.ticks, context.throttle->angle_rad(),
+                    tps2_pin_voltage(context),
+                    tps1_pin_voltage(context),
+                    static_cast<unsigned>(cpu.mLowerData[0x60]),
+                    static_cast<unsigned>(cpu.mLowerData[0x66]));
+        }
         if (override_iram_read)
             cpu.mLowerData[(*iram_setting)[1]] = saved_iram_read;
         if (override_ram5b) cpu.mLowerData[0x5B] = saved_ram5b;
@@ -636,8 +1147,8 @@ void run_emulator_loop(EmulatorLoopContext &context) {
         std::exit(2);
     }
     const bool trace_lookup_enabled = std::getenv("MA17_TRACE_LOOKUP") != nullptr;
-    long long stop_ticks = 0;
-    if (const char *setting = std::getenv("MA17_STOP_TICKS")) {
+    long long stop_ticks = context.physical_stop_tick;
+    if (!context.physical_crank) if (const char *setting = std::getenv("MA17_STOP_TICKS")) {
         char *end = nullptr;
         errno = 0;
         const long long parsed = std::strtoll(setting, &end, 10);
@@ -669,7 +1180,7 @@ void run_emulator_loop(EmulatorLoopContext &context) {
         }
 
         context.slow_init.tick(context.ticks);
-        if (context.crank.check_and_enable(context.ticks)) {
+        if (!context.physical_crank && context.crank.check_and_enable(context.ticks)) {
             fprintf(stderr,
                     "\n[CRANKSHAFT] *** Startup delay complete - "
                     "Beginning pulse injection @ %d RPM ***\n\n",
@@ -687,6 +1198,9 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             break;
         }
 
+        // An external PTY scanner uses wall-time 5-baud bit periods.
+        // Physical headless runs retain their unrestricted virtual clock.
+        if (context.physical_crank && !context.physical_pty_realtime) continue;
         const auto elapsed_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - loop_start);
@@ -697,6 +1211,91 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             ts.tv_nsec = sleep_ns.count();
             nanosleep(&ts, nullptr);
         }
+    }
+
+    if (context.physical_crank) {
+        fprintf(stdout, "[PHYSICAL-CRANK] ticks=%lld rpm=%.3f "
+                        "angle_rad=%.6f rising=%llu falling=%llu "
+                        "missing=%llu ram47=%u\n",
+                context.ticks, context.physical_crank->rpm(),
+                context.physical_crank->angle_rad(),
+                context.physical_input->rising_edges,
+                context.physical_input->falling_edges,
+                context.physical_input->missing_positions,
+                static_cast<unsigned>(cpu.mLowerData[0x47]));
+        fprintf(stdout, "[PHYSICAL-TPS] angle_rad=%.6f contact=%d "
+                        "adc0_v=%.6f adc6_v=%.6f ram60=%u ram66=%u "
+                        "ram6f=%u ram70=%u ram28=%u "
+                        "fault85=%u fault4f=%u\n",
+                context.throttle->angle_rad(),
+                context.throttle->contact_closed(),
+                tps2_pin_voltage(context),
+                tps1_pin_voltage(context),
+                static_cast<unsigned>(cpu.mLowerData[0x60]),
+                static_cast<unsigned>(cpu.mLowerData[0x66]),
+                static_cast<unsigned>(cpu.mLowerData[0x6F]),
+                static_cast<unsigned>(cpu.mLowerData[0x70]),
+                static_cast<unsigned>(cpu.mLowerData[0x28]),
+                static_cast<unsigned>(cpu.mExtData[0xF885]),
+                static_cast<unsigned>(cpu.mExtData[0xF84F]));
+        fprintf(stdout, "[PHYSICAL-THERMAL] air_c=%.3f wall_c=%.3f "
+                        "coolant_c=%.3f iat_c=%.3f ect_c=%.3f "
+                        "adc3_v=%.4f adc3_upper=%u ram61=%u "
+                        "ram62=%u ram63=%u\n",
+                context.thermal->air_c(), context.thermal->wall_c(),
+                context.thermal->coolant_c(),
+                context.thermal->air_sensor_c(),
+                context.thermal->coolant_sensor_c(),
+                ect_pin_voltage(context),
+                static_cast<unsigned>(cpu.mUpperData[0xA8 - 0x80]),
+                static_cast<unsigned>(cpu.mLowerData[0x61]),
+                static_cast<unsigned>(cpu.mLowerData[0x62]),
+                static_cast<unsigned>(cpu.mLowerData[0x63]));
+        fprintf(stdout, "[PHYSICAL-INTAKE] pressure_pa=%.1f air_kg=%.9f "
+                        "air_in_kg=%.9f air_out_kg=%.9f "
+                        "injected_kg=%.9f film_kg=%.9f vapor_kg=%.9f "
+                        "delivered_kg=%.9f cc3_pulses=%llu on_ticks=%llu "
+                        "ram67=%u ram2b=%u\n",
+                context.intake->pressure_pa(), context.intake->air_mass_kg(),
+                context.intake->air_in_total_kg(),
+                context.intake->air_delivered_total_kg(),
+                context.intake->injected_total_kg(),
+                context.intake->fuel_film_kg(),
+                context.intake->fuel_vapor_kg(),
+                context.intake->fuel_delivered_total_kg(),
+                context.injector_stage->pulse_count(),
+                context.injector_stage->energized_ticks(),
+                static_cast<unsigned>(cpu.mLowerData[0x67]),
+                static_cast<unsigned>(cpu.mLowerData[0x2B]));
+        fprintf(stdout, "[PHYSICAL-ADC7] ram67=%u f8dd=%u gate2b5=%u\n",
+                static_cast<unsigned>(cpu.mLowerData[0x67]),
+                static_cast<unsigned>(cpu.mExtData[0xF8DD]),
+                (cpu.mLowerData[0x2B] >> 5) & 1u);
+        fprintf(stdout, "[PHYSICAL-ADC4] ram61=%u ram64=%u ram7d=%u\n",
+                static_cast<unsigned>(cpu.mLowerData[0x61]),
+                static_cast<unsigned>(cpu.mLowerData[0x64]),
+                static_cast<unsigned>(cpu.mLowerData[0x7D]));
+        fprintf(stdout, "[PHYSICAL-DIAG] ram27=%u f84e=%u f847=%u "
+                        "f83d=%u f83c=%u f885=%u f84f=%u f850=%u "
+                        "f85e=%u f85f=%u f860=%u\n",
+                static_cast<unsigned>(cpu.mLowerData[0x27]),
+                static_cast<unsigned>(cpu.mExtData[0xF84E]),
+                static_cast<unsigned>(cpu.mExtData[0xF847]),
+                static_cast<unsigned>(cpu.mExtData[0xF83D]),
+                static_cast<unsigned>(cpu.mExtData[0xF83C]),
+                static_cast<unsigned>(cpu.mExtData[0xF885]),
+                static_cast<unsigned>(cpu.mExtData[0xF84F]),
+                static_cast<unsigned>(cpu.mExtData[0xF850]),
+                static_cast<unsigned>(cpu.mExtData[0xF85E]),
+                static_cast<unsigned>(cpu.mExtData[0xF85F]),
+                static_cast<unsigned>(cpu.mExtData[0xF860]));
+        if (context.idle_bridge_candidate)
+            fprintf(stdout, "[PHYSICAL-IDLE] stem_m=%.6f stop_rad=%.6f "
+                            "angle_rad=%.6f contact=%d\n",
+                    context.idle_actuator.stem_m(),
+                    context.throttle->stop_angle_rad(),
+                    context.throttle->angle_rad(),
+                    context.throttle->contact_closed());
     }
 
     if (context.trace_pc) {

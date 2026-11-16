@@ -104,6 +104,13 @@ endif()
 # Explicit sources keep component ownership and build changes reviewable.
 set(SOURCES
     src/lib.cpp
+    src/ecu_hw/Ma17TpsCircuit.cpp
+    src/ecu_hw/Ma17SensorCircuit.cpp
+    src/ecu_hw/Ma17InjectorStage.cpp
+    src/engine/CrankDynamics.cpp
+    src/engine/IntakeFuel.cpp
+    src/engine/ThrottleAssembly.cpp
+    src/engine/ThermalState.cpp
     src/ma17/AdcSimulator.cpp
     src/ma17/CrankInput.cpp
     src/ma17/CpuHooks.cpp

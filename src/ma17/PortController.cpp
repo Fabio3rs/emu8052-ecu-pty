@@ -32,13 +32,26 @@ uint8_t PortController::read(em8051 *cpu, uint8_t address) {
         else
             p4 &= static_cast<uint8_t>(~0x20u);
 
-        // SAB80C517 Port 4 (p. 270): a high latch permits an external
-        // low input. Fiat G samples P4.6 at 2D57h/2D60h; its state feeds
-        // IRAM 2Fh.0, then the 2653h guard and 481Ah table choice.
-        // CM6 is an alternate function; ECU wiring and effective mode
-        // remain unidentified. This knob models the CPU pin input only.
+        // SAB80C517 Port 4: a high latch permits an external low.
+        // The movable idle-stop switch follows throttle-to-stop contact.
+        // Fiat samples both P4.3 and P4.6 in idle-related paths; selecting
+        // either pin is an experimental wiring comparison, not board proof.
         // Keep the output latch high for this experimental input level.
         const uint8_t latch_with_kline = p4;
+        const bool contact_open_fault =
+            idle_contact_open_tick_ && ticks_ >= idle_contact_open_tick_ &&
+            (!idle_contact_restore_tick_ ||
+             ticks_ < idle_contact_restore_tick_);
+        const bool contact_closed_fault =
+            idle_contact_closed_tick_ && ticks_ >= idle_contact_closed_tick_ &&
+            (!idle_contact_restore_tick_ ||
+             ticks_ < idle_contact_restore_tick_);
+        if (idle_contact_provider_ &&
+            (contact_closed_fault ||
+             (!contact_open_fault &&
+              idle_contact_provider_(idle_contact_context_))) !=
+                idle_contact_high_when_closed_)
+            p4 &= static_cast<uint8_t>(~idle_contact_pin_mask_);
         if (p4_6_force_low_ ||
             (p4_6_low_from_tick_ >= 0 && ticks_ >= p4_6_low_from_tick_))
             p4 &= static_cast<uint8_t>(~0x40u);

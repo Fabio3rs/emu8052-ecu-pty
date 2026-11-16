@@ -23,3 +23,26 @@ TEST(AdcSimulator, IrconWriteRestoresReadyBit) {
     ma17::write_ircon(&cpu, 0xC0);
     EXPECT_EQ(cpu.mSFR[0xC0 - 0x80], 0xA5);
 }
+
+TEST(AdcSimulator, DynamicVoltageIsQuantizedAtConversionStart) {
+    double voltage = 2.5;
+    ma17::set_adc_voltage_provider(
+        +[](uint8_t channel, void *context, double &sample) {
+            if (channel != 6) return false;
+            sample = *static_cast<double *>(context);
+            return true;
+        },
+        &voltage);
+    em8051 cpu{};
+    cpu.mSFR[0xD8 - 0x80] = 6;
+    ma17::start_adc_conversion(&cpu, 0xDA);
+    EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 128);
+    EXPECT_EQ(ma17::read_addatl(&cpu, 0xDA), 0);
+
+    voltage = 4.0;
+    EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 128);
+    ma17::start_adc_conversion(&cpu, 0xDA);
+    EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 204);
+    EXPECT_EQ(ma17::read_addatl(&cpu, 0xDA), 128);
+    ma17::set_adc_voltage_provider(nullptr, nullptr);
+}

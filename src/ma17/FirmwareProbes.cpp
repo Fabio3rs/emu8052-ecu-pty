@@ -325,6 +325,117 @@ void trace_pre_tick_boot_and_crank(const em8051 &cpu, long long tick,
 }
 
 void trace_pre_tick_engine(const em8051 &cpu, long long tick) {
+    static const bool trace_idle_pedal_gate =
+        std::getenv("MA17_TRACE_IDLE_PEDAL_GATE") != nullptr;
+    if (trace_idle_pedal_gate && tick >= 9900000 &&
+        (cpu.mPC == 0x29C2 || cpu.mPC == 0x29F5 ||
+         cpu.mPC == 0x2A23 || cpu.mPC == 0x2A45 ||
+         cpu.mPC == 0x2A58 || cpu.mPC == 0x2A78 ||
+         cpu.mPC == 0x2A8D || cpu.mPC == 0x2A8F ||
+         cpu.mPC == 0x2A91 || cpu.mPC == 0x2A93 ||
+         cpu.mPC == 0x2A9E ||
+         cpu.mPC == 0x2AB3 || cpu.mPC == 0x2B2D ||
+         cpu.mPC == 0x2B30 || cpu.mPC == 0x2B31 ||
+         cpu.mPC == 0x2B33 || cpu.mPC == 0x2B38 ||
+         cpu.mPC == 0x2B42)) {
+        const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+        std::fprintf(stderr,
+                     "[IDLE-PEDAL-GATE] tick=%lld PC=%04X P46=%u "
+                     "F24=%02X F27=%02X F28=%02X F2E=%02X "
+                     "RAM70=%02X R2=%02X R3=%02X F839=%02X "
+                     "F831=%02X A=%02X B=%02X PSW=%02X F83E=%02X\n",
+                     tick, cpu.mPC, (cpu.mSFR[0xE8 - 0x80] >> 6) & 1u,
+                     cpu.mLowerData[0x24], cpu.mLowerData[0x27],
+                     cpu.mLowerData[0x28], cpu.mLowerData[0x2E],
+                     cpu.mLowerData[0x70], cpu.mLowerData[bank + 2],
+                     cpu.mLowerData[bank + 3], cpu.mExtData[0xF839],
+                     cpu.mExtData[0xF831], cpu.mSFR[REG_ACC],
+                     cpu.mSFR[REG_B], cpu.mSFR[REG_PSW],
+                     cpu.mExtData[0xF83E]);
+    }
+    static const bool trace_idle_contact_check =
+        std::getenv("MA17_TRACE_IDLE_CONTACT_CHECK") != nullptr;
+    if (trace_idle_contact_check && tick >= 10000000 && tick < 12000000 &&
+        (cpu.mPC == 0x2BC2 || cpu.mPC == 0x2BCD ||
+         cpu.mPC == 0x2BCE || cpu.mPC == 0x2BE6 ||
+         cpu.mPC == 0x2BE9 || cpu.mPC == 0x2BEF ||
+         cpu.mPC == 0x2C0A || cpu.mPC == 0x2C0C ||
+         cpu.mPC == 0x2C19)) {
+        static int observations = 0;
+        if (observations++ < 512) {
+            const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+            std::fprintf(stderr,
+                         "[IDLE-CONTACT-CHECK] tick=%lld PC=%04X "
+                         "P4_LATCH6=%u R2=%02X A=%02X B=%02X PSW=%02X "
+                         "F24=%02X F27=%02X F831=%02X F833=%02X "
+                         "F83A=%02X F83B=%02X\n",
+                         tick, cpu.mPC,
+                         (cpu.mSFR[0xE8 - 0x80] >> 6) & 1u,
+                         cpu.mLowerData[bank + 2], cpu.mSFR[REG_ACC],
+                         cpu.mSFR[REG_B], cpu.mSFR[REG_PSW],
+                         cpu.mLowerData[0x24], cpu.mLowerData[0x27],
+                         cpu.mExtData[0xF831], cpu.mExtData[0xF833],
+                         cpu.mExtData[0xF83A],
+                         cpu.mExtData[0xF83B]);
+        }
+    }
+    static const bool trace_lambda_direction =
+        std::getenv("MA17_TRACE_LAMBDA_DIRECTION") != nullptr;
+    if (trace_lambda_direction && tick >= 7500000 &&
+        (cpu.mPC == 0x187F || cpu.mPC == 0x1889 ||
+         cpu.mPC == 0x190B || cpu.mPC == 0x1958 ||
+         cpu.mPC == 0x1971 || cpu.mPC == 0x199A)) {
+        const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+        // Fiat ROM: 1958h tests PSW.5; 1971h starts the subtract path.
+        std::fprintf(stderr,
+                     "[LAMBDA-DIRECTION] tick=%lld PC=%04X RAM65=%02X "
+                     "RAM3C=%02X RAM3D=%02X F2C=%02X F2F=%02X PSW=%02X "
+                     "RAM5C5D=%02X%02X R7R6=%02X%02X\n",
+                     tick, cpu.mPC, cpu.mLowerData[0x65],
+                     cpu.mLowerData[0x3C], cpu.mLowerData[0x3D],
+                     cpu.mLowerData[0x2C], cpu.mLowerData[0x2F],
+                     cpu.mSFR[REG_PSW],
+                     cpu.mLowerData[0x5C], cpu.mLowerData[0x5D],
+                     cpu.mLowerData[bank + 7], cpu.mLowerData[bank + 6]);
+    }
+    static const bool trace_lambda_route =
+        std::getenv("MA17_TRACE_LAMBDA_ROUTE") != nullptr;
+    if (trace_lambda_route &&
+        (cpu.mPC == 0x1810 || cpu.mPC == 0x186D)) {
+        // Fiat ROM: 1810h guards the correction path reached at 186Dh.
+        std::fprintf(stderr,
+                     "[LAMBDA-ROUTE] tick=%lld PC=%04X RAM28=%02X "
+                     "RAM2F=%02X RAM3C=%02X RAM65=%02X RAM47=%02X "
+                     "C=%u RAM29=%02X RAM25=%02X RAM26=%02X "
+                     "RAM2E=%02X B=%02X\n",
+                     tick, cpu.mPC, cpu.mLowerData[0x28],
+                     cpu.mLowerData[0x2F], cpu.mLowerData[0x3C],
+                     cpu.mLowerData[0x65], cpu.mLowerData[0x47],
+                     (cpu.mSFR[REG_PSW] >> 7) & 1u,
+                     cpu.mLowerData[0x29], cpu.mLowerData[0x25],
+                     cpu.mLowerData[0x26], cpu.mLowerData[0x2E],
+                     cpu.mSFR[REG_B]);
+    }
+    static const bool trace_lambda_propagation =
+        std::getenv("MA17_TRACE_LAMBDA_PROPAGATION") != nullptr;
+    if (trace_lambda_propagation && tick >= 7500000 &&
+        (cpu.mPC == 0x1687 || cpu.mPC == 0x186D ||
+         cpu.mPC == 0x199A || cpu.mPC == 0x199C ||
+         cpu.mPC == 0x1C8E || cpu.mPC == 0x1ED5 ||
+         cpu.mPC == 0x1ED7 || cpu.mPC == 0x058E)) {
+        const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+        std::fprintf(stderr,
+                     "[LAMBDA-PROPAGATION] tick=%lld PC=%04X "
+                     "F2C=%02X F2F=%02X RAM65=%02X "
+                     "RAM5C5D=%02X%02X RAM1415=%02X%02X "
+                     "R6R7=%02X%02X RAM47=%02X\n",
+                     tick, cpu.mPC, cpu.mLowerData[0x2C],
+                     cpu.mLowerData[0x2F], cpu.mLowerData[0x65],
+                     cpu.mLowerData[0x5C], cpu.mLowerData[0x5D],
+                     cpu.mLowerData[0x14], cpu.mLowerData[0x15],
+                     cpu.mLowerData[bank + 6], cpu.mLowerData[bank + 7],
+                     cpu.mLowerData[0x47]);
+    }
     static const bool trace_upper_85_86 =
         std::getenv("MA17_TRACE_UPPER_85_86") != nullptr;
     if (trace_upper_85_86 && (cpu.mPC == 0x48D5 || cpu.mPC == 0x48DF)) {

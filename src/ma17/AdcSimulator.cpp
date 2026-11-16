@@ -9,14 +9,28 @@ extern "C" {
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 
 namespace ma17 {
 
 namespace {
 
 uint64_t adc_tick = 0;
+AdcVoltageProvider voltage_provider = nullptr;
+void *voltage_context = nullptr;
 
 uint16_t read_adc_10bit_channel(uint8_t channel) {
+    double voltage = 0.0;
+    if (voltage_provider &&
+        voltage_provider(channel, voltage_context, voltage)) {
+        if (!std::isfinite(voltage)) {
+            fprintf(stderr, "[ADC] non-finite voltage on channel %u\n",
+                    static_cast<unsigned>(channel));
+            std::exit(2);
+        }
+        const double normalized = std::clamp(voltage / 5.0, 0.0, 1.0);
+        return static_cast<uint16_t>(std::lround(normalized * 1023.0));
+    }
     // Fiat ROM 06E3h..06F1h first targets IRAM 60h..67h; channel 3 is
     // redirected to upper IRAM A8h. Legacy 8-bit stimuli occupy the high
     // eight result bits; MA17_ADC10_CHn can supply all ten bits.
@@ -124,6 +138,11 @@ uint8_t selected_channel(em8051 *cpu) {
 }
 
 } // namespace
+
+void set_adc_voltage_provider(AdcVoltageProvider provider, void *context) {
+    voltage_provider = provider;
+    voltage_context = context;
+}
 
 void set_adc_tick(uint64_t tick) {
     adc_tick = tick;

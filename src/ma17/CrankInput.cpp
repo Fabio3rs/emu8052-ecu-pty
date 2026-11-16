@@ -1,6 +1,7 @@
 #include "ma17/CrankInput.hpp"
 
 #include "CrankshaftSimulator.hpp"
+#include "engine/CrankDynamics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -103,6 +104,42 @@ void tick_crank_input(em8051 *cpu, long long tick, CrankshaftSimulator &sim) {
     }
     if (sim.should_pulse_go_high(tick))
         process_crank_rising_edge(cpu, tick, sim);
+}
+
+void tick_physical_crank_input(em8051 *cpu, engine::CrankDynamics &crank,
+                               PhysicalCrankInput &input,
+                               bool starter_engaged,
+                               double combustion_torque_nm,
+                               double load_torque_nm,
+                               bool sensor_connected) {
+    const bool crossed =
+        crank.step(starter_engaged, combustion_torque_nm, load_torque_nm);
+    if (crossed &&
+        crank.wheel_position() >= engine::CrankDynamics::physical_teeth) {
+        ++input.missing_positions;
+        input.last_missing_position = crank.wheel_position();
+    }
+    if (!sensor_connected) {
+        // Open wire: the wheel still turns, but no tooth edge reaches CC0.
+        cpu->mSFR[0x90 - 0x80] &= 0xFEu;
+        input.high = false;
+        return;
+    }
+    if (crossed &&
+        crank.wheel_position() < engine::CrankDynamics::physical_teeth) {
+        cpu->mSFR[0x90 - 0x80] |= 0x01u;
+        capture_edge(cpu, true);
+        input.high = true;
+        ++input.rising_edges;
+    }
+    constexpr double half_position_rad =
+        3.14159265358979323846 / engine::CrankDynamics::wheel_positions;
+    if (input.high && crank.wheel_phase_rad() >= half_position_rad) {
+        cpu->mSFR[0x90 - 0x80] &= 0xFEu;
+        capture_edge(cpu, false);
+        input.high = false;
+        ++input.falling_edges;
+    }
 }
 
 } // namespace ma17

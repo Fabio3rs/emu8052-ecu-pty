@@ -2,14 +2,28 @@
 
 #include <atomic>
 #include <chrono>
+#include "engine/Combustion.hpp"
+#include "engine/ExhaustLambda.hpp"
+#include "engine/IdleActuator.hpp"
+#include "ecu_hw/Ma17IgnitionStage.hpp"
+#include "ecu_hw/Ma17IdleBridge.hpp"
+#include "ecu_hw/Ma17LambdaHeater.hpp"
 
 struct em8051;
 struct CrankshaftSimulator;
+namespace engine { class CrankDynamics; }
+namespace engine { class ThrottleAssembly; }
+namespace engine { class ThermalState; }
+namespace engine { class IntakeFuel; }
+namespace ecu_hw { class Ma17TpsCircuit; }
+namespace ecu_hw { class Ma17SensorCircuit; }
+namespace ecu_hw { class Ma17InjectorStage; }
 
 namespace ma17 {
 
 struct FiveBaudInjector;
 struct PtyBridge;
+struct PhysicalCrankInput;
 class UartScheduler;
 
 struct EmulatorLoopContext {
@@ -25,6 +39,55 @@ struct EmulatorLoopContext {
     std::chrono::nanoseconds batch_duration;
     int steps_per_batch;
     bool trace_pc;
+    engine::CrankDynamics *physical_crank = nullptr;
+    bool physical_pty_realtime = false;
+    PhysicalCrankInput *physical_input = nullptr;
+    long long starter_stop_tick = 0;
+    long long physical_stop_tick = 0;
+    long long crank_sensor_open_tick = 0;
+    long long crank_sensor_restore_tick = 0;
+    engine::ThrottleAssembly *throttle = nullptr;
+    bool idle_bridge_candidate = false;
+    long long idle_motor_disconnect_tick = 0;
+    long long idle_motor_reconnect_tick = 0;
+    bool idle_motor_connected = true;
+    engine::IdleActuator idle_actuator{};
+    ecu_hw::Ma17IdleBridge idle_bridge{};
+    ecu_hw::Ma17TpsCircuit *tps_circuit = nullptr;
+    long long pedal_step_tick = 0;
+    long long pedal_release_tick = 0;
+    long long pedal_rise_ticks = 0;
+    double pedal_pull_m = 0.0;
+    long long load_step_tick = 0;
+    double load_torque_nm = 0.0;
+    long long tps1_high_tick = 0;
+    long long tps1_restore_tick = 0;
+    long long tps2_high_tick = 0;
+    long long tps2_restore_tick = 0;
+    engine::ThermalState *thermal = nullptr;
+    ecu_hw::Ma17SensorCircuit *sensor_circuit = nullptr;
+    engine::IntakeFuel *intake = nullptr;
+    engine::Combustion combustion{};
+    double coolant_heat_pending_j = 0.0;
+    engine::ExhaustLambda exhaust{};
+    bool pump_relay_p34_candidate = false;
+    ecu_hw::Ma17PumpRelay pump_relay{};
+    ecu_hw::Ma17LambdaHeater lambda_heater{};
+    double lambda_adc_pin_override_v = -1.0;
+    long long lambda_stuck_tick = 0;
+    long long lambda_restore_tick = 0;
+    double exhaust_flow_kg_s = 0.0;
+    ecu_hw::Ma17IgnitionStage ignition_stage{};
+    ecu_hw::Ma17InjectorStage *injector_stage = nullptr;
+    double injected_mass_pending_kg = 0.0;
+    long long injector_disconnect_tick = 0;
+    long long injector_reconnect_tick = 0;
+    long long coil_disconnect_tick = 0;
+    long long coil_reconnect_tick = 0;
+    unsigned coil_channel = 0;
+    int fluid_step_ticks = 990;
+    long long ect_open_tick = 0;
+    long long ect_restore_tick = 0;
 };
 
 void run_emulator_loop(EmulatorLoopContext &context);

@@ -614,15 +614,17 @@ def keep_alive_loop(ser, pty_mode, timeout_ms=1000, keep_alive_interval_ms=300):
 
 
 def main():
-    modes = {"--handshake-only", "--diagnostics-once", "--frame38-probe"}
+    modes = {"--handshake-only", "--diagnostics-once", "--faults-once",
+             "--frame38-probe"}
     options = sys.argv[2:]
     fault_options = [arg for arg in options if arg.startswith("--expect-fault-triplet=")]
     mode_options = [arg for arg in options if arg in modes]
     if (len(sys.argv) < 2 or len(fault_options) > 1 or len(mode_options) > 1 or
             len(options) != len(fault_options) + len(mode_options) or
-            (fault_options and mode_options != ["--diagnostics-once"])):
+            (fault_options and mode_options not in
+             (["--diagnostics-once"], ["--faults-once"]))):
         print("Uso: python3 test_pty.py /dev/pts/X|/dev/ttyUSB0 "
-              "[--handshake-only|--diagnostics-once|--frame38-probe "
+              "[--handshake-only|--diagnostics-once|--faults-once|--frame38-probe "
               "[--expect-fault-triplet=02061B]]")
         return False
     expected_triplet = None
@@ -637,6 +639,7 @@ def main():
     dev = sys.argv[1]
     handshake_only = "--handshake-only" in sys.argv[2:]
     diagnostics_once = "--diagnostics-once" in sys.argv[2:]
+    faults_once = "--faults-once" in sys.argv[2:]
     frame38_probe = "--frame38-probe" in sys.argv[2:]
     pty_mode = is_pty_path(dev)
 
@@ -677,6 +680,17 @@ def main():
                 print(f"[FRAME38] transport {'complete' if responses else 'failed'}; "
                       "firmware branch requires PC/RAM trace confirmation")
                 return responses is not None
+            if faults_once:
+                faults = request_data(ser, frame_id=0x07)
+                valid = bool(faults) and any(
+                    frame["frame_id"] == 0xFC and len(frame["data"]) == 3 and
+                    (expected_triplet is None or
+                     bytes(frame["data"]) == expected_triplet)
+                    for frame in faults)
+                print(f"[FAULTS] {'PASS' if valid else 'FAIL'}: 07h"
+                      + (f", FC={expected_triplet.hex().upper()}" if
+                         expected_triplet is not None else ""))
+                return valid
             if diagnostics_once:
                 faults = request_data(ser, frame_id=0x07)
                 sensor_63 = read_iram_byte(ser, address=0x63)

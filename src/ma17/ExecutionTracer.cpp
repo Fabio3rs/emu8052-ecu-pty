@@ -431,8 +431,11 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
         if ((ram27 ^ previous_ram27) & 0x0F)
             std::fprintf(stderr,
                          "[IDLE-FAULT-SOURCE] tick=%lld PC=%04X "
-                         "RAM27=%02X->%02X XRAM4E=%02X\n",
-                         tick, source_pc, previous_ram27, ram27, xram4e);
+                         "RAM27=%02X->%02X XRAM4E=%02X "
+                         "F839=%02X RAM24=%02X RAM70=%02X P4_latch=%02X\n",
+                         tick, source_pc, previous_ram27, ram27, xram4e,
+                         cpu.mExtData[0xF839], cpu.mLowerData[0x24],
+                         cpu.mLowerData[0x70], cpu.mSFR[0xE8 - 0x80]);
         if ((xram4e ^ previous_xram4e) & 0x0F)
             std::fprintf(stderr,
                          "[IDLE-FAULT-LATCH] tick=%lld PC=%04X "
@@ -440,6 +443,38 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
                          tick, source_pc, previous_xram4e, xram4e, ram27);
         previous_ram27 = ram27;
         previous_xram4e = xram4e;
+    }
+    static const bool trace_idle_f839 =
+        std::getenv("MA17_TRACE_IDLE_F839") != nullptr;
+    if (trace_idle_f839) {
+        static uint8_t previous = 0;
+        const uint8_t current = cpu.mExtData[0xF839];
+        if (current != previous)
+            std::fprintf(stderr,
+                         "[IDLE-F839] tick=%lld value=%02X->%02X "
+                         "source_PC=%04X F835=%02X RAM24=%02X "
+                         "RAM6F=%02X RAM70=%02X\n",
+                         tick, previous, current, source_pc,
+                         cpu.mExtData[0xF835], cpu.mLowerData[0x24],
+                         cpu.mLowerData[0x6F], cpu.mLowerData[0x70]);
+        previous = current;
+    }
+    static const bool trace_idle_publish =
+        std::getenv("MA17_TRACE_IDLE_PUBLISH") != nullptr;
+    if (trace_idle_publish &&
+        (source_pc == 0x407D || source_pc == 0x41CD ||
+         source_pc == 0x41E5)) {
+        // Fiat ROM: 407Dh selects bits into banked R7 before 41CDh
+        // refreshes F884h; 41E5h publishes that earlier R7 value.
+        const uint8_t source = cpu.mLowerData[0x27];
+        const uint8_t snapshot = cpu.mExtData[0xF884];
+        const uint8_t bank = cpu.mSFR[REG_PSW] & 0x18u;
+        std::fprintf(stderr,
+                     "[IDLE-PUBLISH] tick=%lld PC=%04X RAM27=%02X "
+                     "F884=%02X R7=%02X F84E=%02X F887=%02X\n",
+                     tick, source_pc, source, snapshot,
+                     cpu.mLowerData[bank + 7], cpu.mExtData[0xF84E],
+                     cpu.mExtData[0xF887]);
     }
     static const bool trace_coolant_gate =
         std::getenv("MA17_TRACE_COOLANT_GATE") != nullptr;
@@ -545,8 +580,14 @@ void trace_memory_changes(const em8051 &cpu, long long tick,
                 // external data on the P2/XPAGE-selected page.
                 fprintf(stderr,
                         "[LAMBDA-BOUND-XRAM] tick=%lld addr=%04X "
-                        "value=%02X->%02X source_PC=%04X\n",
-                        tick, address, previous[index], value, source_pc);
+                        "value=%02X->%02X source_PC=%04X "
+                        "RAM65=%02X F2C=%02X F2F=%02X "
+                        "RAM5C5D=%02X%02X RAM1415=%02X%02X\n",
+                        tick, address, previous[index], value, source_pc,
+                        cpu.mLowerData[0x65], cpu.mLowerData[0x2C],
+                        cpu.mLowerData[0x2F], cpu.mLowerData[0x5C],
+                        cpu.mLowerData[0x5D], cpu.mLowerData[0x14],
+                        cpu.mLowerData[0x15]);
             }
             previous[index] = value;
         }

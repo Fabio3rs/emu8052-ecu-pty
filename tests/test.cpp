@@ -8095,8 +8095,12 @@ TEST(Sab80C517, FirmwareFaultTripletReadersUseOriginalRom) {
         Case{0x4329, 0x4342, 2, 0, {0x02, 0x04, 0x1E}},
         Case{0x4329, 0x4342, 9, 9, {0x02, 0x06, 0x1F}},
         Case{0x4329, 0x4342, 12, 9, {0x02, 0x0A, 0x1E}},
+        Case{0x4329, 0x4342, 4, 0, {0x01, 0x1A, 0x1B}},
         Case{0x44BB, 0x44D7, 2, 0, {0x02, 0x04, 0x9E}},
         Case{0x44BB, 0x44D7, 9, 9, {0x02, 0x06, 0x9F}},
+        Case{0x44BB, 0x44D7, 12, 0, {0x02, 0x06, 0x9F}},
+        Case{0x44BB, 0x44D7, 12, 9, {0x02, 0x0A, 0x9E}},
+        Case{0x44BB, 0x44D7, 4, 0, {0x01, 0x1A, 0x9B}},
     };
     for (const auto &test : cases) {
         std::array<unsigned char, 32768> code{};
@@ -8188,6 +8192,94 @@ TEST(Sab80C517, FirmwareFaultTripletReadersUseOriginalRom) {
     EXPECT_EQ(xram[0xCD], 0x02);
     EXPECT_EQ(xram[0xCE], 0x0B);
     EXPECT_EQ(xram[0xCF], 0x1E);
+
+    // A physical ECT-open run publishes F84Fh.3. Let the ROM select R7
+    // from R3=0Ch rather than preparing the table offset in the fixture.
+    reset(&cpu, true);
+    std::copy(original.begin(), original.end(), code.begin());
+    cpu.mLowerData[3] = 0x0C;
+    xram[0x4F] = 0x08;
+    upper[0x89 - 0x80] = 0x10;
+    cpu.mPC = 0x4414;
+    for (int step = 0; step < 40 && cpu.mPC != 0x430E; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x430E);
+    EXPECT_EQ(cpu.mLowerData[7], 9);
+    EXPECT_EQ(cpu.mLowerData[0], 0x4F);
+    for (int step = 0; step < 120 && cpu.mPC != 0x4342; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x4342);
+    EXPECT_EQ(xram[0xCD], 0x02);
+    EXPECT_EQ(xram[0xCE], 0x0A);
+    EXPECT_EQ(xram[0xCF], 0x1E);
+
+    // After restoration the physical run retains F85Fh.3. Start the
+    // second-bank scan at its 5Fh boundary with only that bit present.
+    reset(&cpu, true);
+    std::copy(original.begin(), original.end(), code.begin());
+    cpu.mSFR[REG_P2] = 0;
+    cpu.mSFR[REG_DPH] = 0x6E;
+    cpu.mSFR[REG_DPL] = 0x27;
+    cpu.mLowerData[3] = 0x20;
+    xram[0x5F] = 0x08;
+    upper[0x89 - 0x80] = 0x10;
+    cpu.mPC = 0x4470;
+    for (int step = 0; step < 1000 && cpu.mPC != 0x44BB; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x44BB);
+    EXPECT_EQ(cpu.mLowerData[3], 0x23);
+    EXPECT_EQ(cpu.mLowerData[6], 0x0C);
+    EXPECT_EQ(cpu.mLowerData[7], 9);
+    for (int step = 0; step < 100 && cpu.mPC != 0x44D7; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x44D7);
+    EXPECT_EQ(xram[0xCD], 0x02);
+    EXPECT_EQ(xram[0xCE], 0x0A);
+    EXPECT_EQ(xram[0xCF], 0x9E);
+
+    // TPS1-high produced F84Eh.3 in the physical run, but this scan
+    // position is in the idle-actuator group, not the TPS-code group.
+    reset(&cpu, true);
+    std::copy(original.begin(), original.end(), code.begin());
+    cpu.mSFR[REG_P2] = 0;
+    cpu.mLowerData[0] = 0x4E;
+    cpu.mLowerData[3] = 1;
+    xram[0x4E] = 0x08;
+    upper[0x89 - 0x80] = 0x10;
+    cpu.mPC = 0x430E;
+    for (int step = 0; step < 1000 && cpu.mPC != 0x4329; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x4329);
+    EXPECT_EQ(cpu.mLowerData[3], 4);
+    EXPECT_EQ(cpu.mLowerData[7], 0);
+    for (int step = 0; step < 100 && cpu.mPC != 0x4342; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x4342);
+    EXPECT_EQ(xram[0xCD], 0x01);
+    EXPECT_EQ(xram[0xCE], 0x1A);
+    EXPECT_EQ(xram[0xCF], 0x1B);
+
+    reset(&cpu, true);
+    std::copy(original.begin(), original.end(), code.begin());
+    cpu.mSFR[REG_P2] = 0;
+    cpu.mSFR[REG_DPH] = 0x6E;
+    cpu.mSFR[REG_DPL] = 0x27;
+    cpu.mLowerData[3] = 0x18;
+    xram[0x5E] = 0x08;
+    upper[0x89 - 0x80] = 0x10;
+    cpu.mPC = 0x4470;
+    for (int step = 0; step < 1000 && cpu.mPC != 0x44BB; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x44BB);
+    EXPECT_EQ(cpu.mLowerData[3], 0x1B);
+    EXPECT_EQ(cpu.mLowerData[6], 4);
+    EXPECT_EQ(cpu.mLowerData[7], 0);
+    for (int step = 0; step < 100 && cpu.mPC != 0x44D7; ++step)
+        tick(&cpu);
+    ASSERT_EQ(cpu.mPC, 0x44D7);
+    EXPECT_EQ(xram[0xCD], 0x01);
+    EXPECT_EQ(xram[0xCE], 0x1A);
+    EXPECT_EQ(xram[0xCF], 0x9B);
 }
 
 TEST(Sab80C517, FirmwareTpsFlagsSelectFaultCode0602) {

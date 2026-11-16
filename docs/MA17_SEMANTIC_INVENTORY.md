@@ -700,6 +700,26 @@ em `35D1h` antes de ajustar `R2`; seu destino posterior ainda é aberto.
 | `P1.3/CC3` | `058Eh..05DBh` programa `CCL3/CCH3` e comuta o latch; comparação Timer 2 modelada | Pulso separado de P5.0/1. No degrau TPS G a 3.000 RPM, doar `7520h=6Fh` mudou o pulso iniciado no tick 907.122 de 8.156 para 9.488 ticks; zerar `78h` em `1D4Bh` removeu essa diferença. A curva `7958h` alterou três pulsos iniciais a 1.000 RPM; fornecer os valores nativos de RAM 59h/5Ah nas leituras em 1C99h/1C9Bh restaurou os três. Candidato à temporização de outro atuador, possivelmente bico | Confirmar estágio de potência e terminal físico do injetor |
 | `P1.1` | `0352h` liga e `0433h` desliga o latch | Período de meia volta no perfil testado; função física indeterminada | Medir sinal elétrico e rastrear consumidores |
 
+No cenário físico Fiat com parada por carga, `P5.4` mudou em
+`317Ah` (alto, 572.953 ticks) e `3176h` (baixo, 35.686.123 ticks).
+Sua guarda lê `RAM[2Dh].0` e `XRAM[F881h]`; a queda ocorreu cerca de
+25 s após zerar a RPM. A sequência baixo sem partida → alto em marcha
+→ baixo tardiamente após parar é compatível com uma lâmpada de aviso,
+mas a ligação ao terminal 31 da ECU não foi demonstrada. `P1.7`
+mudou 15 vezes no mesmo ensaio, em `06CAh`, acompanhando `RAM[1Dh]`
+e `T2CON.1`; a cadência não identifica relé, bomba ou outra carga.
+Ambos permanecem sinais brutos sem binding ao terminal 28.
+
+O [manual de reparos MA1.7 da Alfatest](https://pt.scribd.com/document/656677219/Alfatest-Bosch-MA-1-7)
+identifica no **conector da ECU**, não na CPU: terminal 8 como contato
+de lenta aterrado ao fechar; 9/10 como massa/sinal da sonda; 28 como
+comando do relé da bomba; 32/34 como motor DC do batente; 35 como
+injetor. A saída 87 do relé da bomba alimenta o aquecedor da sonda
+por fusível de 10 A; sua resistência nominal é indicada como 4–8 Ω.
+Esses dados reforçam a topologia externa e delimitam os bindings ainda
+abertos. Em particular, terminal 8→`P4.6` e terminal 28→pino da CPU
+continuam hipóteses, sem trilha da placa identificada.
+
 Para `P5.0/P5.1`, há agora uma intervenção adicional na ROM G: com
 `RAM[57h]=1/2` **forçada**, doar somente as células de `7BBEh`/`7C36h`
 de S88 altera `RAM[69h]` e as larguras dos pulsos P5 modelados; no
@@ -1087,6 +1107,14 @@ O scanner decodifica seus dois primeiros bytes como `0A02h` little-endian
 e considera o status `1Eh` presente. A associação com o sensor físico de
 temperatura do líquido vem da descrição do scanner; o caminho completo
 em uma sessão K-Line ainda não foi reproduzido.
+Em um ensaio isolado posterior, iniciando a segunda varredura em 4470h
+com somente `XRAM[5Fh].3=1`, a ROM percorreu os índices `R3=20h..23h`,
+selecionou `R6=0Ch/R7=09h` e produziu `02 0A 9E` em CDh..CFh. O teste
+confirmou separadamente a montagem da mesma tripla no buffer `FCh`
+quando iniciou o leitor com `R6/R7` já preparados.
+O bit alto do status resulta de 44CCh. Isso liga o mesmo código numérico
+ao segundo banco nesse estado controlado; não comprova ainda a transmissão
+em uma sessão física nem o tempo de retenção da falha.
 
 As flags `.6/.7` e o valor de substituição de `RAM[62h]` são fatos da execução isolada;
 interpretá-los como falhas físicas do sensor requer rastrear seus consumidores.
@@ -1459,8 +1487,9 @@ na escala de 990.000 ticks/s do harness Fiat:
 
 Em cada meio ciclo pareado apareceu uma borda baixa de CC3. A mediana
 da fase muda com o RPM, e as larguras dos dois sinais são distintas.
-Com ADC7=64, a guarda bloqueia CC3 enquanto P5 continua alternando;
-um teste automatizado cobre esse contraste. Os relatórios estão em
+Na captura histórica com ADC7=64, a guarda bloqueou CC3 enquanto P5
+continuou alternando; a atualização sobre o limiar atual está abaixo.
+Os relatórios estão em
 `build/ma17-analysis/phase_verified_{750,1000,1500,2000}/execution.json`.
 Esse padrão é compatível com um caminho de injeção separado das duas
 saídas candidatas de ignição, mas não prova o pinout nem a polaridade do
@@ -1509,8 +1538,13 @@ modelado, 187. A mediana entre quedas foi 29.700 ticks; o baixo mediano do
 pino foi 10.801 ticks. Em 93 pulsos pareados, a largura baixa menos
 `4 × RAM[14h:15h]` ficou entre −12 e −11 ticks, atraso de software entre
 captura e borda. Houve 93 coincidências com o latch de software alto. Com
-`MA17_ADC_CH7=64`, a guarda ficou ativa e não houve essas transições; o
-limiar permanece coberto por teste automatizado.
+`MA17_ADC_CH7=64`, a guarda ficou ativa e não houve essas transições.
+Essa captura precede a correção do byte ADC descrita acima. No build
+atual, `RAM67h=64` deixa `2Bh.5` limpo e permite CC3; `RAM67h=65`
+liga `2Bh.5` e bloqueia CC3. `PhysicalIntake.ConditionalCc3Fuel`
+verifica o contraste em execução física da ROM original com pinos
+ADC7 de 1,252 V e 1,260 V, respectivamente. O limiar digital é
+confirmado; a função elétrica externa do canal 7 ainda é desconhecida.
 
 Com ADC7 em 40 e 63, ambos abaixo do limiar, ensaios independentes a
 1.000 RPM deram mediana `RAM[14h:15h]=2690` e largura baixa modelada de
