@@ -38,6 +38,7 @@ extern "C" {
 #include "ma17/FiveBaudInjector.hpp"
 #include "ma17/PortController.hpp"
 #include "ma17/PtyBridge.hpp"
+#include "ma17/Runner.hpp"
 #include "ma17/UartScheduler.hpp"
 
 static constexpr int SFR_SCON = 0x98; // SM0..RI
@@ -220,7 +221,15 @@ static bool save_xram_state(const em8051 &cpu, const char *path) {
     return true;
 }
 
-int main(int argc, char **argv) {
+int ma17::run_cli(int argc, char **argv, RunObserver observer) {
+    g_running.store(true);
+    g_inject_5baud.store(false);
+    g_instr_counter = 0;
+    g_uart_scheduler.reset_for_run();
+    g_ports.set_idle_contact_provider(nullptr, nullptr);
+    g_5baud_injector.active = false;
+    g_5baud_injector.current_bit = 0;
+    g_5baud_injector.bit_end_instruction = 0;
     const auto config = ma17::parse_emulator_config(argc, argv);
     if (!config)
         return 2;
@@ -421,6 +430,13 @@ int main(int argc, char **argv) {
                                    tick_duration_ns,
                                    steps_per_tick,
                                    trace_pc};
+    loop.on_snapshot = observer.on_snapshot;
+    loop.snapshot_context = observer.context;
+    loop.on_event = observer.on_event;
+    loop.event_context = observer.context;
+    loop.cancel = observer.cancel;
+    loop.on_control = observer.on_control;
+    loop.control_context = observer.context;
     if (config->physical_crank) {
         loop.physical_crank = &physical_crank;
         loop.physical_pty_realtime = config->physical_pty_realtime;

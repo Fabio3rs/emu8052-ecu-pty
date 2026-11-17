@@ -9,6 +9,123 @@ A C++20 project integrating the [emu8051](https://github.com/jarikomppa/emu8051)
 **Protocol:** ISO 9141-2 K-line @ 4800 8N1
 **Implementation:** Cycle-accurate UART timing and 5-baud slow-init support
 
+## SEVEL MA1.7 Lab (experimental)
+
+The optional `sevel-ma17-lab` runs the original Fiat ROM with the repository's
+SEVEL physical model in one session. Its SDL3 window shows a four-cylinder
+SOHC scene with imported piston and connecting rod meshes and a longitudinal
+crankshaft drawing driven by the physical crank, RPM/TPS/lambda gauges, and live
+CC3/P5.0/P5.1 traces. The imported Open Engine Simulator synthesizer produces
+sound from the cossimulation's combustion events. The ECU ROM is user supplied
+and is not included in the build.
+The trace labels show the last complete high interval of each observed pin in
+milliseconds; `H --` means no complete interval is available.
+Pedal pull and applied resistant torque come from the physical snapshot; the
+LOAD button reflects a load already active in a supplied physical scenario.
+The status panel shows modeled manifold fuel film and vapor in milligrams;
+these states continue to change during key-off coasting and cooldown.
+Live PCM synthesis runs on a separate worker thread. Playback pauses with the
+simulation and above 1× speed; the window reports dropped samples and empty
+audio queue observations. The 1× session uses deadline pacing so batch CPU
+work counts toward virtual time. Offline WAV capture keeps the original event
+timing.
+An original-ROM regression checks byte-identical idle WAVs, a stronger waveform
+after a pedal step, and silence with the key off; see the Lab progress ledger.
+
+```sh
+cmake -S . -B build-lab -DENABLE_SEVEL_MA17_LAB=ON -DENABLE_TESTS=ON
+cmake --build build-lab --parallel 4
+./build-lab/sevel-ma17-lab path/to/FiatTipo_MA17_dump_27c256.bin --live --bench-preset
+```
+
+The Lab needs SDL3 3.2 or newer. CMake uses an installed SDL3, or fetches the
+pinned 3.2.8 source. An existing local SDL3 build can be selected with
+`-DSDL3_DIR=/path/to/SDL3Config-directory`. Builds with the Lab option off do
+not need SDL3. For an offline headless build, add
+`-DENABLE_SEVEL_MA17_LAB_GUI=OFF`. The GUI also needs ZLIB, FreeType and Python 3
+for hash-checked restoration of the donor GPU shader binaries. CMake copies
+the packaged donor mesh, Silkscreen font, shaders and font license into
+`build-lab/assets/` beside the executable. Keep that directory with the
+binary when moving the GUI build.
+
+`--bench-preset` selects the tested warm candidate setup: ADC7 1232 mV,
+P4.6 idle contact, P1.5/P1.6 idle bridge, 90 °C coolant, 5 mrad idle stop,
+9 mm² throttle leak and lambda ADC gain 5. These are simulation bindings and
+estimates, not a verified Fiat wiring/calibration. Explicit values for those
+options override the preset; omit it to run the raw physical scenario. The
+startup log prints `[LAB-BENCH]` and the window marks the candidate setup when
+the preset is active. Use the same preset
+for headless capture and control-trace replay. The no-load warm preset ran at
+about 1,507 rpm at 12 million ticks in one regression; it is a functional
+starting setup, not a calibrated 850 rpm idle. The LOAD control applies
+resistant torque after the motor catches.
+
+The live window starts with the key off: press K, then hold S to crank. Space
+pauses; arrows adjust pedal pull; L toggles 24 Nm load; +/- changes speed; M
+mutes audio; [ and ] adjust volume. The mouse wheel zooms the mechanical
+scene, middle-button drag pans it, R resets the view, and Esc closes.
+For a warm restart in the tested physical scenario, turn LOAD off while
+cranking and reapply it after the engine catches.
+At windows at least 900×620, the nine buttons below the engine provide key,
+momentary starter, pedal, load, pause, speed and mute controls. A saved control
+trace records button actions at their applied simulation ticks; replay locks
+the physical controls while leaving pause, speed and mute available.
+Click the CC3, P5.0 or P5.1 label in the oscilloscope to hide or restore that
+ECU pin trace. These display selections do not change the saved control trace.
+The starter releases if the window loses focus.
+The status and candidate-lamp labels shorten in a 900×620 window.
+The window shows modeled TPS1/TPS2 voltages, lambda sensor voltage, recent RPM
+and lambda trends, and a candidate MA1.7 lamp indicator. A brief amber cross
+marks a combustion event at its cylinder; a red cross marks a misfire. These
+markers are visual afterglow from timestamped ROM/engine events, while the
+oscilloscope keeps the actual pin pulse widths. `--auto-start`
+restores the 495,000-tick
+automatic starter demo. The Lab also
+supports `--headless --capture-tick N --capture-svg frame.svg
+--capture-wav audio.wav`. `--screenshot frame.png` saves one SDL frame when
+libpng is available;
+`--window-frames N` bounds a GUI verification run. `--live --gpu-preview` opens
+the donor SDL GPU mechanical scene in a second window when a GPU backend is
+available. SDL chooses the main window's renderer; the startup log prints
+`[LAB-VIDEO] renderer=...`. If that renderer cannot initialize, the Lab tries
+SDL software rendering and reports the error. The audio startup log prints
+`[LAB-AUDIO] stream_open=1 driver=...` when SDL opens a playback stream.
+On a machine with graphics and sound hardware, run the command above with
+`--gpu-preview`, then press K and hold S to start. Check both windows, listen
+through acceleration and deceleration, and inspect the displayed audio drop
+and queue counts. `[LAB-GPU] preview_ready=1` confirms GPU initialization;
+the stream log confirms opening, while audible output needs direct listening.
+For repeatability checks, `--live --no-audio` skips the SDL audio stream and
+`--frame-delay-ms N` sets the GUI delay (1–1000 ms, default 16). A bounded GUI
+run exits when its simulation reaches `--stop-ticks`. Live and headless replay
+print `[LAB-STATE]` with the final tick, physical/ECU state fingerprint,
+ordered event fingerprint and overflow count; these fingerprints are diagnostic
+64-bit FNV-1a values, not cryptographic hashes.
+
+Use `--live --save-controls trace.txt` to save the applied tick, key, starter,
+pedal and load commands. Run again with `--live --replay-controls trace.txt`
+and the same ROM and physical scenario options to reproduce them. New traces
+record the ROM size, a 64-bit content fingerprint and the physical scenario
+arguments; replay rejects a mismatch before starting. Older v1 traces remain
+readable but have no scenario check. Physical controls are locked during replay.
+Pause and speed affect wall time only and are not stored in the trace. For a
+repeatable SVG and WAV without SDL, use
+`--headless --replay-controls trace.txt --capture-tick N --capture-svg frame.svg
+--capture-wav audio.wav`; if supplied, `--stop-ticks` must equal N.
+
+The current scene uses documented bore, stroke, firing order and valve timing;
+rod length, valve lift and outer geometry are explicitly drawing estimates.
+The donor's mechanical meshes, Silkscreen font, shader state, adapted Gauge and
+Oscilloscope objects, audio filters and synthesizer are integrated. The full
+donor impulse WAV is archived losslessly; the runtime uses its first 2048
+samples (99.69% of the source energy). The original donor GPU backend is
+available as an optional scene preview; the primary UI uses SDL's selected
+2D renderer. Two labeled axial crank views show the 1/4 and 2/3 pairs at
+opposed angles beside the longitudinal four-cylinder view.
+See
+[the Lab progress ledger](docs/SEVEL_MA17_LAB_PROGRESS.md) and
+[third-party notices](THIRD_PARTY_NOTICES.md) for verified tests and provenance.
+
 ### Project Status
 **Type:** Personal research and testing project
 **Code Availability:** Public for backup and community contribution

@@ -87,4 +87,10 @@ double Ma17InjectorStage::step(bool cc3_pin_high, double dt_s,
     return delivered_kg;
 }
 
+void Ma17InjectorStage::reset_electrical_state() {
+    energized_ = false;
+    energized_time_s_ = 0.0;
+    coil_current_a_ = 0.0;
+}
+
 } // namespace ecu_hw

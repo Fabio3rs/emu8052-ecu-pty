@@ -38,6 +38,20 @@ bool PtyBridge::is_receiving_packets() {
 }
 
 bool PtyBridge::open_pty_4800_8N1() {
+    if (mfd >= 0)
+        close(mfd);
+    if (sfd >= 0)
+        close(sfd);
+    mfd = sfd = -1;
+    slave_path.clear();
+    override_rxd = false;
+    override_state = true;
+    rxd_line_state = true;
+    low_until_ms = 0;
+    break_detect_buffer.fill(0);
+    break_detect_idx = 0;
+    rx_queue = {};
+    last_tx_time = {};
     char namebuf[128] = {0};
     struct termios tio {};
 
@@ -158,7 +172,7 @@ void PtyBridge::read_and_process() {
             return;
         }
 
-        (void)!write(mfd, break_detect_buffer, 2);
+        (void)!write(mfd, break_detect_buffer.data(), 2);
         on_byte(break_detect_buffer[0]);
         on_byte(byte);
         rxd_line_state = true;

@@ -23,6 +23,7 @@ class Ma17InjectorStage {
   public:
     explicit Ma17InjectorStage(InjectorStageParameters parameters = {});
     void set_connected(bool connected) { connected_ = connected; }
+    void reset_electrical_state();
     double step(bool cc3_pin_high, double dt_s, double battery_v);
     bool energized() const { return energized_; }
     unsigned long long pulse_count() const { return pulse_count_; }

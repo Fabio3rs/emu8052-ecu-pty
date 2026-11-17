@@ -9,6 +9,8 @@
 #include "ecu_hw/Ma17DiagnosticLamp.hpp"
 #include "ecu_hw/Ma17IdleBridge.hpp"
 #include "ecu_hw/Ma17LambdaHeater.hpp"
+#include "ma17/EmulatorSnapshot.hpp"
+#include "ma17/EmulatorEvent.hpp"
 
 struct em8051;
 struct CrankshaftSimulator;
@@ -21,6 +23,9 @@ namespace ecu_hw { class Ma17SensorCircuit; }
 namespace ecu_hw { class Ma17InjectorStage; }
 
 namespace ma17 {
+
+struct EmulatorLoopContext;
+using ControlCallback = void (*)(EmulatorLoopContext &, void *);
 
 struct FiveBaudInjector;
 struct PtyBridge;
@@ -40,10 +45,18 @@ struct EmulatorLoopContext {
     std::chrono::nanoseconds batch_duration;
     int steps_per_batch;
     bool trace_pc;
+    SnapshotCallback on_snapshot = nullptr;
+    void *snapshot_context = nullptr;
+    EventCallback on_event = nullptr;
+    void *event_context = nullptr;
+    std::atomic<bool> *cancel = nullptr;
+    ControlCallback on_control = nullptr;
+    void *control_context = nullptr;
     engine::CrankDynamics *physical_crank = nullptr;
     bool physical_pty_realtime = false;
     PhysicalCrankInput *physical_input = nullptr;
     long long starter_stop_tick = 0;
+    bool key_on = true;
     long long physical_stop_tick = 0;
     long long crank_sensor_open_tick = 0;
     long long crank_sensor_restore_tick = 0;

@@ -1,4 +1,6 @@
-add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp)
+add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp sevel_geometry_test.cpp sevel_scene_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp)
+target_include_directories(emu8051-tty_tests SYSTEM PRIVATE
+    ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
 target_compile_definitions(emu8051-tty_tests PRIVATE
     MA17_ROM_PATH="${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin")
 target_link_libraries(emu8051-tty_tests emu8051-tty_lib GTest::GTest GTest::Main)
@@ -8,6 +10,40 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         "-Wno-range-loop-construct;-Wno-conversion;-Wno-sign-conversion;-Wno-dangling-else")
 endif()
 gtest_discover_tests(emu8051-tty_tests)
+if(TARGET open-engine-sim-geometry)
+    add_executable(lab_donor_scene_test lab_donor_scene_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/lab/DonorScene.cpp)
+    target_include_directories(lab_donor_scene_test SYSTEM PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
+    target_link_libraries(lab_donor_scene_test PRIVATE open-engine-sim-geometry
+        GTest::GTest GTest::Main)
+    if(ENABLE_SEVEL_MA17_LAB_GUI)
+        target_sources(lab_donor_scene_test PRIVATE
+            ${PROJECT_SOURCE_DIR}/src/lab/MeshAsset.cpp)
+        target_compile_definitions(lab_donor_scene_test PRIVATE
+            SEVEL_LAB_MESH_ASSET=1
+            LAB_MESH_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/authored_meshes.obj.zlib.b64")
+        target_link_libraries(lab_donor_scene_test PRIVATE ZLIB::ZLIB)
+    endif()
+    gtest_discover_tests(lab_donor_scene_test)
+endif()
+if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
+    add_executable(lab_mesh_asset_test lab_mesh_asset_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/lab/MeshAsset.cpp)
+    target_include_directories(lab_mesh_asset_test SYSTEM PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
+    target_compile_definitions(lab_mesh_asset_test PRIVATE
+        LAB_MESH_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/authored_meshes.obj.zlib.b64"
+        LAB_FONT_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/slkscr.ttf.zlib.b64")
+    target_link_libraries(lab_mesh_asset_test PRIVATE GTest::GTest
+        GTest::Main open-engine-sim-geometry ZLIB::ZLIB)
+    gtest_discover_tests(lab_mesh_asset_test)
+endif()
+add_executable(lab_runner_smoke runner_snapshot_smoke.cpp)
+target_link_libraries(lab_runner_smoke PRIVATE emu8051-tty_lib)
+add_test(NAME LabRunner.OriginalRomSnapshot
+    COMMAND lab_runner_smoke
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
 add_test(NAME PhysicalCrank.FiatRomRpm
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_physical_crank.py
             $<TARGET_FILE:emu8051-tty>

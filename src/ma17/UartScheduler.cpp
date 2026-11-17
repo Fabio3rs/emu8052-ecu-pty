@@ -16,6 +16,15 @@ constexpr double uart_baud = 4800.0;
 
 void UartScheduler::bind_cpu(em8051 *cpu) { cpu_ = cpu; }
 
+void UartScheduler::reset_for_run() {
+    cpu_ = nullptr;
+    sbuf_tx_ = 0;
+    sbuf_rx_ = 0;
+    previous_scon_ = 0x50;
+    scon_write_count_ = 0;
+    events_ = {};
+}
+
 void UartScheduler::reset_buffers() {
     sbuf_tx_ = 0;
     sbuf_rx_ = 0;

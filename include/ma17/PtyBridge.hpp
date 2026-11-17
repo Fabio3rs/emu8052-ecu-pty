@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <queue>
@@ -25,7 +26,7 @@ struct PtyBridge {
     bool override_state = true;
     bool rxd_line_state = true;
     long long low_until_ms = 0;
-    unsigned char break_detect_buffer[3] = {0, 0, 0};
+    std::array<unsigned char, 3> break_detect_buffer{};
     int break_detect_idx = 0;
     std::queue<unsigned char> rx_queue;
     std::chrono::steady_clock::time_point last_tx_time{};

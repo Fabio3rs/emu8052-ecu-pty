@@ -83,6 +83,18 @@ TEST(Ma17InjectorStage, EffectiveLowPulseHasDeadTimeAndSingleFlow) {
     EXPECT_EQ(injector.energized_ticks(), 9900u);
 }
 
+TEST(Ma17InjectorStage, KeyCycleClearsCurrentWithoutRestoringOpenCircuit) {
+    ecu_hw::Ma17InjectorStage injector;
+    injector.step(false, 0.002, 12.5);
+    ASSERT_TRUE(injector.energized());
+    injector.set_connected(false);
+    injector.reset_electrical_state();
+    EXPECT_FALSE(injector.energized());
+    EXPECT_DOUBLE_EQ(injector.coil_current_a(), 0.0);
+    EXPECT_DOUBLE_EQ(injector.step(false, 0.002, 12.5), 0.0);
+    EXPECT_EQ(injector.pulse_count(), 1u);
+}
+
 TEST(FuelBlend, E25KeepsVolumeMassAndStoichiometryConsistent) {
     const auto e0 = engine::FuelBlend::from_ethanol_percent(0);
     const auto e25 = engine::FuelBlend::from_ethanol_percent(25);
@@ -324,6 +336,19 @@ TEST(Ma17IgnitionStage, OpenCoilSuppressesOnlyItsSpark) {
     EXPECT_DOUBLE_EQ(restored[0], 1.0);
 }
 
+TEST(Ma17IgnitionStage, KeyCycleClearsDwellAndKeepsOpenCoil) {
+    ecu_hw::Ma17IgnitionStage stage;
+    stage.step(0x03, 0.001);
+    stage.step(0x02, 0.002);
+    stage.set_connected(0, false);
+    stage.reset_charge();
+    EXPECT_DOUBLE_EQ(stage.step(0x03, 0.001)[0], 0.0);
+    EXPECT_FALSE(stage.attempted(0));
+    stage.step(0x02, 0.002);
+    EXPECT_DOUBLE_EQ(stage.step(0x03, 0.001)[0], 0.0);
+    EXPECT_TRUE(stage.attempted(0));
+}
+
 TEST(ExhaustLambda, TransportAndWarmupPrecedeNarrowbandResponse) {
     engine::ExhaustLambda exhaust;
     exhaust.admit({0.0001, 0.00001, 0.00001}, 0.002, 0);
@@ -453,8 +478,9 @@ TEST(ExhaustLambda, HeaterDoesNotDelayWarmupWithHotExhaust) {
         unpowered.step(0.1, tick);
         powered.step(0.1, tick, 24.0);
         EXPECT_GE(powered.temperature_c(), unpowered.temperature_c());
-        if (unpowered.valid())
+        if (unpowered.valid()) {
             EXPECT_TRUE(powered.valid());
+        }
     }
     EXPECT_GT(powered.temperature_c(), unpowered.temperature_c());
 }

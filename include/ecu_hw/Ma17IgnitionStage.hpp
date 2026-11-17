@@ -28,6 +28,13 @@ class Ma17IgnitionStage {
         connected_[channel] = connected;
     }
 
+    void reset_charge() {
+        charge_s_ = {};
+        charging_ = {};
+        attempts_ = {};
+        initialized_ = false;
+    }
+
     // Returns candidate spark strengths on current interruption, one per coil.
     std::array<double, 2> step(uint8_t p5_bits, double dt_s) {
         if (!(dt_s > 0.0))

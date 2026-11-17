@@ -485,6 +485,39 @@ static void run_tick_batch(EmulatorLoopContext &context,
     for (int i = 0; i < context.steps_per_batch &&
                     (!stop_ticks || context.ticks < stop_ticks); ++i) {
         context.ticks++; // One count per emulated machine-cycle tick.
+        if (!context.key_on && context.physical_crank) {
+            const double load = context.load_step_tick &&
+                                        context.ticks >= context.load_step_tick
+                                    ? context.load_torque_nm
+                                    : 0.0;
+            tick_physical_crank_input(&cpu, *context.physical_crank,
+                                      *context.physical_input, false, 0.0, load,
+                                      false);
+            if (context.thermal && context.ticks % 990 == 0) {
+                context.thermal->advance_ticks(
+                    990,
+                    context.intake
+                        ? std::max(0.0, context.intake->last_air_in_kg_s())
+                        : 0.0,
+                    context.coolant_heat_pending_j * 1000.0);
+                context.coolant_heat_pending_j = 0.0;
+            }
+            if (context.intake && context.throttle && context.thermal &&
+                context.ticks % context.fluid_step_ticks == 0) {
+                const double dt_s =
+                    static_cast<double>(context.fluid_step_ticks) / 990000.0;
+                const auto charge = context.intake->step(
+                    dt_s, context.physical_crank->rpm(),
+                    context.throttle->angle_rad(), context.thermal->air_c(),
+                    context.thermal->wall_c(),
+                    context.injected_mass_pending_kg);
+                // Coasting carries residual fuel away without new sparks.
+                context.exhaust_flow_kg_s = charge.air_to_cylinders_kg / dt_s;
+                context.exhaust.step(dt_s, context.ticks, 0.0);
+                context.injected_mass_pending_kg = 0.0;
+            }
+            continue;
+        }
         const bool idle_contact_before =
             context.throttle && context.throttle->contact_closed();
         if (context.idle_bridge_candidate &&
@@ -806,6 +839,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mLowerData[0x2D]),
                     static_cast<unsigned>(cpu.mExtData[0xF881]),
                     static_cast<unsigned>(cpu.mLowerData[0x47]));
+        if (context.on_event && context.physical_crank &&
+            p54_before != (cpu.mSFR[0xF8 - 0x80] & 0x10u))
+            context.on_event(
+                {context.ticks, EmulatorEventType::LampCandidate, 0,
+                 (cpu.mSFR[0xF8 - 0x80] & 0x10u) != 0,
+                 context.physical_crank->angle_rad(),
+                 context.physical_crank->rpm()},
+                context.event_context);
         if (context.physical_crank && cpu.mExtData[0xF847] != idle_state_before)
             fprintf(stdout, "{\"type\":\"idle_state_raw\",\"tick\":%lld,"
                             "\"pc\":%u,\"before\":%u,\"after\":%u,"
@@ -898,6 +939,17 @@ static void run_tick_batch(EmulatorLoopContext &context,
                         context.combustion.fuel_energy_j_per_kg() * 0.25;
                     context.exhaust.admit(event, context.exhaust_flow_kg_s,
                                           context.ticks);
+                    if (context.on_event && event.air_kg > 0.0)
+                        context.on_event(
+                            {context.ticks,
+                             event.burned_fuel_kg > 0.0
+                                 ? EmulatorEventType::Combustion
+                                 : EmulatorEventType::Misfire,
+                             channel, false,
+                             context.physical_crank->angle_rad(),
+                             context.physical_crank->rpm(),
+                             event.burned_fuel_kg, event.cylinder_index},
+                            context.event_context);
                 }
                 if ((ignition_before ^ ignition_after) & mask) {
                     fprintf(stdout, "{\"type\":\"ignition_pin\","
@@ -908,6 +960,13 @@ static void run_tick_batch(EmulatorLoopContext &context,
                             ignition_after & mask ? "true" : "false",
                             context.physical_crank->angle_rad(),
                             context.physical_crank->rpm());
+                    if (context.on_event)
+                        context.on_event(
+                            {context.ticks, EmulatorEventType::IgnitionPin,
+                             channel, (ignition_after & mask) != 0,
+                             context.physical_crank->angle_rad(),
+                             context.physical_crank->rpm()},
+                            context.event_context);
                 }
             }
         }
@@ -923,6 +982,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
                             cpu.mLowerData[0x15],
                         static_cast<unsigned>(lambda_flags_after),
                         static_cast<unsigned>(cpu.mLowerData[0x65]));
+            if (context.on_event && context.physical_crank &&
+                cpu.cc3_output_pin != cc3_before)
+                context.on_event(
+                    {context.ticks, EmulatorEventType::InjectorPin, 0,
+                     cpu.cc3_output_pin != 0,
+                     context.physical_crank->angle_rad(),
+                     context.physical_crank->rpm()},
+                    context.event_context);
             context.injected_mass_pending_kg += context.injector_stage->step(
                 cpu.cc3_output_pin != 0, 1.0 / 990000.0,
                 context.sensor_circuit ? context.sensor_circuit->supply_voltage()
@@ -1104,6 +1171,53 @@ static void reboot_cpu_with_retained_ram(em8051 &cpu) {
     std::copy(sfr_writes.begin(), sfr_writes.end(), std::begin(cpu.sfrwrite));
 }
 
+static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
+    const em8051 &cpu = context.cpu;
+    EmulatorSnapshot snapshot;
+    snapshot.tick = context.ticks;
+    snapshot.pc = cpu.mPC;
+    snapshot.ram47 = cpu.mLowerData[0x47];
+    snapshot.ram27_faults = cpu.mLowerData[0x27];
+    snapshot.ram28_faults = cpu.mLowerData[0x28];
+    snapshot.cc3_high = cpu.cc3_output_pin != 0;
+    snapshot.p50_high = (cpu.mSFR[0xF8 - 0x80] & 0x01u) != 0;
+    snapshot.p51_high = (cpu.mSFR[0xF8 - 0x80] & 0x02u) != 0;
+    snapshot.lamp_on_candidate = context.diagnostic_lamp.lamp_on();
+    snapshot.key_on = context.key_on;
+    if (context.physical_crank) {
+        snapshot.crank_angle_rad = context.physical_crank->angle_rad();
+        snapshot.rpm = context.physical_crank->rpm();
+        snapshot.applied_load_nm =
+            context.load_step_tick && context.ticks >= context.load_step_tick
+                ? context.load_torque_nm
+                : 0.0;
+        snapshot.burns = context.combustion.burns();
+        snapshot.missed_sparks = context.combustion.missed_sparks();
+        snapshot.burns_by_cylinder = context.combustion.burns_by_cylinder();
+        snapshot.lambda = context.exhaust.lambda();
+        snapshot.lambda_voltage_v = context.exhaust.voltage_v();
+    }
+    if (context.throttle) {
+        snapshot.throttle_angle_rad = context.throttle->angle_rad();
+        snapshot.pedal_pull_m = context.throttle->cable_pull_m();
+        if (context.tps_circuit) {
+            snapshot.tps_track1_v = context.tps_circuit->track1_voltage(
+                snapshot.throttle_angle_rad);
+            snapshot.tps_track2_v = context.tps_circuit->track2_voltage(
+                snapshot.throttle_angle_rad);
+        }
+    }
+    if (context.intake) {
+        snapshot.fuel_film_kg = context.intake->fuel_film_kg();
+        snapshot.fuel_vapor_kg = context.intake->fuel_vapor_kg();
+    }
+    if (context.thermal)
+        snapshot.coolant_c = context.thermal->coolant_c();
+    if (context.injector_stage)
+        snapshot.injector_pulses = context.injector_stage->pulse_count();
+    return snapshot;
+}
+
 void run_emulator_loop(EmulatorLoopContext &context) {
     em8051 &cpu = context.cpu;
     uint16_t last_pc = cpu.mPC;
@@ -1198,6 +1312,9 @@ void run_emulator_loop(EmulatorLoopContext &context) {
     };
 
     context.uart.bind_cpu(&cpu);
+    if (context.on_control)
+        context.on_control(context, context.control_context);
+    bool previous_key_on = context.key_on;
     while (context.running.load()) {
         const auto loop_start = std::chrono::steady_clock::now();
         if (context.inject_5baud.load()) {
@@ -1219,6 +1336,18 @@ void run_emulator_loop(EmulatorLoopContext &context) {
 
         run_tick_batch(context, pc_seen, last_pc, stop_ticks,
                        trace_lookup_enabled ? &lookup_counts : nullptr);
+        if (context.on_control)
+            context.on_control(context, context.control_context);
+        if (context.key_on != previous_key_on) {
+            if (context.injector_stage)
+                context.injector_stage->reset_electrical_state();
+            context.ignition_stage.reset_charge();
+            if (context.key_on) {
+                reboot_cpu_with_retained_ram(cpu);
+                last_pc = cpu.mPC;
+            }
+            previous_key_on = context.key_on;
+        }
         if (warm_reboot_tick && context.ticks >= warm_reboot_tick) {
             const uint8_t retained_marker = cpu.mExtData[0xF8FF];
             reboot_cpu_with_retained_ram(cpu);
@@ -1228,6 +1357,14 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                     cpu.mExtData[0xF8FF], cpu.mPC);
             last_pc = cpu.mPC;
             warm_reboot_tick = 0;
+        }
+        if (context.on_snapshot) {
+            const auto snapshot = capture_snapshot(context);
+            context.on_snapshot(snapshot, context.snapshot_context);
+        }
+        if (context.cancel && context.cancel->load()) {
+            context.running.store(false);
+            break;
         }
         context.bridge.read_and_process();
         trace_performance(cpu, context.ticks, context.startup_time);

@@ -16,6 +16,7 @@ class UartScheduler {
         : bridge_(pty_bridge), ticks_(emulated_ticks) {}
 
     void bind_cpu(em8051 *cpu);
+    void reset_for_run();
     void reset_buffers();
     void on_scanner_byte(uint8_t byte);
     void on_sbuf_write(em8051 *cpu);

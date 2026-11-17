@@ -43,6 +43,7 @@ bin
 
 build
 /build-*/
+/.work/
 
 # rom_dumper outputs
 *.bin
