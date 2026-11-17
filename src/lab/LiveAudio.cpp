@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace lab {
@@ -22,13 +23,32 @@ void LiveAudio::start() {
     if (worker_.joinable())
         throw std::logic_error("live audio already started");
     stop_.store(false);
+    callback_installed_ =
+        SDL_SetAudioStreamGetCallback(stream_, &LiveAudio::on_stream_get, this);
+    if (!callback_installed_)
+        ++write_errors_;
     worker_ = std::thread(&LiveAudio::run, this);
 }
 
 void LiveAudio::stop() {
     stop_.store(true);
+    device_started_.store(false);
     if (worker_.joinable())
         worker_.join();
+    if (callback_installed_) {
+        if (!SDL_SetAudioStreamGetCallback(stream_, nullptr, nullptr))
+            ++write_errors_;
+        callback_installed_ = false;
+    }
+}
+
+void SDLCALL LiveAudio::on_stream_get(void *userdata, SDL_AudioStream *,
+                                      int additional_amount, int) {
+    auto *self = static_cast<LiveAudio *>(userdata);
+    if (additional_amount > 0 && self->device_started_.load())
+        self->device_need_samples_.fetch_add(
+            (static_cast<unsigned long long>(additional_amount) + 1ULL) /
+            sizeof(std::int16_t));
 }
 
 void LiveAudio::run() {
@@ -48,14 +68,19 @@ void LiveAudio::run() {
             snapshot.key_on && !session_.paused() && session_.speed() <= 1.0;
         if (!active) {
             suspended_.store(true);
+            recent_pcm_peak_.store(0);
             if (was_active) {
+                device_started_.store(false);
                 if (!SDL_PauseAudioStreamDevice(stream_))
                     ++write_errors_;
                 const int queued = SDL_GetAudioStreamQueued(stream_);
-                if (queued > 0)
-                    dropped_.fetch_add(static_cast<unsigned>(queued / 2));
+                if (queued < 0)
+                    ++write_errors_;
                 if (!SDL_ClearAudioStream(stream_))
                     ++write_errors_;
+                else if (queued > 0)
+                    mode_discarded_.fetch_add(
+                        static_cast<unsigned>(queued / 2));
                 was_active = false;
                 had_output = false;
                 device_started = false;
@@ -65,8 +90,16 @@ void LiveAudio::run() {
         }
         const EventWindow window = session_.event_window();
         if (!was_active) {
+            // The event copy may advance beyond the separately read snapshot.
+            const auto first_future = std::upper_bound(
+                window.events.begin(), window.events.end(), snapshot.tick,
+                [](long long tick, const ma17::EmulatorEvent &event) {
+                    return tick < event.tick;
+                });
             source.seek_to(snapshot.tick,
-                           window.base_index + window.events.size());
+                           window.base_index + static_cast<std::size_t>(
+                                                   first_future -
+                                                   window.events.begin()));
             last_audio_tick = snapshot.tick;
             was_active = true;
             suspended_.store(false);
@@ -91,29 +124,56 @@ void LiveAudio::run() {
             const auto pcm = source.render_until(window.events, snapshot.tick,
                                                  window.base_index);
             const int queued = SDL_GetAudioStreamQueued(stream_);
+            bool queue_ready = queued >= 0;
             if (queued < 0) {
                 ++write_errors_;
-            } else if (!pcm.empty()) {
+            } else if (queued >= 44100) {
+                // Keep the newest physical events when device playback lags.
+                device_started_.store(false);
+                if (!SDL_PauseAudioStreamDevice(stream_))
+                    ++write_errors_;
+                if (SDL_ClearAudioStream(stream_))
+                    dropped_.fetch_add(static_cast<unsigned>(queued / 2));
+                else {
+                    ++write_errors_;
+                    queue_ready = false;
+                }
+                device_started = false;
+                had_output = false;
+            }
+            if (queue_ready && !pcm.empty()) {
                 if (queued == 0 && had_output && device_started)
                     ++empty_queue_observations_;
-                if (queued >= 44100) {
-                    dropped_.fetch_add(pcm.size());
-                } else if (!SDL_PutAudioStreamData(
-                               stream_, pcm.data(),
-                               static_cast<int>(pcm.size() *
-                                                sizeof(std::int16_t)))) {
+                if (!SDL_PutAudioStreamData(
+                        stream_, pcm.data(),
+                        static_cast<int>(pcm.size() * sizeof(std::int16_t)))) {
                     ++write_errors_;
+                    recent_pcm_peak_.store(0);
                 } else {
+                    unsigned int peak = 0;
+                    for (const std::int16_t sample : pcm)
+                        peak = std::max(
+                            peak, static_cast<unsigned int>(
+                                      std::abs(static_cast<int>(sample))));
+                    recent_pcm_peak_.store(peak);
+                    if (peak > max_pcm_peak_.load())
+                        max_pcm_peak_.store(peak);
                     had_output = true;
                     constexpr int startup_buffer_bytes = 4410;
                     if (!device_started && SDL_GetAudioStreamQueued(stream_) >=
                                                startup_buffer_bytes) {
+                        device_started_.store(true);
                         if (SDL_ResumeAudioStreamDevice(stream_))
                             device_started = true;
-                        else
+                        else {
+                            device_started_.store(false);
                             ++write_errors_;
+                        }
                     }
                 }
+            } else if (!queue_ready) {
+                recent_pcm_peak_.store(0);
+                dropped_.fetch_add(pcm.size());
             }
             last_audio_tick = snapshot.tick;
         }

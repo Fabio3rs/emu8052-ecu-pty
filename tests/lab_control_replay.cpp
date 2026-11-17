@@ -50,10 +50,13 @@ bool run(const char *rom, const std::vector<lab::AppliedControl> &controls,
 int main(int argc, char **argv) {
     if (argc != 2)
         return 2;
-    const std::array<lab::AppliedControl, 7> commands{{
+    const std::array<lab::AppliedControl, 10> commands{{
         {0, lab::ControlType::Key, 0.0},
         {50000, lab::ControlType::Key, 1.0},
-        {50000, lab::ControlType::Starter, 1.0},
+        {50000, lab::ControlType::Pause, 0.0},
+        {50000, lab::ControlType::StepTicks, 7.0},
+        {50007, lab::ControlType::Starter, 1.0},
+        {50007, lab::ControlType::Resume, 0.0},
         {400000, lab::ControlType::Starter, 0.0},
         {500000, lab::ControlType::Pedal, 0.008},
         {700000, lab::ControlType::Load, 24.0},
@@ -62,6 +65,7 @@ int main(int argc, char **argv) {
     Result original;
     if (!run(argv[1], {commands.begin(), commands.end()}, original) ||
         original.history.size() != commands.size() ||
+        original.history[4].tick != 50007 ||
         original.snapshot.crank_angle_rad <= 0.0 || original.events.empty() ||
         original.event_overflow != 0)
         return 1;
@@ -142,6 +146,23 @@ int main(int argc, char **argv) {
         loaded.size() != original.history.size() ||
         loaded_metadata.scenario_args != metadata.scenario_args)
         return 1;
+    lab::SimSession terminal_pause({"lab_control_replay", argv[1],
+                                    "--physical-crank", "--stop-ticks", "50000",
+                                    "--starter-ticks", "1000"});
+    terminal_pause.schedule_control({50000, lab::ControlType::Pause, 0.0});
+    terminal_pause.set_speed(16.0);
+    terminal_pause.start();
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!terminal_pause.finished() &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ma17::EmulatorSnapshot terminal_snapshot;
+    if (!terminal_pause.finished() || terminal_pause.result() != 0 ||
+        !terminal_pause.latest(terminal_snapshot) ||
+        terminal_snapshot.tick != 50000)
+        return 1;
+    terminal_pause.stop();
     std::printf("[LAB-REPLAY] tick=%lld rpm=%.3f controls=%zu events=%zu\n",
                 replay.snapshot.tick, replay.snapshot.rpm,
                 replay.history.size(), replay.events.size());

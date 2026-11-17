@@ -93,7 +93,7 @@ float FontRenderer::measure(const std::string &text) const {
 }
 
 void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
-                        const std::string &text, SDL_Color color) {
+                        const std::string &text, SDL_Color color, float scale) {
     if (!ready())
         return;
     data_->rectangles.clear();
@@ -102,9 +102,10 @@ void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
         const auto codepoint = static_cast<unsigned char>(character);
         const auto &glyph = data_->glyphs[codepoint < 128 ? codepoint : '?'];
         for (const auto &run : glyph.runs)
-            data_->rectangles.push_back(
-                {cursor + run.x, y + 13.0f + run.y, run.w, run.h});
-        cursor += glyph.advance;
+            data_->rectangles.push_back({cursor + run.x * scale,
+                                         y + (13.0f + run.y) * scale,
+                                         run.w * scale, run.h * scale});
+        cursor += glyph.advance * scale;
     }
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRects(renderer, data_->rectangles.data(),

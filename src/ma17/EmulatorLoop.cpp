@@ -802,16 +802,19 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (trace_port_latches && context.physical_crank) {
             for (size_t port = 0; port < observed_ports.size(); ++port) {
                 const uint8_t changed = port_latches_before[port] ^
-                    cpu.mSFR[observed_ports[port] - 0x80];
+                                        cpu.mSFR[observed_ports[port] - 0x80];
                 for (unsigned bit = 0; bit < 8; ++bit) {
-                    if (changed & (1u << bit))
+                    if (changed & (1u << bit)) {
+                        const unsigned latch =
+                            cpu.mSFR[observed_ports[port] - 0x80];
+                        const unsigned high = (latch >> bit) & 1u;
                         fprintf(stderr,
                                 "[PORT-LATCH] tick=%lld pc=%04X port=%02X "
                                 "bit=%u high=%u ram47=%u\n",
                                 context.ticks, static_cast<unsigned>(last_pc),
-                                observed_ports[port], bit,
-                                (cpu.mSFR[observed_ports[port] - 0x80] >> bit) & 1u,
+                                observed_ports[port], bit, high,
                                 static_cast<unsigned>(cpu.mLowerData[0x47]));
+                    }
                 }
             }
         }
@@ -931,6 +934,13 @@ static void run_tick_batch(EmulatorLoopContext &context,
             for (unsigned channel = 0; channel < 2; ++channel) {
                 const uint8_t mask = static_cast<uint8_t>(1u << channel);
                 if (context.ignition_stage.attempted(channel)) {
+                    if (context.on_event && sparks[channel] > 0.0)
+                        context.on_event(
+                            {context.ticks, EmulatorEventType::Spark, channel,
+                             false, context.physical_crank->angle_rad(),
+                             context.physical_crank->rpm(), 0.0, 0,
+                             context.combustion.pair_for_channel(channel)},
+                            context.event_context);
                     const auto event = context.combustion.spark(
                         context.physical_crank->angle_rad(), channel,
                         sparks[channel]);
@@ -1179,13 +1189,24 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     snapshot.ram47 = cpu.mLowerData[0x47];
     snapshot.ram27_faults = cpu.mLowerData[0x27];
     snapshot.ram28_faults = cpu.mLowerData[0x28];
+    for (std::size_t index = 0; index < 3; ++index) {
+        snapshot.rom_current_fault_banks[index] = cpu.mExtData[0xF84E + index];
+        snapshot.rom_history_fault_banks[index] = cpu.mExtData[0xF85E + index];
+    }
     snapshot.cc3_high = cpu.cc3_output_pin != 0;
     snapshot.p50_high = (cpu.mSFR[0xF8 - 0x80] & 0x01u) != 0;
     snapshot.p51_high = (cpu.mSFR[0xF8 - 0x80] & 0x02u) != 0;
     snapshot.lamp_on_candidate = context.diagnostic_lamp.lamp_on();
+    snapshot.idle_bridge_candidate = context.idle_bridge_candidate;
+    snapshot.idle_motor_connected = context.idle_motor_connected;
+    snapshot.p15_high = (cpu.mSFR[0x90 - 0x80] & 0x20u) != 0;
+    snapshot.p16_high = (cpu.mSFR[0x90 - 0x80] & 0x40u) != 0;
+    if (context.idle_bridge_candidate)
+        snapshot.idle_stem_m = context.idle_actuator.stem_m();
     snapshot.key_on = context.key_on;
     if (context.physical_crank) {
         snapshot.crank_angle_rad = context.physical_crank->angle_rad();
+        snapshot.tdc_phase_rad = context.combustion.tdc_phase_rad();
         snapshot.rpm = context.physical_crank->rpm();
         snapshot.applied_load_nm =
             context.load_step_tick && context.ticks >= context.load_step_tick
@@ -1199,6 +1220,7 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     }
     if (context.throttle) {
         snapshot.throttle_angle_rad = context.throttle->angle_rad();
+        snapshot.idle_contact_closed = context.throttle->contact_closed();
         snapshot.pedal_pull_m = context.throttle->cable_pull_m();
         if (context.tps_circuit) {
             snapshot.tps_track1_v = context.tps_circuit->track1_voltage(

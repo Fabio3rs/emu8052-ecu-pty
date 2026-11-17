@@ -298,6 +298,9 @@ TEST(Combustion, WrongCoilDischargesOnlyItsCompressionCharge) {
 TEST(Combustion, CoilPairBindingCanBeReversed) {
     constexpr double pi = 3.14159265358979323846;
     engine::Combustion combustion{{1.96, true}};
+    EXPECT_EQ(combustion.pair_for_channel(0), 1u);
+    EXPECT_EQ(combustion.pair_for_channel(1), 0u);
+    EXPECT_THROW(combustion.pair_for_channel(2), std::out_of_range);
     const engine::IntakeStep charge{0.0, 0.0001, 0.00001};
     combustion.admit(charge, 1.96 + 2.0 * pi + 0.1);
     combustion.admit(charge, 1.96 + 3.0 * pi + 0.1);

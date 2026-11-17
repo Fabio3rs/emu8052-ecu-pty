@@ -228,6 +228,8 @@ if(ENABLE_SEVEL_MA17_LAB)
             "third_party/open-engine-sim/assets/fonts/Kottke Silkscreen License.txt"
             "${CMAKE_CURRENT_BINARY_DIR}/assets/Kottke Silkscreen License.txt"
             COPYONLY)
+        configure_file(third_party/SDL3_LICENSE.txt
+            ${CMAKE_CURRENT_BINARY_DIR}/assets/SDL3_LICENSE.txt COPYONLY)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders)
         foreach(shader IN ITEMS engine_sim.hlsl engine_sim.vertex.msl
@@ -248,7 +250,7 @@ if(ENABLE_SEVEL_MA17_LAB)
                 VERBATIM)
             set(SEVEL_SHADER_OUTPUTS ${SEVEL_SHADER_OUTPUTS} ${output} PARENT_SCOPE)
         endfunction()
-        sevel_restore_shader(engine_sim.vertex.spv 09b1c962916c34b8d22b06c7df24b58d86738b84c4ab97f1dc9ab8f00f8a0d09)
+        sevel_restore_shader(engine_sim.vertex.spv 9d61d719d3366b118158fb14c2325ca0ef4b1c38e57f7306b0f1c590e7d09c8b)
         sevel_restore_shader(engine_sim.fragment.spv 4215c56147a961db40eaf6919bbe0179832710760f4f296c4ba509ebcfc05416)
         sevel_restore_shader(engine_sim.vertex.dxil ce436be92359fbd138f83e6bcac54cabdcbf3cb7c160137966faa585f46bb856)
         sevel_restore_shader(engine_sim.fragment.dxil 98d403c25debde264e1d813eaed13c52b077a445cced82ba29cb0f770b5fe0bc)
@@ -272,6 +274,18 @@ if(ENABLE_SEVEL_MA17_LAB)
         target_link_libraries(sevel-ma17-lab PRIVATE open-engine-sim-gpu
             SDL3::SDL3 ZLIB::ZLIB
             Freetype::Freetype)
+        if(UNIX AND NOT APPLE)
+            get_target_property(SEVEL_SDL3_TYPE SDL3::SDL3 TYPE)
+            if(SEVEL_SDL3_TYPE STREQUAL "SHARED_LIBRARY")
+                set_property(TARGET sevel-ma17-lab APPEND PROPERTY
+                    BUILD_RPATH "$ORIGIN")
+                add_custom_command(TARGET sevel-ma17-lab POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_FILE:SDL3::SDL3>
+                        $<TARGET_FILE_DIR:sevel-ma17-lab>/$<TARGET_SONAME_FILE_NAME:SDL3::SDL3>
+                    VERBATIM)
+            endif()
+        endif()
         target_compile_definitions(sevel-ma17-lab PRIVATE SEVEL_LAB_SDL3=1)
         find_package(PNG QUIET)
         if(PNG_FOUND)
@@ -312,8 +326,28 @@ if(ENABLE_SEVEL_MA17_LAB)
                             ${SEVEL_XVFB_RUN} $<TARGET_FILE:sevel-ma17-lab>
                             ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
                             ${CMAKE_CURRENT_BINARY_DIR}/sevel-gpu-preview.png)
+                    add_test(NAME LabCapture.GpuOffscreen
+                        COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_gpu_offscreen.py
+                            $<TARGET_FILE:sevel-ma17-lab>
+                            ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                    set_tests_properties(LabCapture.GpuOffscreen
+                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+                    add_test(NAME LabKline.LivePtyFaultQuery
+                        COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_kline_live.py
+                            ${SEVEL_XVFB_RUN} $<TARGET_FILE:sevel-ma17-lab>
+                            ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                    set_tests_properties(LabKline.LivePtyFaultQuery
+                        PROPERTIES TIMEOUT 60)
                     find_program(SEVEL_XDOTOOL xdotool)
                     if(SEVEL_XDOTOOL)
+                        add_test(NAME LabCapture.F12Live
+                            COMMAND ${SEVEL_XVFB_RUN} -a python3
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_f12_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                        set_tests_properties(LabCapture.F12Live PROPERTIES TIMEOUT 30)
                         add_test(NAME LabControls.ManualBenchStart
                             COMMAND ${SEVEL_XVFB_RUN} -a python3
                                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_manual_bench_start.py
@@ -347,29 +381,91 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 ${CMAKE_CURRENT_BINARY_DIR}/sevel-resized-window.png)
                         set_tests_properties(LabCapture.ResizedButtonBar
                             PROPERTIES TIMEOUT 30)
+                        foreach(SEVEL_LAYOUT_SIZE IN ITEMS "1920;1080" "3440;1440")
+                            list(GET SEVEL_LAYOUT_SIZE 0 SEVEL_LAYOUT_WIDTH)
+                            list(GET SEVEL_LAYOUT_SIZE 1 SEVEL_LAYOUT_HEIGHT)
+                            add_test(NAME LabCapture.Layout${SEVEL_LAYOUT_WIDTH}x${SEVEL_LAYOUT_HEIGHT}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-${SEVEL_LAYOUT_WIDTH}x${SEVEL_LAYOUT_HEIGHT}.png
+                                    ${SEVEL_LAYOUT_WIDTH} ${SEVEL_LAYOUT_HEIGHT})
+                            set_tests_properties(LabCapture.Layout${SEVEL_LAYOUT_WIDTH}x${SEVEL_LAYOUT_HEIGHT}
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabCapture.Radial1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-1920x1080.png
+                                1920 1080 radial)
+                        set_tests_properties(LabCapture.Radial1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.Radial3440x1440
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-3440x1440.png
+                                3440 1440 radial)
+                        set_tests_properties(LabCapture.Radial3440x1440
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.PhysicalMotion
+                            COMMAND ${SEVEL_XVFB_RUN} -a
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_physical_motion.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                        set_tests_properties(LabCapture.PhysicalMotion
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_AXIAL_PAIR IN ITEMS "14;1920;1080" "23;3440;1440")
+                            list(GET SEVEL_AXIAL_PAIR 0 SEVEL_PAIR_LABEL)
+                            list(GET SEVEL_AXIAL_PAIR 1 SEVEL_AXIAL_WIDTH)
+                            list(GET SEVEL_AXIAL_PAIR 2 SEVEL_AXIAL_HEIGHT)
+                            add_test(NAME LabCapture.Axial${SEVEL_PAIR_LABEL}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-axial-${SEVEL_PAIR_LABEL}.png
+                                    ${SEVEL_AXIAL_WIDTH} ${SEVEL_AXIAL_HEIGHT}
+                                    axial-${SEVEL_PAIR_LABEL})
+                            set_tests_properties(LabCapture.Axial${SEVEL_PAIR_LABEL}
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabControls.RadialViewMouse
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-mouse.png
+                                1920 1080 radial-click)
+                        set_tests_properties(LabControls.RadialViewMouse
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.RadialViewMouseDefault
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-1280x720.png
+                                1280 720 radial-click)
+                        set_tests_properties(LabControls.RadialViewMouseDefault
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.RadialViewMouseCompact
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-mouse-compact.png
+                                900 620 radial-click)
+                        set_tests_properties(LabControls.RadialViewMouseCompact
+                            PROPERTIES TIMEOUT 90)
                     endif()
                 endif()
             endif()
         endif()
         if(ENABLE_TESTS)
-            add_executable(lab_session_smoke tests/lab_session_smoke.cpp
-                src/lab/SimSession.cpp)
-            target_link_libraries(lab_session_smoke PRIVATE emu8051-tty_lib)
-            add_test(NAME LabSession.PauseAndControls
-                COMMAND lab_session_smoke
-                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
-            add_executable(lab_live_determinism
-                tests/lab_live_determinism.cpp src/lab/SimSession.cpp)
-            target_link_libraries(lab_live_determinism PRIVATE emu8051-tty_lib)
-            add_test(NAME LabSession.WarmScenarioDeterminism
-                COMMAND lab_live_determinism
-                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
-            add_executable(lab_control_replay
-                tests/lab_control_replay.cpp src/lab/SimSession.cpp)
-            target_link_libraries(lab_control_replay PRIVATE emu8051-tty_lib)
-            add_test(NAME LabSession.ControlReplay
-                COMMAND lab_control_replay
-                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
             add_executable(lab_live_audio_smoke
                 tests/lab_live_audio_smoke.cpp src/lab/LiveAudio.cpp
                 src/lab/StreamingAudio.cpp src/lab/SimSession.cpp)
@@ -385,6 +481,24 @@ if(ENABLE_SEVEL_MA17_LAB)
         endif()
     endif()
     if(ENABLE_TESTS)
+        add_executable(lab_session_smoke tests/lab_session_smoke.cpp
+            src/lab/SimSession.cpp)
+        target_link_libraries(lab_session_smoke PRIVATE emu8051-tty_lib)
+        add_test(NAME LabSession.PauseAndControls
+            COMMAND lab_session_smoke
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        add_executable(lab_live_determinism
+            tests/lab_live_determinism.cpp src/lab/SimSession.cpp)
+        target_link_libraries(lab_live_determinism PRIVATE emu8051-tty_lib)
+        add_test(NAME LabSession.WarmScenarioDeterminism
+            COMMAND lab_live_determinism
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        add_executable(lab_control_replay
+            tests/lab_control_replay.cpp src/lab/SimSession.cpp)
+        target_link_libraries(lab_control_replay PRIVATE emu8051-tty_lib)
+        add_test(NAME LabSession.ControlReplay
+            COMMAND lab_control_replay
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
         add_executable(lab_audio_smoke tests/lab_audio_smoke.cpp
             src/lab/AcousticAdapter.cpp src/lab/StreamingAudio.cpp
             src/lab/WavWriter.cpp)

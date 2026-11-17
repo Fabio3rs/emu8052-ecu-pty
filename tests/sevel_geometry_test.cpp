@@ -41,6 +41,41 @@ TEST(SevelGeometry, RepeatsAcrossFullFourStrokeCycle) {
     }
 }
 
+TEST(SevelGeometry, RodEndpointsAndPairPhasesRemainCoherentAcross720Degrees) {
+    constexpr double rod = 0.14;
+    constexpr double tolerance = 1e-12;
+    for (int degree = 0; degree <= 720; ++degree) {
+        const double angle = static_cast<double>(degree) * pi / 180.0;
+        const auto poses = lab::sevel_cylinder_poses(angle);
+        for (const auto &pose : poses) {
+            const double end_x =
+                pose.crank_pin_x_m + rod * std::sin(pose.rod_angle_rad);
+            const double end_y =
+                pose.crank_pin_y_m + rod * std::cos(pose.rod_angle_rad);
+            EXPECT_NEAR(end_x, 0.0, tolerance) << degree;
+            EXPECT_NEAR(end_y, pose.piston_pin_y_m, tolerance) << degree;
+            EXPECT_NEAR(std::hypot(-pose.crank_pin_x_m,
+                                   pose.piston_pin_y_m - pose.crank_pin_y_m),
+                        rod, tolerance)
+                << degree;
+        }
+        EXPECT_NEAR(poses[0].crank_pin_x_m, poses[3].crank_pin_x_m, tolerance);
+        EXPECT_NEAR(poses[0].piston_pin_y_m, poses[3].piston_pin_y_m,
+                    tolerance);
+        EXPECT_NEAR(poses[1].crank_pin_x_m, poses[2].crank_pin_x_m, tolerance);
+        EXPECT_NEAR(poses[1].piston_pin_y_m, poses[2].piston_pin_y_m,
+                    tolerance);
+    }
+    const auto seam_start = lab::sevel_cylinder_poses(0.0);
+    const auto seam_end = lab::sevel_cylinder_poses(4.0 * pi);
+    for (std::size_t index = 0; index < seam_start.size(); ++index) {
+        EXPECT_NEAR(seam_start[index].piston_pin_y_m,
+                    seam_end[index].piston_pin_y_m, tolerance);
+        EXPECT_NEAR(seam_start[index].rod_angle_rad,
+                    seam_end[index].rod_angle_rad, tolerance);
+    }
+}
+
 TEST(SevelGeometry, RejectsImpossibleDimensions) {
     lab::SevelVisualGeometry geometry;
     geometry.visual_estimate_rod_length_m = 0.02;
@@ -67,6 +102,21 @@ TEST(SevelValves, FiringOrderAndManualWindows) {
         EXPECT_NEAR(lift(tdc + 450.0, lab::ValveKind::Intake),
                     lift(tdc + 1170.0, lab::ValveKind::Intake), 1e-12);
     }
+}
+
+TEST(SevelValves, FollowsConfiguredPhysicalTdcReference) {
+    const double reference = 120.0 * pi / 180.0;
+    const double open_angle = 570.0 * pi / 180.0;
+    EXPECT_NEAR(
+        lab::valve_lift_fraction(open_angle, 0, lab::ValveKind::Intake,
+                                 reference),
+        lab::valve_lift_fraction(450.0 * pi / 180.0, 0, lab::ValveKind::Intake),
+        1e-12);
+    EXPECT_EQ(lab::valve_lift_fraction(450.0 * pi / 180.0, 0,
+                                       lab::ValveKind::Intake, reference),
+              0.0);
+    EXPECT_THROW(lab::valve_lift_fraction(0.0, 0, lab::ValveKind::Intake, NAN),
+                 std::invalid_argument);
 }
 
 } // namespace

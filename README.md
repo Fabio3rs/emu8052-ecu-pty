@@ -20,15 +20,42 @@ sound from the cossimulation's combustion events. The ECU ROM is user supplied
 and is not included in the build.
 The trace labels show the last complete high interval of each observed pin in
 milliseconds; `H --` means no complete interval is available.
+`phase~` in the status panel is the physical crank position modulo 720°,
+relative to the candidate cylinder 1/4 firing-TDC offset. It follows the
+same reference used by the valve and mechanical drawings; the absolute
+sensor-wheel-to-TDC installation angle remains unverified.
 Pedal pull and applied resistant torque come from the physical snapshot; the
 LOAD button reflects a load already active in a supplied physical scenario.
 The status panel shows modeled manifold fuel film and vapor in milligrams;
 these states continue to change during key-off coasting and cooldown.
+In wide windows, `IAC? P1.5/6` shows the raw candidate idle-bridge latch bits,
+`STEM~` the modeled actuator extension in millimeters, and `CT` the idle
+contact state. `DISC` appears when the modeled actuator is disconnected.
+`IAC? NO BINDING` means the candidate P1.5/P1.6 bridge is disabled.
+The bridge mapping and stem travel remain candidate hardware behavior.
+`RAM27/28` shows internal ROM bytes, which may contain transient bits. The
+separate `ROM PUB F84E-50` and `HIST F85E-60` readouts show the raw published
+and stored XRAM banks. Their values are not decoded trouble codes. The MA1.7
+lamp remains an independent candidate P5.4 indication; K-Line fault status
+still requires a diagnostic query.
 Live PCM synthesis runs on a separate worker thread. Playback pauses with the
-simulation and above 1× speed; the window reports dropped samples and empty
-audio queue observations. The 1× session uses deadline pacing so batch CPU
-work counts toward virtual time. Offline WAV capture keeps the original event
-timing.
+simulation and above 1× speed. The window reports `lag` for samples skipped
+after playback falls behind, `skip` for queued samples intentionally cleared
+on key-off, pause or faster playback, and `short~` for the cumulative,
+approximate S16 sample shortfall reported by SDL stream requests. SDL may
+overestimate each request. `empty` counts producer observations of an empty
+input queue; neither count proves an audible hardware underrun. With audio
+enabled in windows at least 1100×690, `STREAM SHORT~` and `DROP` also appear
+above the volume slider; `DROP` is the same playback-lag count as `lag` in
+the status panel. `PCM PEAK` above them is the peak of the latest successfully
+queued S16 block, shown as a percentage of full scale; it returns to zero
+when live playback is suspended. The shutdown log also reports the maximum
+queued PCM peak. These measure generated samples, not speaker output.
+If the queued PCM reaches 0.5 s, the worker clears the old data and resumes
+with recent physical events; this can cause a brief
+gap while keeping playback near the current engine state. The 1× session uses
+deadline pacing so batch CPU work counts toward virtual time. Offline WAV
+capture keeps the original event timing.
 An original-ROM regression checks byte-identical idle WAVs, a stronger waveform
 after a pedal step, and silence with the key off; see the Lab progress ledger.
 
@@ -44,9 +71,11 @@ pinned 3.2.8 source. An existing local SDL3 build can be selected with
 not need SDL3. For an offline headless build, add
 `-DENABLE_SEVEL_MA17_LAB_GUI=OFF`. The GUI also needs ZLIB, FreeType and Python 3
 for hash-checked restoration of the donor GPU shader binaries. CMake copies
-the packaged donor mesh, Silkscreen font, shaders and font license into
-`build-lab/assets/` beside the executable. Keep that directory with the
-binary when moving the GUI build.
+the packaged donor mesh, Silkscreen font, shaders and license notices into
+`build-lab/assets/` beside the executable. On Linux, a shared SDL3 build also
+copies `libSDL3.so.0` beside the executable. Move the executable, `assets/`,
+and that library together. The destination system still needs the other
+runtime libraries shown by `ldd build-lab/sevel-ma17-lab`.
 
 `--bench-preset` selects the tested warm candidate setup: ADC7 1232 mV,
 P4.6 idle contact, P1.5/P1.6 idle bridge, 90 °C coolant, 5 mrad idle stop,
@@ -61,15 +90,40 @@ starting setup, not a calibrated 850 rpm idle. The LOAD control applies
 resistant torque after the motor catches.
 
 The live window starts with the key off: press K, then hold S to crank. Space
-pauses; arrows adjust pedal pull; L toggles 24 Nm load; +/- changes speed; M
-mutes audio; [ and ] adjust volume. The mouse wheel zooms the mechanical
-scene, middle-button drag pans it, R resets the view, and Esc closes.
+pauses; . advances exactly 9,900 ticks (10 ms) while paused; , advances to the
+next ignition-pin edge (at most one virtual second); arrows adjust
+pedal pull; L toggles load; +/- changes speed; M
+mutes audio; [ and ] adjust volume. V or the visible selector cycles through
+the longitudinal shaft view, four radial sections, and focused axial sections
+for the 1/4 and 2/3 crank pairs. The focused sections display cylinder 1 or 2
+as the representative of each paired crank phase, with articulated rod,
+piston, head and valves. The mouse wheel zooms
+the mechanical scene or, when over the oscilloscope, changes its time span
+from 0.25 to 4 s.
+Middle-button drag pans the engine, R resets its view, F or F11 toggles
+fullscreen, F12 saves the current window, and Esc closes. F12 writes a unique
+`sevel-ma17-lab-<tick>-<number>.png` in the working directory when PNG support
+is built, or a BMP otherwise; it also works while the simulation is paused.
+With an active GPU preview, F12 also attempts a matching
+`sevel-ma17-lab-<tick>-<number>-gpu.png` scene capture and logs its tick.
+At 1280×720 or larger, the F: FULL button beside
+the view selector provides the same fullscreen control. H opens or closes the
+in-window control guide; the upper status panel shows `H: HELP` as a reminder.
 For a warm restart in the tested physical scenario, turn LOAD off while
 cranking and reapply it after the engine catches.
 At windows at least 900×620, the nine buttons below the engine provide key,
 momentary starter, pedal, load, pause, speed and mute controls. A saved control
-trace records button actions at their applied simulation ticks; replay locks
-the physical controls while leaving pause, speed and mute available.
+trace records key, starter, pedal, load, pause, resume and step actions at
+their applied simulation ticks. Replay advances through recorded pauses and
+steps without wall-time delays; it locks physical controls while leaving
+pause, speed and mute available.
+Click or drag across the LOAD button to set 0–60 Nm of resistant torque; its
+bar and label show the requested value. The L key toggles the last nonzero
+load, starting at 24 Nm until adjusted.
+The pedal slider under the right-hand gauges can be clicked or dragged for
+direct 0–25 mm cable pull; it is disabled during control replay.
+The volume slider between the RPM and TPS/LAM gauges can be clicked or dragged
+when audio is available. It retains the selected level while muted.
 Click the CC3, P5.0 or P5.1 label in the oscilloscope to hide or restore that
 ECU pin trace. These display selections do not change the saved control trace.
 The starter releases if the window loses focus.
@@ -78,7 +132,12 @@ The window shows modeled TPS1/TPS2 voltages, lambda sensor voltage, recent RPM
 and lambda trends, and a candidate MA1.7 lamp indicator. A brief amber cross
 marks a combustion event at its cylinder; a red cross marks a misfire. These
 markers are visual afterglow from timestamped ROM/engine events, while the
-oscilloscope keeps the actual pin pulse widths. `--auto-start`
+oscilloscope keeps the actual pin pulse widths. Ultrawide windows also show
+coolant temperature, resistant load and modeled manifold fuel film in mg.
+For a real-time external K-Line query while the window runs, add
+`--physical-pty-realtime` and use the `PTY pronto em:` path printed by the Lab;
+the `LabKline.LivePtyFaultQuery` CTest case exercises this with the original
+ROM under Xvfb. `--auto-start`
 restores the 495,000-tick
 automatic starter demo. The Lab also
 supports `--headless --capture-tick N --capture-svg frame.svg
@@ -86,15 +145,44 @@ supports `--headless --capture-tick N --capture-svg frame.svg
 libpng is available;
 `--window-frames N` bounds a GUI verification run. `--live --gpu-preview` opens
 the donor SDL GPU mechanical scene in a second window when a GPU backend is
-available. SDL chooses the main window's renderer; the startup log prints
+available. Mouse controls belong to the main window; releasing its START
+button over the preview also ends cranking. SDL chooses the main window's
+renderer; the startup log prints
 `[LAB-VIDEO] renderer=...`. If that renderer cannot initialize, the Lab tries
 SDL software rendering and reports the error. The audio startup log prints
 `[LAB-AUDIO] stream_open=1 driver=...` when SDL opens a playback stream.
+With `--gpu-preview --screenshot frame.png`, the Lab also writes
+`frame-gpu.png` from the donor scene texture and reports its capture tick.
+This file contains the mechanical scene; the main PNG includes the controls
+and instruments. In live mode, `--capture-tick N` retains the exact worker
+snapshot at tick N for both PNGs while the simulation continues; each saved
+path and actual tick are printed as `[LAB-CAPTURE]` or `[LAB-GPU]`.
 On a machine with graphics and sound hardware, run the command above with
 `--gpu-preview`, then press K and hold S to start. Check both windows, listen
-through acceleration and deceleration, and inspect the displayed audio drop
-and queue counts. `[LAB-GPU] preview_ready=1` confirms GPU initialization;
+through acceleration and deceleration, and inspect `PCM PEAK`, `lag`, `skip`,
+`short~` and `empty`. `[LAB-GPU] preview_ready=1` confirms
+GPU initialization;
 the stream log confirms opening, while audible output needs direct listening.
+
+For a repeatable hardware check from the repository root, run:
+
+```sh
+mkdir -p .work
+./build-lab/sevel-ma17-lab FiatTipo_MA17_dump_27c256.bin \
+  --live --auto-start --bench-preset --gpu-preview \
+  --capture-tick 3000000 --screenshot .work/hardware-lab.png \
+  --save-controls .work/hardware-controls.txt 2>&1 | tee .work/hardware-lab.log
+```
+
+Check that the main window accepts pedal, load, V and F12, that the optional
+GPU window animates the same crank phase, and that engine sound changes with
+pedal and fades after K turns the key off. The automatic capture writes
+`hardware-lab.png` and, if GPU readback succeeds, `hardware-lab-gpu.png` at
+the same logged tick. Keep the log's `[LAB-VIDEO]`, `[LAB-GPU]`, `[LAB-AUDIO]`
+and final `[LAB-STATE]` lines; a stream opening or nonzero PCM peak alone does
+not verify audible speaker output. Stop with Esc. The supplied ROM and
+`.work/` captures remain local and ignored by Git.
+
 For repeatability checks, `--live --no-audio` skips the SDL audio stream and
 `--frame-delay-ms N` sets the GUI delay (1–1000 ms, default 16). A bounded GUI
 run exits when its simulation reaches `--stop-ticks`. Live and headless replay
@@ -102,26 +190,42 @@ print `[LAB-STATE]` with the final tick, physical/ECU state fingerprint,
 ordered event fingerprint and overflow count; these fingerprints are diagnostic
 64-bit FNV-1a values, not cryptographic hashes.
 
-Use `--live --save-controls trace.txt` to save the applied tick, key, starter,
-pedal and load commands. Run again with `--live --replay-controls trace.txt`
+Use `--live --save-controls trace.txt` to save applied-tick key, starter,
+pedal, load, pause, resume and step commands. Run again with
+`--live --replay-controls trace.txt`
 and the same ROM and physical scenario options to reproduce them. New traces
 record the ROM size, a 64-bit content fingerprint and the physical scenario
 arguments; replay rejects a mismatch before starting. Older v1 traces remain
 readable but have no scenario check. Physical controls are locked during replay.
-Pause and speed affect wall time only and are not stored in the trace. For a
+Speed and mute affect presentation only and are not stored in the trace. For a
 repeatable SVG and WAV without SDL, use
 `--headless --replay-controls trace.txt --capture-tick N --capture-svg frame.svg
 --capture-wav audio.wav`; if supplied, `--stop-ticks` must equal N.
 
 The current scene uses documented bore, stroke, firing order and valve timing;
 rod length, valve lift and outer geometry are explicitly drawing estimates.
-The donor's mechanical meshes, Silkscreen font, shader state, adapted Gauge and
-Oscilloscope objects, audio filters and synthesizer are integrated. The full
+The donor's piston and valve sections, radial rod-end and crank meshes,
+Silkscreen font, shader state, adapted Gauge and Oscilloscope objects, audio
+filters and synthesizer are integrated. The full
 donor impulse WAV is archived losslessly; the runtime uses its first 2048
 samples (99.69% of the source energy). The original donor GPU backend is
 available as an optional scene preview; the primary UI uses SDL's selected
 2D renderer. Two labeled axial crank views show the 1/4 and 2/3 pairs at
-opposed angles beside the longitudinal four-cylinder view.
+opposed angles beside the longitudinal four-cylinder view. The donor's radial
+rod-end and cylinder-head silhouettes are kept out of that longitudinal view;
+its SOHC head and projected rods are schematic geometry. In radial mode the
+crank, rod end and piston meshes follow the physical crank angle relative to
+the candidate firing-TDC reference used by combustion and the valves; the
+spacing between the four sections is a visual layout estimate. Both views
+show short combustion and misfire afterglows from timestamped session events.
+The MA1.7 telemetry lines sit in a bounded panel above the mechanical scene;
+the compact window retains the four most useful lines.
+The firing-order panel also lights both cylinder outlines in each successful
+coil discharge (1/4 or 2/3); its cyan ring represents a modeled stage spark,
+while the filled marker represents combustion or misfire in compression. The
+panel labels the observed P5 channel for each candidate coil pair. Both
+mechanical views also show a short cyan spark symbol at each cylinder of the
+active pair; the yellow/red combustion marker remains independent.
 See
 [the Lab progress ledger](docs/SEVEL_MA17_LAB_PROGRESS.md) and
 [third-party notices](THIRD_PARTY_NOTICES.md) for verified tests and provenance.

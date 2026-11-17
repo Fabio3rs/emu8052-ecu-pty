@@ -8,6 +8,8 @@
 #include <deque>
 #include <vector>
 
+class Gauge;
+
 namespace lab {
 
 class FontRenderer;
@@ -20,12 +22,14 @@ struct TrendPoint {
 
 void draw_lab_gauge(SDL_Renderer *renderer, FontRenderer &font, float x,
                     float y, float radius, double value, double maximum,
-                    const char *label, SDL_Color accent, float needle_position);
+                    const char *label, SDL_Color accent, float needle_position,
+                    float ui_scale, const Gauge *style = nullptr);
 
 void draw_lab_scope(SDL_Renderer *renderer, FontRenderer &font, int width,
                     int height, long long tick,
                     const std::vector<ma17::EmulatorEvent> &events,
-                    const std::array<bool, 3> &channels_visible);
+                    const std::array<bool, 3> &channels_visible,
+                    long long span_ticks);
 
 int scope_channel_at(float x, float y, int width, int height);
 

@@ -17,7 +17,10 @@ struct SceneCamera {
 struct ScenePulse {
     float strength = 0.0f;
     bool misfire = false;
+    float spark_strength = 0.0f;
 };
+
+inline constexpr float visual_estimate_radial_section_spacing_m = 0.12f;
 
 void render_sevel_scene_donor(Renderer &renderer,
                               const ma17::EmulatorSnapshot &snapshot,
@@ -27,6 +30,16 @@ void render_sevel_scene_donor(Renderer &renderer,
                               SceneCamera camera = {},
                               const AuthoredMeshLibrary *mesh_library = nullptr,
                               std::array<ScenePulse, 4> pulses = {});
+
+void render_sevel_radial_donor(Renderer &renderer,
+                               const ma17::EmulatorSnapshot &snapshot,
+                               float viewport_width, float viewport_height,
+                               const AuthoredMeshLibrary &mesh_library,
+                               SevelVisualGeometry geometry = {},
+                               SceneDimensions dimensions = {},
+                               SceneCamera camera = {},
+                               std::array<ScenePulse, 4> pulses = {},
+                               int focus_cylinder = 0);
 
 void render_axial_crank_donor(Renderer &renderer,
                               const ma17::EmulatorSnapshot &snapshot,

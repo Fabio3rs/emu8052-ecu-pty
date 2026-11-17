@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer.h"
+#include "shaders.h"
 
 #include <algorithm>
 #include <array>
@@ -19,6 +20,7 @@ class RecordingRenderer final : public Renderer {
         clear_color_ = clear_color;
         triangles_.clear();
         draw_calls_ = 0;
+        scene_draw_calls_ = 0;
     }
 
     void setSceneViewport(float, float, float width, float height) override {
@@ -37,7 +39,7 @@ class RecordingRenderer final : public Renderer {
                         int base_vertex, int base_index, int face_count,
                         const ysMatrix &transform, const ysMatrix &camera_view,
                         const ysMatrix &projection, const ysVector &color,
-                        std::uint32_t, int) override {
+                        std::uint32_t stage, int) override {
         if (base_vertex < 0 || base_index < 0 || face_count < 0)
             throw std::out_of_range("recorded draw indices");
         const auto start = static_cast<std::size_t>(base_index);
@@ -45,6 +47,8 @@ class RecordingRenderer final : public Renderer {
         if (start > indices_.size() || count > (indices_.size() - start) / 3)
             throw std::out_of_range("recorded draw indices");
         ++draw_calls_;
+        if ((stage & Shaders::SceneStage) != 0)
+            ++scene_draw_calls_;
         for (int face = 0; face < face_count; ++face) {
             Triangle triangle;
             triangle.color = color;
@@ -70,6 +74,7 @@ class RecordingRenderer final : public Renderer {
     void endFrame() override {}
 
     int draw_calls() const { return draw_calls_; }
+    int scene_draw_calls() const { return scene_draw_calls_; }
     std::size_t triangle_count() const { return triangles_.size(); }
 
     template <typename Visitor> void for_each_triangle(Visitor &&visit) const {
@@ -123,6 +128,7 @@ class RecordingRenderer final : public Renderer {
     float width_ = 0.0f;
     float height_ = 0.0f;
     int draw_calls_ = 0;
+    int scene_draw_calls_ = 0;
     ysVector clear_color_{};
     std::vector<EngineSimVertex> vertices_;
     std::vector<std::uint16_t> indices_;

@@ -17,7 +17,7 @@ class FontRenderer {
     bool ready() const;
     float measure(const std::string &text) const;
     void draw(SDL_Renderer *renderer, float x, float y, const std::string &text,
-              SDL_Color color);
+              SDL_Color color, float scale = 1.0f);
 
   private:
     struct Data;

@@ -90,6 +90,10 @@ void print_lab_state(const ma17::EmulatorSnapshot &snapshot,
         hash_word(state_hash, value);
     for (auto burns : snapshot.burns_by_cylinder)
         hash_word(state_hash, burns);
+    for (auto value : snapshot.rom_current_fault_banks)
+        hash_word(state_hash, value);
+    for (auto value : snapshot.rom_history_fault_banks)
+        hash_word(state_hash, value);
     std::uint64_t event_hash = 14695981039346656037ULL;
     hash_word(event_hash, static_cast<std::uint64_t>(window.base_index));
     for (const auto &event : window.events) {
@@ -314,7 +318,9 @@ int main(int argc, char **argv) {
     }
 #ifdef SEVEL_LAB_SDL3
     if (live) {
-        lab::SimSession session(std::move(harness_args));
+        lab::SimSession session(std::move(harness_args), 65536,
+                                screenshot_path.empty() ? 0
+                                                        : capture.target_tick);
         ma17::EmulatorSnapshot initial;
         if (!auto_start) {
             initial.key_on = false;

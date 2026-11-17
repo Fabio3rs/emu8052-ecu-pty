@@ -112,6 +112,12 @@ class Combustion {
     }
     unsigned long long missed_sparks() const { return missed_sparks_; }
     double burned_fuel_kg() const { return burned_fuel_kg_; }
+    double tdc_phase_rad() const { return parameters_.tdc_phase_rad; }
+    unsigned pair_for_channel(unsigned channel) const {
+        if (channel >= 2)
+            throw std::out_of_range("invalid ignition channel");
+        return channel ^ static_cast<unsigned>(parameters_.swap_coil_channels);
+    }
     double fuel_energy_j_per_kg() const {
         return fuel_.lower_heating_value_j_kg();
     }

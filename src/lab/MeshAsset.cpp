@@ -33,11 +33,11 @@ std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
             return {};
         unsigned int digit = 0;
         if (character >= 'A' && character <= 'Z')
-            digit = character - 'A';
+            digit = static_cast<unsigned int>(character - 'A');
         else if (character >= 'a' && character <= 'z')
-            digit = character - 'a' + 26;
+            digit = static_cast<unsigned int>(character - 'a' + 26);
         else if (character >= '0' && character <= '9')
-            digit = character - '0' + 52;
+            digit = static_cast<unsigned int>(character - '0' + 52);
         else if (character == '+')
             digit = 62;
         else if (character == '/')

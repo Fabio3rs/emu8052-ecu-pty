@@ -13,12 +13,12 @@ not a build dependency. No proprietary community-edition files are imported.
 | `include/render_math.h` | `third_party/open-engine-sim/include/render_math.h` | MIT | None | `4fe33a3c8cc39bdf1011032257f83504da0838f8a6fb89a91d1f3d884e6270dd` |
 | `include/shaders.h` | `third_party/open-engine-sim/include/shaders.h` | MIT | None | `494f7f024b749c1073d2148b821ecab0e1ccfbd3e27c7fa9c3e331f59fb27629` |
 | `src/shaders.cpp` | `third_party/open-engine-sim/src/shaders.cpp` | MIT | None | `37bf29a66304f6608bf871bcc70541e22426b65052096cb3803d631f0709288d` |
-| `include/sdl_gpu_renderer.h` | `third_party/open-engine-sim/include/sdl_gpu_renderer.h` | MIT | None | `4120785969dbfa2fdfb6ac565872191f9b0845356ba6eb8f4f78b5f8f250ce0e` |
-| `src/sdl_gpu_renderer.cpp` | `third_party/open-engine-sim/src/sdl_gpu_renderer.cpp` | MIT | None | `d2ea282d5d5e8e6abca5d4ba60c166adec731163f64106478191b52196ce293c` |
+| `include/sdl_gpu_renderer.h` | `third_party/open-engine-sim/include/sdl_gpu_renderer.h` | MIT | Added runtime failure query, claimed-window state and scene readback for the Lab preview | Donor `4120785969dbfa2fdfb6ac565872191f9b0845356ba6eb8f4f78b5f8f250ce0e`; local `bba4add4d78f36918235010fe207585026b53df50b2592aa4ed1e135514469d4` |
+| `src/sdl_gpu_renderer.cpp` | `third_party/open-engine-sim/src/sdl_gpu_renderer.cpp` | MIT | Bound blit to acquired swapchain size; report GPU failures; release a window only after a successful claim; read back the scene texture | Donor `d2ea282d5d5e8e6abca5d4ba60c166adec731163f64106478191b52196ce293c`; local `38e433a301a4aa10a180a5691c2e1385048cc0c4df8657fcb28c0d952fff139f` |
 | `assets/shaders/engine_sim.hlsl` | `third_party/open-engine-sim/assets/shaders/engine_sim.hlsl` | MIT | None | `1b2a84ac016479f75778f01ab05ef0c0000b99fca1017e587de9965183d69a8f` |
 | `assets/shaders/engine_sim.vertex.msl` | `third_party/open-engine-sim/assets/shaders/engine_sim.vertex.msl` | MIT | None | `0163ffae0eafd4056401409201208430135b522ed2be562aaea673b503b78146` |
 | `assets/shaders/engine_sim.fragment.msl` | `third_party/open-engine-sim/assets/shaders/engine_sim.fragment.msl` | MIT | None | `e874caa51e8bf19ec95d3532501e1858e13ad2f968af6cd7b16a9a0f23228424` |
-| `assets/shaders/engine_sim.vertex.spv` | `third_party/open-engine-sim/assets/shaders/engine_sim.vertex.spv.zlib.b64` | MIT | Lossless packaging | Original `09b1c962916c34b8d22b06c7df24b58d86738b84c4ab97f1dc9ab8f00f8a0d09`; packaged `60f2e524be510044874ed8cb98f66faf17d677a91a15ee0cac02d50a4276b582` |
+| `assets/shaders/engine_sim.vertex.spv` | `third_party/open-engine-sim/assets/shaders/engine_sim.vertex.spv.zlib.b64` | MIT | Recompiled donor HLSL with `glslangValidator -D -V -S vert -e VSMain --hlsl-iomap`; donor binary had one matrix while source and renderer use three; zlib/Base64 packaging | Donor SPV `09b1c962916c34b8d22b06c7df24b58d86738b84c4ab97f1dc9ab8f00f8a0d09`; local SPV `9d61d719d3366b118158fb14c2325ca0ef4b1c38e57f7306b0f1c590e7d09c8b`; packaged `43f5ad9f34de29f22bf7c623f0f32c6fbe14b718f3b7b4c510501596775b1849` |
 | `assets/shaders/engine_sim.fragment.spv` | `third_party/open-engine-sim/assets/shaders/engine_sim.fragment.spv.zlib.b64` | MIT | Lossless packaging | Original `4215c56147a961db40eaf6919bbe0179832710760f4f296c4ba509ebcfc05416`; packaged `1b3a72bb2ab86be8c250e64d8699006a3c6bf12e687e93918d381e6b48386179` |
 | `assets/shaders/engine_sim.vertex.dxil` | `third_party/open-engine-sim/assets/shaders/engine_sim.vertex.dxil.zlib.b64` | MIT | Lossless packaging | Original `ce436be92359fbd138f83e6bcac54cabdcbf3cb7c160137966faa585f46bb856`; packaged `e7e3a028885fb0084c4c8264d819b8c7f13c2d43e738be0c8b9a243a40e49c56` |
 | `assets/shaders/engine_sim.fragment.dxil` | `third_party/open-engine-sim/assets/shaders/engine_sim.fragment.dxil.zlib.b64` | MIT | Lossless packaging | Original `98d403c25debde264e1d813eaed13c52b077a445cced82ba29cb0f770b5fe0bc`; packaged `3d860ba212677ce72564c8f3b80fc9ac099f28f73685bccc2d42c45cada9acde` |
@@ -68,9 +68,10 @@ not a build dependency. No proprietary community-edition files are imported.
 The renderer and math headers provide a backend-neutral drawing contract. The
 donor `Shaders` state now supplies object transforms and colors for mechanical
 draw submissions. The original SDL GPU backend and compiled shaders are built
-for an opt-in second-window scene preview. NativeLab/Xvfb reports no supported
-SDL GPU backend, so only the primary SDL software window was visually verified.
-unmodified donor `GeometryGenerator::generateLine2d` builds each mechanical
+for an opt-in second-window scene preview. Xvfb cannot present that desktop
+preview without DRI3; an SDL offscreen window with lavapipe produced and
+validated the GPU scene PNG. Physical-monitor presentation awaits owner testing.
+The unmodified donor `GeometryGenerator::generateLine2d` builds each mechanical
 stroke in the SDL3 window from the same SEVEL poses used by the headless scene.
 `DonorScene` owns generator cleanup and the Lab test compares all 47 stroke
 bounds across four crank phases. The
@@ -93,12 +94,15 @@ the SEVEL poses; repeating the axial mesh under each cylinder was incorrect.
 In this projection the crank's radial horizontal motion is depth, so the
 journals and rods stay on each cylinder's screen-space axis while their
 vertical coordinates follow the physical crank angle.
-Two small, labeled axial panels now draw the imported `Crankshaft` mesh for
-the 1/4 and 2/3 journal pairs at opposite physical phases. They use the same
-snapshot as the longitudinal scene and are kept separate from it.
-The static donor `CylinderHead` mesh sits behind eight donor `Valve` meshes
-whose lifts follow the documented SEVEL timing. The schematic single camshaft
-remains visible.
+Two small, labeled axial panels draw the imported `Crankshaft` mesh for the
+1/4 and 2/3 journal pairs at opposite physical phases. The focused axial
+views additionally reuse the donor crank, rod, piston, head and valve meshes
+for cylinder 1 or 2 as the representative of each crank pair. All views use
+the same physical snapshot.
+The radial view repeats the donor `CylinderHead` mesh at each cylinder section
+and places two donor `Valve` meshes above each bore. Their lifts follow the
+documented SEVEL timing. The longitudinal view keeps its donor valve meshes
+and schematic single camshaft; neither view runs the donor's valvetrain.
 The status panel uses the donor's unmodified Silkscreen font bytes. The Lab
 decodes them beside the executable and rasterizes glyph runs with FreeType;
 `FontRenderer` is new Lab code, not the donor `TextRenderer` implementation.

@@ -31,7 +31,8 @@ void for_each_sevel_segment(const ma17::EmulatorSnapshot &snapshot,
         static_cast<float>(geometry.visual_estimate_rod_length_m +
                            SevelVisualGeometry::crank_radius_m +
                            dimensions.visual_estimate_head_height_m);
-    const auto poses = sevel_cylinder_poses(snapshot.crank_angle_rad, geometry);
+    const auto poses = sevel_cylinder_poses(
+        snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
     add_segment(-1.6f * pitch, 0.0f, 1.6f * pitch, 0.0f, 0.012f, metal);
     add_segment(-1.7f * pitch, head_y, 1.7f * pitch, head_y, 0.018f, housing);
     for (int cylinder = 0; cylinder < 4; ++cylinder) {
@@ -64,7 +65,8 @@ void for_each_sevel_segment(const ma17::EmulatorSnapshot &snapshot,
             const float x = center + (valve == 0 ? -0.021f : 0.021f);
             const float lift = static_cast<float>(
                 valve_lift_fraction(snapshot.crank_angle_rad,
-                                    static_cast<std::size_t>(cylinder), kind) *
+                                    static_cast<std::size_t>(cylinder), kind,
+                                    snapshot.tdc_phase_rad) *
                 dimensions.visual_estimate_valve_lift_m);
             const float tip_y = head_y + 0.002f - lift;
             const ysVector color = valve == 0 ? intake_color : exhaust_color;

@@ -1,0 +1,8 @@
+sevel-ma17-controls-v1
+0 key 1
+3000000 key 0
+8000000 load 0
+8000000 key 1
+8000000 starter 1
+8495000 starter 0
+12000000 load 24
