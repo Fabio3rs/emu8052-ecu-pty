@@ -54,6 +54,9 @@ struct TpsSources {
     long long restore_tick;
     long long tps2_high_tick;
     long long tps2_restore_tick;
+    long long tps_open_tick;
+    long long tps_restore_tick;
+    double tps_open_v;
     long long ect_open_tick;
     long long ect_restore_tick;
     double adc4_voltage_v;
@@ -68,6 +71,13 @@ struct TpsSources {
 static bool read_tps_voltage(uint8_t channel, void *context,
                              double &voltage) {
     auto &sources = *static_cast<TpsSources *>(context);
+    if ((channel == 0 || channel == 6) && sources.tps_open_tick &&
+        sources.ticks >= sources.tps_open_tick &&
+        (!sources.tps_restore_tick ||
+         sources.ticks < sources.tps_restore_tick)) {
+        voltage = sources.tps_open_v;
+        return true;
+    }
     if (channel == 0)
         voltage = sources.tps2_high_tick &&
                           sources.ticks >= sources.tps2_high_tick &&
@@ -272,7 +282,10 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
                            nullptr,
                            g_instr_counter, config->tps1_high_tick,
                            config->tps1_restore_tick, config->tps2_high_tick,
-                           config->tps2_restore_tick, config->ect_open_tick,
+                           config->tps2_restore_tick, config->tps_open_tick,
+                           config->tps_restore_tick,
+                           static_cast<double>(config->tps_open_mv) / 1000.0,
+                           config->ect_open_tick,
                            config->ect_restore_tick,
                            config->adc4_mv >= 0
                                ? static_cast<double>(config->adc4_mv) / 1000.0

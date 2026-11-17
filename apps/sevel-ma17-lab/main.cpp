@@ -253,10 +253,13 @@ int main(int argc, char **argv) {
             harness_args.emplace_back("--idle-contact-p46");
         if (!has_option(harness_args, "--idle-bridge-p15-p16"))
             harness_args.emplace_back("--idle-bridge-p15-p16");
-        constexpr std::array<std::pair<const char *, const char *>, 5> values{{
+        if (!has_option(harness_args, "--tps-bench-profile"))
+            harness_args.emplace_back("--tps-bench-profile");
+        constexpr std::array<std::pair<const char *, const char *>, 6> values{{
             {"--adc7-mv", "1232"},
             {"--coolant-c", "90"},
             {"--idle-min-stop-mrad", "5"},
+            {"--idle-motor-speed-mm-s", "50"},
             {"--throttle-leak-mm2", "9"},
             {"--lambda-adc-gain", "5"},
         }};

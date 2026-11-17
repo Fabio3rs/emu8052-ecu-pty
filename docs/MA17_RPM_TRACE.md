@@ -92,6 +92,32 @@ comprovada no emulador. **Não está comprovado** que 850 RPM seja o alvo real
 com motor quente: ADC3=4 não foi calibrado em temperatura, P4.7 não foi
 medido na placa e `46h` participa de mais de uma guarda.
 
+### Observação no ensaio físico candidato a 90 °C
+
+Com `MA17_TRACE_PC=1 MA17_TRACE_RAM46_TABLE=1`, ROM G, perfil TPS de
+bancada, ponte P1.5/P1.6, contato candidato P4.6 e motor de lenta a
+50 mm/s, a execução mostrou em `48ECh` `R2=22h` após a curva térmica.
+Em `48FFh`, `R2=25h` foi gravado em `RAM[46h]`; `RAM57h=00h` e o bit 7
+de `P4` estava alto. São 850 e 925 RPM nominais pela escala observada
+de 25 RPM por unidade. Com carga condicional de 26 N·m após a partida,
+o motor simulado chegou a 906,226 RPM em 30 milhões de ticks, com
+`RAM[47h]=36` e sem falha TPS. Cargas de 28 e 30 N·m deram 906,794 e
+911,915 RPM: a malha mudou o batente e manteve a rotação perto da
+referência de 925 RPM. Sem carga, o mesmo perfil chegou a 1.736,906 RPM.
+
+Esse traço permite depurar a diferença para os 850 RPM esperados no
+veículo quente. A ligação e a polaridade física de P4.7, assim como o
+significado de 26 N·m no veículo, permanecem desconhecidos. Nenhum
+valor da RAM ou da ROM foi forçado neste ensaio.
+
+Com o mesmo perfil e carga de 26 N·m, um pedal de 8 mm aplicado dos
+10 aos 12 milhões de ticks levou o contato de lenta ao estado aberto.
+A rotação ultrapassou 1.500 RPM e chegou a 1.928,986 RPM em 18 milhões
+de ticks. Houve 175 inícios de injeção entre 12 e 15 milhões de ticks
+e 193 entre 15 e 18 milhões; `RAM27h` e `F84Eh` terminaram zerados.
+Esse cenário não reproduziu o corte indevido, mas não identifica qual
+parâmetro mecânico ou ligação elétrica explica o sintoma anterior.
+
 ### Pedido de ar-condicionado como hipótese operacional
 
 O usuário relata que a ECU eleva um pouco a lenta quando o A/C é pedido.

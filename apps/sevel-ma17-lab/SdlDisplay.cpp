@@ -465,7 +465,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             std::fprintf(stderr, "SDL audio unavailable: %s\n", SDL_GetError());
         }
     }
-    double pedal_pull_m = 0.0;
+    double pedal_pull_m = snapshot.pedal_pull_m;
+    double pedal_applied_m = pedal_pull_m;
     double load_nm = snapshot.applied_load_nm;
     double remembered_load_nm = load_nm > 0.0 ? load_nm : 24.0;
     bool pedal_user_override = false;
@@ -486,6 +487,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     std::array<Gauge, 3> gauges{};
     std::deque<TrendPoint> trends;
     Uint64 last_frame_ticks = SDL_GetTicks();
+    long long last_pedal_tick = snapshot.tick;
     ma17::EmulatorSnapshot displayed = snapshot;
     std::vector<SDL_Vertex> scene_vertices;
     constexpr std::size_t scene_batch_vertices = 8190;
@@ -520,14 +522,17 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             session->set_key(key_on);
             break;
         case LabButtonAction::PedalDown:
-        case LabButtonAction::PedalUp:
+        case LabButtonAction::PedalUp: {
             pedal_user_override = true;
+            // A first step must move past the modeled cable free play.
+            constexpr double pedal_step_m = 0.002;
             pedal_pull_m = std::clamp(
                 pedal_pull_m +
-                    (action == LabButtonAction::PedalUp ? 0.001 : -0.001),
+                    (action == LabButtonAction::PedalUp ? pedal_step_m
+                                                        : -pedal_step_m),
                 0.0, 0.025);
-            session->set_pedal(pedal_pull_m);
             break;
+        }
         case LabButtonAction::Load:
             load_user_override = true;
             if (load_nm > 0.0) {
@@ -569,7 +574,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         pedal_user_override = true;
         pedal_pull_m = 0.025 * static_cast<double>(
             std::clamp((x - box.x) / box.w, 0.0f, 1.0f));
-        session->set_pedal(pedal_pull_m);
     };
     const auto set_load_from_pointer = [&](float x, int width, int height) {
         const auto box = lab_button_rect(
@@ -848,8 +852,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 if (session->capture_snapshot(target_snapshot))
                     displayed = target_snapshot;
             }
-            if (!pedal_user_override)
+            if (!pedal_user_override) {
                 pedal_pull_m = displayed.pedal_pull_m;
+                pedal_applied_m = pedal_pull_m;
+            }
             if (!load_user_override)
                 load_nm = displayed.applied_load_nm;
         }
@@ -863,6 +869,24 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         const float frame_dt =
             static_cast<float>(frame_ticks - last_frame_ticks) / 1000.0f;
         last_frame_ticks = frame_ticks;
+        const long long pedal_elapsed_ticks =
+            std::max(0LL, displayed.tick - last_pedal_tick);
+        last_pedal_tick = displayed.tick;
+        if (session && pedal_user_override && !replay_controls &&
+            !session->paused()) {
+            // Limit each command as well as the cable speed: a sudden pedal
+            // step can trigger the ROM's transient fault with the contact open.
+            const double step_m =
+                std::min(0.0005, 0.016 *
+                                     static_cast<double>(pedal_elapsed_ticks) /
+                                     990000.0);
+            const double change_m = std::clamp(pedal_pull_m - pedal_applied_m,
+                                              -step_m, step_m);
+            if (std::abs(change_m) > 1e-9) {
+                pedal_applied_m += change_m;
+                session->set_pedal(pedal_applied_m);
+            }
+        }
         gauges[0].m_value = static_cast<float>(displayed.rpm);
         gauges[1].m_value =
             static_cast<float>(displayed.throttle_angle_rad * 57.2958);

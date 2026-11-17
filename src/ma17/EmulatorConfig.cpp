@@ -26,7 +26,7 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         target = parsed;
         return true;
     };
-    auto parse_adc7_millivolts = [](const char *value, long long &target) {
+    auto parse_millivolts = [](const char *value, long long &target) {
         errno = 0;
         char *end = nullptr;
         const long long parsed = std::strtoll(value, &end, 10);
@@ -173,6 +173,19 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         if (index + 1 < argc &&
             strcmp(argv[index], "--tps2-restore-tick") == 0 &&
             parse_positive(argv[++index], config.tps2_restore_tick)) continue;
+        if (index + 1 < argc &&
+            strcmp(argv[index], "--tps-open-tick") == 0 &&
+            parse_positive(argv[++index], config.tps_open_tick)) continue;
+        if (index + 1 < argc &&
+            strcmp(argv[index], "--tps-restore-tick") == 0 &&
+            parse_positive(argv[++index], config.tps_restore_tick)) continue;
+        if (index + 1 < argc && strcmp(argv[index], "--tps-open-mv") == 0) {
+            long long millivolts = 0;
+            if (parse_millivolts(argv[++index], millivolts)) {
+                config.tps_open_mv = static_cast<int>(millivolts);
+                continue;
+            }
+        }
         if (index + 1 < argc && strcmp(argv[index], "--coolant-c") == 0) {
             char *end = nullptr;
             const long value = std::strtol(argv[++index], &end, 10);
@@ -220,7 +233,7 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         }
         if (index + 1 < argc && strcmp(argv[index], "--adc7-mv") == 0) {
             long long millivolts = 0;
-            if (parse_adc7_millivolts(argv[++index], millivolts)) {
+            if (parse_millivolts(argv[++index], millivolts)) {
                 config.adc7_boundary_v =
                     static_cast<double>(millivolts) / 1000.0;
                 continue;
@@ -228,7 +241,7 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         }
         if (index + 1 < argc && strcmp(argv[index], "--adc7-step-mv") == 0) {
             long long millivolts = 0;
-            if (parse_adc7_millivolts(argv[++index], millivolts)) {
+            if (parse_millivolts(argv[++index], millivolts)) {
                 config.adc7_step_v = static_cast<double>(millivolts) / 1000.0;
                 continue;
             }
@@ -328,6 +341,18 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
         return std::nullopt;
     }
     if (config.physical_crank) {
+        if ((config.tps_open_tick && config.tps_open_mv < 0) ||
+            (!config.tps_open_tick &&
+             (config.tps_open_mv >= 0 || config.tps_restore_tick)) ||
+            (config.tps_open_tick &&
+             config.tps_open_tick >= config.stop_ticks) ||
+            (config.tps_restore_tick &&
+             (config.tps_restore_tick <= config.tps_open_tick ||
+              config.tps_restore_tick >= config.stop_ticks))) {
+            fprintf(stderr, "TPS open test requires an explicit voltage "
+                            "and ordered ticks within the run\n");
+            return std::nullopt;
+        }
         if (config.idle_motor_speed_mm_s > 0 &&
             !config.idle_bridge_p15_p16) {
             fprintf(stderr, "Idle motor speed requires P1.5/P1.6 binding\n");
@@ -519,6 +544,8 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                config.load_step_tick || config.load_torque_nm != 0.0 ||
                config.tps1_high_tick || config.tps1_restore_tick ||
                config.tps2_high_tick || config.tps2_restore_tick ||
+               config.tps_open_tick || config.tps_restore_tick ||
+               config.tps_open_mv >= 0 ||
                config.initial_coolant_c != 20.0 || config.ect_open_tick ||
                config.ect_restore_tick || config.adc4_mv >= 0 ||
                config.adc7_boundary_v >= 0.0 ||

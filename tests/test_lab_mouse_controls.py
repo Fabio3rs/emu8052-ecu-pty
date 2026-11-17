@@ -154,8 +154,12 @@ with tempfile.TemporaryFile(mode="w+") as log:
         rows = [line.split() for line in lines[lines.index("controls") + 1:]]
         values = {(row[1], float(row[2])) for row in rows}
         for expected in {("key", 1.0), ("starter", 1.0),
-                         ("starter", 0.0), ("pedal", 0.001)}:
+                         ("starter", 0.0)}:
             assert expected in values, (expected, rows)
+        pedal_values = [float(row[2]) for row in rows if row[1] == "pedal"]
+        assert any(0.0 < value <= 0.002 for value in pedal_values), rows
+        assert all(abs(b - a) <= 0.000501 for a, b in
+                   zip(pedal_values, pedal_values[1:])), rows
         assert any(name == "pedal" and 0.012 < value < 0.014
                    for name, value in values), rows
         assert any(name == "load" and 5.0 < value < 15.0
