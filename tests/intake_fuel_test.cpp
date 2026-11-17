@@ -57,6 +57,19 @@ TEST(IntakeFuel, OpeningThrottleRaisesManifoldPressureAtSameRpm) {
     }
     EXPECT_LT(closed.pressure_pa(), open.pressure_pa());
     EXPECT_LT(open.pressure_pa(), 100000.0);
+    EXPECT_GT(closed.pumping_torque_nm(), open.pumping_torque_nm());
+    EXPECT_NEAR(closed.pumping_torque_nm(),
+                (100000.0 - closed.pressure_pa()) * 0.001580 /
+                    (4.0 * std::acos(-1.0)),
+                1e-9);
+}
+
+TEST(IntakeFuel, NoPumpingLossAtAmbientOrAbove) {
+    engine::IntakeFuel intake;
+    EXPECT_NEAR(intake.pumping_torque_nm(), 0.0, 1e-12);
+    for (int step = 0; step < 100; ++step)
+        intake.step(0.001, 0.0, 0.3, 90.0, 90.0, 0.0);
+    EXPECT_DOUBLE_EQ(intake.pumping_torque_nm(), 0.0);
 }
 
 TEST(IntakeFuel, WarmStoppedManifoldVentsExpansionWithoutCreatingAir) {
@@ -77,7 +90,7 @@ TEST(Ma17InjectorStage, EffectiveLowPulseHasDeadTimeAndSingleFlow) {
         injector.step(false, tick_s, 12.5);
     injector.step(true, tick_s, 12.5);
     const double expected_kg =
-        (0.010 - 0.0008) * (900e-6 / 60.0) * 740.0 * std::sqrt(1.0 / 3.0);
+        (0.010 - 0.0008) * (940e-6 / 60.0) * 740.0 * std::sqrt(1.0 / 3.0);
     EXPECT_NEAR(injector.delivered_total_kg(), expected_kg, 1e-12);
     EXPECT_EQ(injector.pulse_count(), 1u);
     EXPECT_EQ(injector.energized_ticks(), 9900u);

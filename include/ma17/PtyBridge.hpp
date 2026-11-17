@@ -27,13 +27,13 @@ struct PtyBridge {
     bool override_rxd = false;
     bool override_state = true;
     bool rxd_line_state = true;
-    long long low_until_ms = 0;
+    long long emulated_tick = 0;
+    long long low_until_tick = 0;
     std::array<unsigned char, 3> break_detect_buffer{};
     int break_detect_idx = 0;
     std::queue<unsigned char> rx_queue;
     std::chrono::steady_clock::time_point last_tx_time{};
 
-    static long long now_ms();
     bool ignore_parmark();
     bool is_receiving_packets();
     bool open_pty_4800_8N1();

@@ -41,7 +41,7 @@ inline bool lab_buttons_visible(int width, int height) {
 inline LabButtonRect lab_button_rect(std::size_t index, int width, int height) {
     constexpr float left = 16.0f;
     constexpr float gap = 6.0f;
-    const float right = static_cast<float>(width) * 0.76f - 16.0f;
+    const float right = static_cast<float>(width) * 0.66f - 16.0f;
     const float button_width = (right - left - gap * 8.0f) /
                                static_cast<float>(lab_button_labels.size());
     return {left + static_cast<float>(index) * (button_width + gap),

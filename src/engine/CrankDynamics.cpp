@@ -40,9 +40,7 @@ bool CrankDynamics::step(bool starter_engaged, double combustion_torque_nm,
     if (speed_rad_s_ == 0.0 && drive_nm <= parameters_.breakaway_torque_nm)
         return false;
 
-    const double friction_nm =
-        parameters_.running_friction_nm +
-        parameters_.viscous_friction_nm_per_rad_s * speed_rad_s_;
+    const double friction_nm = friction_torque_nm();
     const double acceleration =
         (drive_nm - friction_nm) / parameters_.inertia_kg_m2;
     const double next_speed =
@@ -60,6 +58,11 @@ bool CrankDynamics::step(bool starter_engaged, double combustion_torque_nm,
 }
 
 double CrankDynamics::rpm() const { return speed_rad_s_ * 30.0 / pi; }
+
+double CrankDynamics::friction_torque_nm() const {
+    return parameters_.running_friction_nm +
+           parameters_.viscous_friction_nm_per_rad_s * speed_rad_s_;
+}
 
 int CrankDynamics::wheel_position() const {
     return static_cast<int>(crossed_positions_ % wheel_positions);

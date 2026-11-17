@@ -378,12 +378,12 @@ SDL_FRect view_selector_rect(int width, int height) {
         return {static_cast<float>(width) * 0.78f,
                 static_cast<float>(height) * 0.45f - 34.0f,
                 static_cast<float>(width) * 0.20f, 30.0f};
-    return {static_cast<float>(width) * 0.76f - 225.0f,
+    return {static_cast<float>(width) * 0.66f - 225.0f,
             height < 900 ? 64.0f : 82.0f, 122.0f, 30.0f};
 }
 
 SDL_FRect fullscreen_button_rect(int width, int height) {
-    return {static_cast<float>(width) * 0.76f - 95.0f,
+    return {static_cast<float>(width) * 0.66f - 95.0f,
             view_selector_rect(width, height).y, 80.0f, 30.0f};
 }
 
@@ -448,8 +448,12 @@ SDL_FRect pedal_slider_rect(int width, int height) {
 
 SDL_FRect volume_slider_rect(int width, int height) {
     const float scale = lab_ui_scale(width, height);
+    const float cluster_y = 30.0f * scale;
+    const float cluster_h = static_cast<float>(height) - cluster_y - 8.0f * scale;
+    const float gap_h = cluster_h >= 400.0f ? 36.0f * scale : 4.0f;
+    const float gap_y = cluster_y + (cluster_h - gap_h) * 0.60f;
     return {static_cast<float>(width) * 0.78f,
-            static_cast<float>(height) * 0.45f,
+            gap_y + (gap_h - 27.0f * scale) * 0.5f,
             static_cast<float>(width) * 0.20f, 27.0f * scale};
 }
 
@@ -644,6 +648,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     long long scope_span_ticks = 2LL * 990000;
     float sound_volume = 1.0f;
     SceneCamera camera;
+    camera.zoom = 0.78f;
     int view_mode = 0; // Shaft, four sections, axial 1/4, axial 2/3.
     bool show_help = false;
     bool show_debug = false;
@@ -858,8 +863,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     const SDL_FRect fullscreen =
                         fullscreen_button_rect(view_width, view_height);
                     const float click_ui_scale = lab_ui_scale(view_width, view_height);
-                    const float click_scene_w = static_cast<float>(view_width) * 0.76f;
-                    const float click_panel_w = std::min(static_cast<float>(view_width) - 32.0f, click_scene_w + 48.0f);
+                    const float click_scene_w = static_cast<float>(view_width) * 0.66f;
+                    const float click_panel_w = std::min(static_cast<float>(view_width) - 32.0f, click_scene_w - 32.0f);
                     const float click_help_x = 16.0f + click_panel_w - 75.0f * click_ui_scale;
                     const float click_debug_x = click_help_x - 85.0f * click_ui_scale;
                     if (event.button.y >= 16.0f && event.button.y <= 42.0f * click_ui_scale) {
@@ -1111,7 +1116,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                       static_cast<unsigned>(displayed.ram47), displayed.tick);
         SDL_SetWindowTitle(window, title);
         RecordingRenderer geometry;
-        const float scene_width = static_cast<float>(width) * 0.76f;
+        const float scene_width = static_cast<float>(width) * 0.66f;
         const float scene_height = static_cast<float>(height) * 0.80f;
         camera.pan_x =
             std::clamp(camera.pan_x, -scene_width * 0.5f, scene_width * 0.5f);
@@ -1262,7 +1267,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         : (compact_overlay ? 44.0f : 52.0f)) * ui_scale;
         const SDL_FRect status_panel{
             16.0f, 16.0f,
-            std::min(static_cast<float>(width) - 32.0f, scene_width + 48.0f),
+            std::min(static_cast<float>(width) - 32.0f, scene_width - 32.0f),
             status_panel_h};
         SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
         SDL_RenderFillRect(screen, &status_panel);
@@ -1339,11 +1344,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                       status_panel.y + status_panel.h + 10.0f * ui_scale,
                       label, {176, 218, 226, 255}, ui_scale);
         }
-        const float cluster_x = static_cast<float>(width) * 0.765f;
-        const float cluster_y = status_panel.y + status_panel.h + 8.0f * ui_scale;
-        const float cluster_w = static_cast<float>(width) * 0.228f;
-        const float scope_y = static_cast<float>(height) - 146.0f - 12.0f;
-        const float cluster_h = scope_y - cluster_y - 6.0f * ui_scale;
+        const float cluster_x = static_cast<float>(width) * 0.67f;
+        const float cluster_y = 30.0f * ui_scale;
+        const float cluster_w = static_cast<float>(width) * 0.32f;
+        const float cluster_h = static_cast<float>(height) - cluster_y - 8.0f * ui_scale;
         const SDL_FRect cluster_bounds{cluster_x, cluster_y, cluster_w, cluster_h};
         draw_oes_right_cluster(screen, font, cluster_bounds, displayed,
                                pulses, spark_glows, ui_scale, &gauges);
@@ -1389,7 +1393,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 draw_lab_trends(screen, font, trend_panel, displayed.tick, trends);
             }
         }
-        draw_lab_scope(screen, font, width, height, displayed.tick, events,
+        draw_lab_scope(screen, font, static_cast<int>(scene_width), height, displayed.tick, events,
                        scope_channels_visible, scope_span_ticks);
         const float order_scale =
             width >= 2400 && height >= 1000 && width > 2 * height

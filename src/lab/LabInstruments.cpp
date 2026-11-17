@@ -30,8 +30,8 @@ void draw_gauge_arc(SDL_Renderer *renderer, float cx, float cy, float r_in,
                           static_cast<float>(color.b) / 255.0f,
                           static_cast<float>(color.a) / 255.0f};
     for (int i = 0; i <= steps; ++i) {
-        const float t =
-            th0 + (th1 - th0) * (static_cast<float>(i) / static_cast<float>(steps));
+        const float t = th0 + (th1 - th0) * (static_cast<float>(i) /
+                                             static_cast<float>(steps));
         const float c = std::cos(t), s = std::sin(t);
         verts.push_back({{cx + r_out * c, cy - r_out * s}, fcol, {0.0f, 0.0f}});
         verts.push_back({{cx + r_in * c, cy - r_in * s}, fcol, {0.0f, 0.0f}});
@@ -79,24 +79,22 @@ void draw_lab_gauge(SDL_Renderer *renderer, FontRenderer &font, float x,
     const bool donor_ticks = style && std::isfinite(range) && range > 0.0f &&
                              minor_step > 0 && major_step > 0 &&
                              range / static_cast<float>(minor_step) <= 512.0f;
-    const int tick_count = donor_ticks
-                               ? static_cast<int>(range /
-                                                  static_cast<float>(minor_step))
-                               : 10;
+    const int tick_count =
+        donor_ticks ? static_cast<int>(range / static_cast<float>(minor_step))
+                    : 10;
     for (int i = 0; i <= tick_count; ++i) {
         const long long tick_value =
             static_cast<long long>(i) * static_cast<long long>(minor_step);
-        const float fraction = donor_ticks
-                                   ? static_cast<float>(tick_value) / range
-                                   : static_cast<float>(i) /
-                                         static_cast<float>(tick_count);
+        const float fraction =
+            donor_ticks
+                ? static_cast<float>(tick_value) / range
+                : static_cast<float>(i) / static_cast<float>(tick_count);
         const float theta = theta_at(fraction);
-        const bool major = donor_ticks ? tick_value % major_step == 0
-                                       : i % 2 == 0;
-        const float length = donor_ticks
-                                 ? (major ? style->m_majorTickLength
-                                          : style->m_minorTickLength)
-                                 : (major ? 15.0f : 8.0f);
+        const bool major =
+            donor_ticks ? tick_value % major_step == 0 : i % 2 == 0;
+        const float length = donor_ticks ? (major ? style->m_majorTickLength
+                                                  : style->m_minorTickLength)
+                                         : (major ? 15.0f : 8.0f);
         const float inner = radius - length * ui_scale;
         SDL_RenderLine(
             renderer, x + inner * std::cos(theta), y - inner * std::sin(theta),
@@ -108,11 +106,13 @@ void draw_lab_gauge(SDL_Renderer *renderer, FontRenderer &font, float x,
                 std::clamp((band.start - style->m_min) / range, 0.0f, 1.0f);
             const float s1 =
                 std::clamp((band.end - style->m_min) / range, 0.0f, 1.0f);
-            const SDL_Color bcol{
-                static_cast<Uint8>(std::clamp(band.color.x * 255.0f, 0.0f, 255.0f)),
-                static_cast<Uint8>(std::clamp(band.color.y * 255.0f, 0.0f, 255.0f)),
-                static_cast<Uint8>(std::clamp(band.color.z * 255.0f, 0.0f, 255.0f)),
-                255};
+            const SDL_Color bcol{static_cast<Uint8>(std::clamp(
+                                     band.color.x * 255.0f, 0.0f, 255.0f)),
+                                 static_cast<Uint8>(std::clamp(
+                                     band.color.y * 255.0f, 0.0f, 255.0f)),
+                                 static_cast<Uint8>(std::clamp(
+                                     band.color.z * 255.0f, 0.0f, 255.0f)),
+                                 255};
             draw_gauge_arc(renderer, x, y, radius - 3.5f * ui_scale, radius,
                            theta_at(s0), theta_at(s1), bcol);
         }
@@ -372,7 +372,8 @@ void draw_lab_scope(SDL_Renderer *renderer, FontRenderer &font, int width,
             if (event.high && !high) {
                 high_start_x = x;
             } else if (!event.high && high) {
-                const float start_x = high_start_x >= 0.0f ? high_start_x : left;
+                const float start_x =
+                    high_start_x >= 0.0f ? high_start_x : left;
                 const float pulse_w = std::max(x - start_x, 1.5f);
                 high_rects.push_back({start_x, y, pulse_w, 13.0f});
                 high_start_x = -1.0f;
@@ -472,12 +473,10 @@ struct OesDialBand {
 };
 
 void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
-                   const SDL_FRect &box, const char *title,
-                   double value, double v_min, double v_max,
-                   double major_step, double minor_step,
-                   const char *value_str, float needle_pos,
-                   float ui_scale,
-                   const std::vector<OesDialBand> &bands = {}) {
+                   const SDL_FRect &box, const char *title, double value,
+                   double v_min, double v_max, double major_step,
+                   double minor_step, const char *value_str, float needle_pos,
+                   float ui_scale, const std::vector<OesDialBand> &bands = {}) {
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
@@ -486,13 +485,16 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     const float title_h = 16.0f * ui_scale;
     const float title_w = font.measure(title) * 0.70f * ui_scale;
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
-              box.y + 4.0f * ui_scale, title,
-              {210, 218, 226, 255}, 0.70f * ui_scale);
+              box.y + 4.0f * ui_scale, title, {210, 218, 226, 255},
+              0.70f * ui_scale);
 
     const float cx = box.x + box.w * 0.5f;
-    const float cy = box.y + title_h + (box.h - title_h - 14.0f * ui_scale) * 0.52f;
-    const float radius = std::min(box.w * 0.44f, (box.h - title_h - 16.0f * ui_scale) * 0.50f);
-    if (radius <= 6.0f) return;
+    const float cy =
+        box.y + title_h + (box.h - title_h - 14.0f * ui_scale) * 0.52f;
+    const float radius =
+        std::min(box.w * 0.44f, (box.h - title_h - 16.0f * ui_scale) * 0.50f);
+    if (radius <= 6.0f)
+        return;
 
     constexpr float th_min = 1.20f * 3.14159265f;
     constexpr float th_max = -0.20f * 3.14159265f;
@@ -503,32 +505,44 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     const float range = static_cast<float>(v_max - v_min);
 
     for (const auto &b : bands) {
-        const float s0 = std::clamp((b.start - static_cast<float>(v_min)) / range, 0.0f, 1.0f);
-        const float s1 = std::clamp((b.end - static_cast<float>(v_min)) / range, 0.0f, 1.0f);
+        const float s0 = std::clamp(
+            (b.start - static_cast<float>(v_min)) / range, 0.0f, 1.0f);
+        const float s1 =
+            std::clamp((b.end - static_cast<float>(v_min)) / range, 0.0f, 1.0f);
         draw_gauge_arc(renderer, cx, cy, radius - 3.0f * ui_scale, radius,
                        theta_at(s0), theta_at(s1), b.color);
     }
 
     if (minor_step > 0.0 && range > 0.0f) {
-        const int n_ticks = static_cast<int>(std::round(range / minor_step));
+        const int n_ticks = static_cast<int>(
+            std::round(static_cast<double>(range) / minor_step));
         for (int i = 0; i <= n_ticks; ++i) {
             const double cur_v = v_min + static_cast<double>(i) * minor_step;
-            const float frac = static_cast<float>((cur_v - v_min) / range);
+            const float frac = static_cast<float>((cur_v - v_min) /
+                                                  static_cast<double>(range));
             const float th = theta_at(frac);
             const float c = std::cos(th), s = std::sin(th);
-            const bool is_major = (major_step > 0.0) &&
-                (std::fmod(static_cast<double>(i) * minor_step + 1e-4, major_step) < 2e-4 ||
-                 std::fmod(static_cast<double>(i) * minor_step - 1e-4, major_step) < 2e-4);
+            const bool is_major =
+                (major_step > 0.0) &&
+                (std::fmod(static_cast<double>(i) * minor_step + 1e-4,
+                           major_step) < 2e-4 ||
+                 std::fmod(static_cast<double>(i) * minor_step - 1e-4,
+                           major_step) < 2e-4);
             const float tick_len = (is_major ? 5.5f : 3.0f) * ui_scale;
-            const SDL_Color tcol = is_major ? SDL_Color{200, 208, 216, 255} : SDL_Color{90, 98, 110, 255};
+            const SDL_Color tcol = is_major ? SDL_Color{200, 208, 216, 255}
+                                            : SDL_Color{90, 98, 110, 255};
             SDL_SetRenderDrawColor(renderer, tcol.r, tcol.g, tcol.b, 255);
-            SDL_RenderLine(renderer, cx + (radius - tick_len) * c, cy - (radius - tick_len) * s,
-                                    cx + radius * c, cy - radius * s);
+            SDL_RenderLine(renderer, cx + (radius - tick_len) * c,
+                           cy - (radius - tick_len) * s, cx + radius * c,
+                           cy - radius * s);
         }
     }
 
-    const float n_frac = needle_pos >= 0.0f ? needle_pos :
-        static_cast<float>(std::clamp((value - v_min) / range, 0.0, 1.0));
+    const float n_frac =
+        needle_pos >= 0.0f
+            ? needle_pos
+            : static_cast<float>(std::clamp(
+                  (value - v_min) / static_cast<double>(range), 0.0, 1.0));
     const float needle_th = theta_at(n_frac);
     const float nx = std::cos(needle_th);
     const float ny = -std::sin(needle_th);
@@ -552,7 +566,8 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     SDL_RenderGeometry(renderer, nullptr, nverts.data(), 4, nidxs.data(), 6);
 
     const float r_hub = 4.0f * ui_scale;
-    const SDL_FRect hub_rect{cx - r_hub, cy - r_hub, r_hub * 2.0f, r_hub * 2.0f};
+    const SDL_FRect hub_rect{cx - r_hub, cy - r_hub, r_hub * 2.0f,
+                             r_hub * 2.0f};
     SDL_SetRenderDrawColor(renderer, 28, 30, 36, 255);
     SDL_RenderFillRect(renderer, &hub_rect);
     SDL_SetRenderDrawColor(renderer, 70, 75, 88, 255);
@@ -561,8 +576,8 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     const float val_scale = (radius < 35.0f ? 0.65f : 0.80f) * ui_scale;
     const float val_w = font.measure(value_str) * val_scale;
     font.draw(renderer, box.x + (box.w - val_w) * 0.5f,
-              box.y + box.h - 13.0f * ui_scale, value_str,
-              {240, 244, 248, 255}, val_scale);
+              box.y + box.h - 13.0f * ui_scale, value_str, {240, 244, 248, 255},
+              val_scale);
 }
 
 void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
@@ -577,8 +592,8 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
 
     const float title_w = font.measure("IGNITION") * 0.65f * ui_scale;
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
-              box.y + 4.0f * ui_scale, "IGNITION",
-              {210, 218, 226, 255}, 0.65f * ui_scale);
+              box.y + 4.0f * ui_scale, "IGNITION", {210, 218, 226, 255},
+              0.65f * ui_scale);
 
     const float top_y = box.y + 20.0f * ui_scale;
     const float avail_h = box.h - 24.0f * ui_scale;
@@ -589,19 +604,25 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
     for (int cyl = 0; cyl < 4; ++cyl) {
         const float cy = top_y + (static_cast<float>(cyl) + 0.5f) * step_y;
         const float spark_glow = spark_glows[cyl == 0 || cyl == 3 ? 0 : 1];
-        const float strength = std::max(pulses[static_cast<std::size_t>(cyl)].strength, spark_glow);
+        const float strength = std::max(
+            pulses[static_cast<std::size_t>(cyl)].strength, spark_glow);
         const bool lit = strength > 0.05f;
 
-        const SDL_FRect ring_rect{cx - max_r, cy - max_r, max_r * 2.0f, max_r * 2.0f};
+        const SDL_FRect ring_rect{cx - max_r, cy - max_r, max_r * 2.0f,
+                                  max_r * 2.0f};
         SDL_SetRenderDrawColor(renderer, 42, 46, 56, 255);
         SDL_RenderRect(renderer, &ring_rect);
 
         const float r_inner = max_r - 2.0f * ui_scale;
-        const SDL_FRect disc_rect{cx - r_inner, cy - r_inner, r_inner * 2.0f, r_inner * 2.0f};
+        const SDL_FRect disc_rect{cx - r_inner, cy - r_inner, r_inner * 2.0f,
+                                  r_inner * 2.0f};
         if (lit) {
-            const Uint8 r = static_cast<Uint8>(std::clamp(255.0f * strength, 0.0f, 255.0f));
-            const Uint8 g = static_cast<Uint8>(std::clamp(230.0f * strength, 0.0f, 255.0f));
-            const Uint8 b = static_cast<Uint8>(std::clamp(100.0f * strength, 0.0f, 255.0f));
+            const Uint8 r =
+                static_cast<Uint8>(std::clamp(255.0f * strength, 0.0f, 255.0f));
+            const Uint8 g =
+                static_cast<Uint8>(std::clamp(230.0f * strength, 0.0f, 255.0f));
+            const Uint8 b =
+                static_cast<Uint8>(std::clamp(100.0f * strength, 0.0f, 255.0f));
             SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         } else {
             SDL_SetRenderDrawColor(renderer, 24, 26, 32, 255);
@@ -612,15 +633,15 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
         std::snprintf(num, sizeof(num), "%d", cyl + 1);
         const float nw = font.measure(num) * 0.60f * ui_scale;
         font.draw(renderer, cx - nw * 0.5f, cy - 4.0f * ui_scale, num,
-                  lit ? SDL_Color{20, 20, 20, 255} : SDL_Color{100, 110, 125, 255},
+                  lit ? SDL_Color{20, 20, 20, 255}
+                      : SDL_Color{100, 110, 125, 255},
                   0.60f * ui_scale);
     }
 }
 
 void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
                        const SDL_FRect &box,
-                       const ma17::EmulatorSnapshot &snapshot,
-                       float ui_scale) {
+                       const ma17::EmulatorSnapshot &snapshot, float ui_scale) {
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
@@ -628,20 +649,20 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
 
     const float title_w = font.measure("THROTTLE") * 0.70f * ui_scale;
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
-              box.y + 4.0f * ui_scale, "THROTTLE",
-              {210, 218, 226, 255}, 0.70f * ui_scale);
+              box.y + 4.0f * ui_scale, "THROTTLE", {210, 218, 226, 255},
+              0.70f * ui_scale);
 
     const float slider_w = 12.0f * ui_scale;
     const SDL_FRect slider_box{box.x + box.w - slider_w - 6.0f * ui_scale,
-                              box.y + 20.0f * ui_scale,
-                              slider_w, box.h - 26.0f * ui_scale};
+                               box.y + 20.0f * ui_scale, slider_w,
+                               box.h - 26.0f * ui_scale};
     SDL_SetRenderDrawColor(renderer, 24, 26, 32, 255);
     SDL_RenderFillRect(renderer, &slider_box);
     SDL_SetRenderDrawColor(renderer, 58, 64, 76, 255);
     SDL_RenderRect(renderer, &slider_box);
 
-    const float pedal_frac = static_cast<float>(
-        std::clamp(snapshot.pedal_pull_m / 0.025, 0.0, 1.0));
+    const float pedal_frac =
+        static_cast<float>(std::clamp(snapshot.pedal_pull_m / 0.025, 0.0, 1.0));
     const float fill_h = (slider_box.h - 2.0f) * pedal_frac;
     const SDL_FRect slider_fill{slider_box.x + 1.0f,
                                 slider_box.y + slider_box.h - 1.0f - fill_h,
@@ -651,45 +672,53 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
 
     const float bore_area_w = slider_box.x - box.x - 8.0f * ui_scale;
     const float cx = box.x + bore_area_w * 0.5f;
-    const float cy = box.y + 20.0f * ui_scale + (box.h - 48.0f * ui_scale) * 0.45f;
-    const float bore_w = std::min(bore_area_w * 0.50f, (box.h - 48.0f * ui_scale) * 0.50f);
+    const float cy =
+        box.y + 20.0f * ui_scale + (box.h - 48.0f * ui_scale) * 0.45f;
+    const float bore_w =
+        std::min(bore_area_w * 0.50f, (box.h - 48.0f * ui_scale) * 0.50f);
     const float bore_h = bore_w * 1.30f;
 
     SDL_SetRenderDrawColor(renderer, 210, 218, 226, 255);
     SDL_RenderLine(renderer, cx - bore_w * 0.5f, cy - bore_h * 0.5f,
-                            cx - bore_w * 0.5f, cy + bore_h * 0.5f);
+                   cx - bore_w * 0.5f, cy + bore_h * 0.5f);
     SDL_RenderLine(renderer, cx + bore_w * 0.5f, cy - bore_h * 0.5f,
-                            cx + bore_w * 0.5f, cy + bore_h * 0.5f);
+                   cx + bore_w * 0.5f, cy + bore_h * 0.5f);
 
     const float th_angle = static_cast<float>(snapshot.throttle_angle_rad);
     const float plate_len = bore_w * 0.85f;
     const float c_th = std::cos(th_angle);
     const float s_th = std::sin(th_angle);
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-    SDL_RenderLine(renderer, cx - c_th * plate_len * 0.5f, cy + s_th * plate_len * 0.5f,
-                            cx + c_th * plate_len * 0.5f, cy - s_th * plate_len * 0.5f);
+    SDL_RenderLine(renderer, cx - c_th * plate_len * 0.5f,
+                   cy + s_th * plate_len * 0.5f, cx + c_th * plate_len * 0.5f,
+                   cy - s_th * plate_len * 0.5f);
 
     const float r_piv = 2.5f * ui_scale;
-    const SDL_FRect piv_rect{cx - r_piv, cy - r_piv, r_piv * 2.0f, r_piv * 2.0f};
+    const SDL_FRect piv_rect{cx - r_piv, cy - r_piv, r_piv * 2.0f,
+                             r_piv * 2.0f};
     SDL_SetRenderDrawColor(renderer, 238, 68, 69, 255);
     SDL_RenderFillRect(renderer, &piv_rect);
 
     char stem_buf[32];
-    std::snprintf(stem_buf, sizeof(stem_buf), "STEM: %.2f mm", snapshot.idle_stem_m * 1000.0);
-    font.draw(renderer, box.x + 6.0f * ui_scale, box.y + box.h - 22.0f * ui_scale,
-              stem_buf, {160, 185, 200, 255}, 0.60f * ui_scale);
+    std::snprintf(stem_buf, sizeof(stem_buf), "STEM: %.2f mm",
+                  snapshot.idle_stem_m * 1000.0);
+    font.draw(renderer, box.x + 6.0f * ui_scale,
+              box.y + box.h - 22.0f * ui_scale, stem_buf, {160, 185, 200, 255},
+              0.60f * ui_scale);
 
     const bool sw_closed = snapshot.idle_contact_closed;
     char sw_buf[32];
-    std::snprintf(sw_buf, sizeof(sw_buf), "IDLE SW: %s", sw_closed ? "CLOSED" : "OPEN");
-    font.draw(renderer, box.x + 6.0f * ui_scale, box.y + box.h - 11.0f * ui_scale,
-              sw_buf, sw_closed ? SDL_Color{60, 232, 130, 255} : SDL_Color{130, 140, 155, 255},
+    std::snprintf(sw_buf, sizeof(sw_buf), "IDLE SW: %s",
+                  sw_closed ? "CLOSED" : "OPEN");
+    font.draw(renderer, box.x + 6.0f * ui_scale,
+              box.y + box.h - 11.0f * ui_scale, sw_buf,
+              sw_closed ? SDL_Color{60, 232, 130, 255}
+                        : SDL_Color{130, 140, 155, 255},
               0.60f * ui_scale);
 }
 
 void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
-                   const SDL_FRect &box,
-                   const ma17::EmulatorSnapshot &snapshot,
+                   const SDL_FRect &box, const ma17::EmulatorSnapshot &snapshot,
                    float ui_scale) {
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
@@ -698,10 +727,11 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
 
     const float title_w = font.measure("FUEL") * 0.70f * ui_scale;
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
-              box.y + 4.0f * ui_scale, "FUEL",
-              {210, 218, 226, 255}, 0.70f * ui_scale);
+              box.y + 4.0f * ui_scale, "FUEL", {210, 218, 226, 255},
+              0.70f * ui_scale);
 
-    const double fuel_l = static_cast<double>(snapshot.injector_pulses) * 0.000003;
+    const double fuel_l =
+        static_cast<double>(snapshot.injector_pulses) * 0.000003;
     char liters_buf[32];
     std::snprintf(liters_buf, sizeof(liters_buf), "%.3f L", fuel_l);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 20.0f * ui_scale,
@@ -713,12 +743,14 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
               gal_buf, {150, 165, 180, 255}, 0.60f * ui_scale);
 
     char film_buf[32];
-    std::snprintf(film_buf, sizeof(film_buf), "FILM: %.1f mg", snapshot.fuel_film_kg * 1e6);
+    std::snprintf(film_buf, sizeof(film_buf), "FILM: %.1f mg",
+                  snapshot.fuel_film_kg * 1e6);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 48.0f * ui_scale,
               film_buf, {184, 210, 140, 255}, 0.60f * ui_scale);
 
     char inj_buf[32];
-    std::snprintf(inj_buf, sizeof(inj_buf), "PULSES: %llu", snapshot.injector_pulses);
+    std::snprintf(inj_buf, sizeof(inj_buf), "PULSES: %llu",
+                  snapshot.injector_pulses);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 60.0f * ui_scale,
               inj_buf, {140, 180, 220, 255}, 0.60f * ui_scale);
 }
@@ -732,7 +764,8 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                             const std::array<float, 2> &spark_glows,
                             float ui_scale,
                             const std::array<Gauge, 3> *gauges) {
-    if (bounds.w < 100.0f || bounds.h < 100.0f) return;
+    if (bounds.w < 100.0f || bounds.h < 100.0f)
+        return;
 
     SDL_SetRenderDrawColor(renderer, 10, 10, 12, 255);
     SDL_RenderFillRect(renderer, &bounds);
@@ -740,7 +773,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     SDL_RenderRect(renderer, &bounds);
 
     const float mid_gap_h = (bounds.h >= 400.0f) ? 36.0f * ui_scale : 4.0f;
-    const float top_h = (bounds.h - mid_gap_h) * 0.54f;
+    const float top_h = (bounds.h - mid_gap_h) * 0.60f;
     const float bot_y = bounds.y + top_h + mid_gap_h;
     const float bot_h = bounds.y + bounds.h - bot_y;
 
@@ -757,18 +790,20 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
         {5600.0f, 6000.0f, {245, 205, 30, 255}},
         {6000.0f, 8000.0f, {238, 68, 69, 255}},
     };
-    draw_oes_dial(renderer, font, tach_box, "ENGINE SPEED",
-                  snapshot.rpm, 0.0, 8000.0, 1000.0, 200.0,
-                  rpm_str, tach_needle, ui_scale, tach_bands);
+    draw_oes_dial(renderer, font, tach_box, "ENGINE SPEED", snapshot.rpm, 0.0,
+                  8000.0, 1000.0, 200.0, rpm_str, tach_needle, ui_scale,
+                  tach_bands);
 
     const SDL_FRect speed_box{bounds.x, bounds.y + dial_h, top_left_w, dial_h};
     char spd_str[32];
-    std::snprintf(spd_str, sizeof(spd_str), "%.0f KM/H", snapshot.vehicle_speed_kmh);
+    std::snprintf(spd_str, sizeof(spd_str), "%.0f KM/H",
+                  snapshot.vehicle_speed_kmh);
     draw_oes_dial(renderer, font, speed_box, "VEHICLE SPEED",
-                  snapshot.vehicle_speed_kmh, 0.0, 200.0, 20.0, 10.0,
-                  spd_str, -1.0f, ui_scale);
+                  snapshot.vehicle_speed_kmh, 0.0, 200.0, 20.0, 10.0, spd_str,
+                  -1.0f, ui_scale);
 
-    const SDL_FRect ign_box{bounds.x + top_left_w, bounds.y, top_right_w, top_h};
+    const SDL_FRect ign_box{bounds.x + top_left_w, bounds.y, top_right_w,
+                            top_h};
     draw_oes_ignition(renderer, font, ign_box, pulses, spark_glows, ui_scale);
 
     const float bot_left_w = bounds.w * 0.50f;
@@ -786,25 +821,26 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     const double in_afr_val = snapshot.lambda * 14.7;
     char afr_str[16];
     std::snprintf(afr_str, sizeof(afr_str), "%.1f", in_afr_val);
-    draw_oes_dial(renderer, font, in_afr_box, "IN. AFR",
-                  in_afr_val, 0.0, 25.0, 5.0, 1.0,
-                  afr_str, -1.0f, ui_scale);
+    draw_oes_dial(renderer, font, in_afr_box, "IN. AFR", in_afr_val, 0.0, 25.0,
+                  5.0, 1.0, afr_str, -1.0f, ui_scale);
 
-    const SDL_FRect ex_o2_box{bounds.x, bot_y + bot_sub_h + afr_sub_h, afr_w, afr_sub_h};
+    const SDL_FRect ex_o2_box{bounds.x, bot_y + bot_sub_h + afr_sub_h, afr_w,
+                              afr_sub_h};
     char o2_str[16];
     std::snprintf(o2_str, sizeof(o2_str), "%.2f", snapshot.lambda);
-    draw_oes_dial(renderer, font, ex_o2_box, "EX. O2",
-                  snapshot.lambda, 0.0, 2.0, 0.5, 0.1,
-                  o2_str, -1.0f, ui_scale);
+    draw_oes_dial(renderer, font, ex_o2_box, "EX. O2", snapshot.lambda, 0.0,
+                  2.0, 0.5, 0.1, o2_str, -1.0f, ui_scale);
 
-    const SDL_FRect fuel_box{bounds.x + afr_w, bot_y + bot_sub_h, fuel_w, bot_sub_h};
+    const SDL_FRect fuel_box{bounds.x + afr_w, bot_y + bot_sub_h, fuel_w,
+                             bot_sub_h};
     draw_oes_fuel(renderer, font, fuel_box, snapshot, ui_scale);
 
     const float g3_h = bot_h / 3.0f;
     const float g3_x = bounds.x + bot_left_w;
 
     const SDL_FRect map_box{g3_x, bot_y, bot_right_w, g3_h};
-    const double p_manifold_bar = 0.28 + 0.72 * std::sin(snapshot.throttle_angle_rad);
+    const double p_manifold_bar =
+        0.28 + 0.72 * std::sin(snapshot.throttle_angle_rad);
     const double inhg = (p_manifold_bar - 1.0) * 29.92;
     char map_str[32];
     std::snprintf(map_str, sizeof(map_str), "%.0f INHG", inhg);
@@ -813,18 +849,17 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
         {-10.0f, 0.0f, {244, 128, 42, 255}},
         {0.0f, 5.0f, {238, 68, 69, 255}},
     };
-    draw_oes_dial(renderer, font, map_box, "MANIFOLD PRESSURE",
-                  inhg, -30.0, 5.0, 5.0, 1.0,
-                  map_str, -1.0f, ui_scale, map_bands);
+    draw_oes_dial(renderer, font, map_box, "MANIFOLD PRESSURE", inhg, -30.0,
+                  5.0, 5.0, 1.0, map_str, -1.0f, ui_scale, map_bands);
 
     const SDL_FRect cfm_box{g3_x, bot_y + g3_h, bot_right_w, g3_h};
-    const double ve_ratio = 0.85 * (0.25 + 0.75 * std::sin(snapshot.throttle_angle_rad));
+    const double ve_ratio =
+        0.85 * (0.25 + 0.75 * std::sin(snapshot.throttle_angle_rad));
     const double air_scfm = 0.0279 * snapshot.rpm * ve_ratio;
     char cfm_str[32];
     std::snprintf(cfm_str, sizeof(cfm_str), "%.1f SCFM", air_scfm);
-    draw_oes_dial(renderer, font, cfm_box, "AIR SCFM",
-                  air_scfm, 0.0, 150.0, 25.0, 5.0,
-                  cfm_str, -1.0f, ui_scale);
+    draw_oes_dial(renderer, font, cfm_box, "AIR SCFM", air_scfm, 0.0, 150.0,
+                  25.0, 5.0, cfm_str, -1.0f, ui_scale);
 
     const SDL_FRect ve_box{g3_x, bot_y + g3_h * 2.0f, bot_right_w, g3_h};
     const double ve_pct = ve_ratio * 100.0;
@@ -835,9 +870,8 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
         {80.0f, 100.0f, {46, 204, 113, 255}},
         {100.0f, 120.0f, {238, 68, 69, 255}},
     };
-    draw_oes_dial(renderer, font, ve_box, "VOLUMETRIC EFF.",
-                  ve_pct, 0.0, 120.0, 20.0, 5.0,
-                  ve_str, -1.0f, ui_scale, ve_bands);
+    draw_oes_dial(renderer, font, ve_box, "VOLUMETRIC EFF.", ve_pct, 0.0, 120.0,
+                  20.0, 5.0, ve_str, -1.0f, ui_scale, ve_bands);
 }
 
 } // namespace lab

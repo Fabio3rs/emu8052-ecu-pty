@@ -65,6 +65,30 @@ cmake --build build-lab --parallel 4
 ./build-lab/sevel-ma17-lab path/to/FiatTipo_MA17_dump_27c256.bin --live --bench-preset
 ```
 
+TODO (Lab startup): Make the missing bench setup visible before cranking.
+Without `--bench-preset` or an explicit ADC7 input, the raw scenario leaves
+ADC7 at its internal default (105); the ROM can hold the CC3 injection gate,
+so `cc3_pulses=0`, `injected_kg=0` and the engine stalls after the starter
+stops. Detect this state in the Lab and show an actionable warning or an
+explicit startup choice. Keep the unverified candidate bindings opt-in.
+
+TODO (external K-Line slow init): PTY scanners send 5-baud levels in wall time,
+while the ECU decoder runs in emulated ticks. If host throughput falls below
+990,000 ticks/s or varies during the ten bits, the decoder may miss address
+10h and never send 55h. The tick-driven `SIGUSR1` path validates ECU protocol
+independently; the external PTY path still needs a clock-synchronized input
+queue or equivalent feedback. `test_pty.py --cpu-ticks-per-second=N` reports
+and compensates a measured steady rate, but cannot correct changing load.
+
+TODO (physical-model regressions): Revisit integration assertions that require
+high RPM after the starter stops with injection disabled, or less than 1 RPM
+variation when the fluid-step size changes. `PhysicalIntake.ConditionalCc3Fuel`
+also assumes under 2 Pa pressure difference between step sizes, and
+`PhysicalIdle.CandidateP15P16` requires a fixed minimum number of bridge edges.
+Validate startup, steady idle and fuel cutoff as separate scenarios. Other
+independently failing suites can be investigated later without changing K-line
+behavior to match engine torque.
+
 The Lab needs SDL3 3.2 or newer. CMake uses an installed SDL3, or fetches the
 pinned 3.2.8 source. An existing local SDL3 build can be selected with
 `-DSDL3_DIR=/path/to/SDL3Config-directory`. Builds with the Lab option off do
@@ -84,10 +108,19 @@ estimates, not a verified Fiat wiring/calibration. Explicit values for those
 options override the preset; omit it to run the raw physical scenario. The
 startup log prints `[LAB-BENCH]` and the window marks the candidate setup when
 the preset is active. Use the same preset
-for headless capture and control-trace replay. The no-load warm preset ran at
-about 1,507 rpm at 12 million ticks in one regression; it is a functional
-starting setup, not a calibrated 850 rpm idle. The LOAD control applies
-resistant torque after the motor catches.
+for headless capture and control-trace replay. With the estimated mechanical
+friction and manifold pumping loss, the no-load warm preset ran near 900 RPM
+at 60 million ticks; ROM RAM46 was 37 (925 RPM target). Diagnostic flag
+`f850=16` remained set and the physical lambda estimate was about 1.30, so
+calibration against vehicle measurements is still needed. The LOAD control
+applies resistant torque after the motor catches.
+
+The full Open Engine Sim checkout under `.work/open-engine-sim` contains a
+crankshaft friction constraint and piston/cylinder friction and gas forces.
+This Lab links only its geometry, audio and GPU components; ECU co-simulation
+uses the local `CrankDynamics` and `IntakeFuel` models. The latter computes
+pumping torque from manifold pressure and 1.58 L displacement, separately
+from mechanical friction and user-applied load.
 
 The live window starts with the key off: press K, then hold S to crank. Space
 pauses; . advances exactly 9,900 ticks (10 ms) while paused; , advances to the

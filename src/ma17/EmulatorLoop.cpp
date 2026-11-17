@@ -488,13 +488,17 @@ static void run_tick_batch(EmulatorLoopContext &context,
     for (int i = 0; i < context.steps_per_batch &&
                     (!stop_ticks || context.ticks < stop_ticks); ++i) {
         context.ticks++; // One count per emulated machine-cycle tick.
+        context.bridge.emulated_tick = context.ticks;
         if (!context.key_on && context.physical_crank) {
             const double load = context.load_step_tick &&
                                         context.ticks >= context.load_step_tick
                                     ? context.load_torque_nm
                                     : 0.0;
             tick_physical_crank_input(&cpu, *context.physical_crank,
-                                      *context.physical_input, false, 0.0, load,
+                                      *context.physical_input, false, 0.0,
+                                      load + (context.intake
+                                                  ? context.intake->pumping_torque_nm()
+                                                  : 0.0),
                                       false);
             if (context.thermal && context.ticks % 990 == 0) {
                 context.vehicle_speed_kmh += std::clamp(
@@ -662,10 +666,13 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                       context.ticks <= context.starter_stop_tick,
                                       context.combustion.torque_nm(
                                           context.physical_crank->angle_rad()),
-                                      context.load_step_tick &&
-                                              context.ticks >= context.load_step_tick
-                                          ? context.load_torque_nm
-                                          : 0.0,
+                                      (context.load_step_tick &&
+                                               context.ticks >= context.load_step_tick
+                                           ? context.load_torque_nm
+                                           : 0.0) +
+                                          (context.intake
+                                               ? context.intake->pumping_torque_nm()
+                                               : 0.0),
                                       sensor_connected);
             if (context.physical_input->missing_positions != gaps_before) {
                 fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
@@ -1438,13 +1445,14 @@ void run_emulator_loop(EmulatorLoopContext &context) {
     if (context.physical_crank) {
         fprintf(stdout, "[PHYSICAL-CRANK] ticks=%lld rpm=%.3f "
                         "angle_rad=%.6f rising=%llu falling=%llu "
-                        "missing=%llu ram47=%u\n",
+                        "missing=%llu ram47=%u ram46=%u\n",
                 context.ticks, context.physical_crank->rpm(),
                 context.physical_crank->angle_rad(),
                 context.physical_input->rising_edges,
                 context.physical_input->falling_edges,
                 context.physical_input->missing_positions,
-                static_cast<unsigned>(cpu.mLowerData[0x47]));
+                static_cast<unsigned>(cpu.mLowerData[0x47]),
+                static_cast<unsigned>(cpu.mLowerData[0x46]));
         fprintf(stdout, "[PHYSICAL-TPS] angle_rad=%.6f contact=%d "
                         "adc0_v=%.6f adc6_v=%.6f ram60=%u ram66=%u "
                         "ram6f=%u ram70=%u ram28=%u "

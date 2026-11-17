@@ -24,6 +24,23 @@ TEST(PortController, KLineVoltageIsInvertedOnP4BitFive) {
     EXPECT_EQ(ports.read(&cpu, 0xE8), 0xCA);
 }
 
+TEST(PortController, KLineBreakExpiresOnEmulatedTick) {
+    ma17::PtyBridge bridge{+[](uint8_t) {}};
+    long long ticks = 99;
+    auto start = std::chrono::steady_clock::now();
+    ma17::PortController ports{bridge, ticks, start};
+    em8051 cpu{};
+    cpu.mSFR[0xE8 - 0x80] = 0xEA;
+    bridge.rxd_line_state = false;
+    bridge.low_until_tick = 100;
+
+    EXPECT_EQ(ports.read(&cpu, 0xE8) & 0x20, 0x20);
+    ticks = 100;
+    EXPECT_EQ(ports.read(&cpu, 0xE8) & 0x20, 0);
+    EXPECT_TRUE(bridge.rxd_line_state);
+    EXPECT_EQ(bridge.low_until_tick, 0);
+}
+
 TEST(PortController, P5ReadsCurrentFirmwareLatch) {
     ma17::PtyBridge bridge{+[](uint8_t) {}};
     long long ticks = 0;

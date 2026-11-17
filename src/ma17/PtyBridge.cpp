@@ -1,7 +1,6 @@
 #include "ma17/PtyBridge.hpp"
 
 #include <cstdio>
-#include <ctime>
 #include <fcntl.h>
 #include <iostream>
 #include <pty.h>
@@ -15,12 +14,6 @@ PtyBridge::~PtyBridge() {
         close(mfd);
     if (sfd >= 0)
         close(sfd);
-}
-
-long long PtyBridge::now_ms() {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return now.tv_sec * 1000LL + now.tv_nsec / 1000000LL;
 }
 
 bool PtyBridge::ignore_parmark() {
@@ -47,7 +40,8 @@ bool PtyBridge::open_pty_4800_8N1() {
     override_rxd = false;
     override_state = true;
     rxd_line_state = true;
-    low_until_ms = 0;
+    emulated_tick = 0;
+    low_until_tick = 0;
     break_detect_buffer.fill(0);
     break_detect_idx = 0;
     rx_queue = {};
@@ -184,12 +178,14 @@ void PtyBridge::read_and_process() {
         break_detect_buffer[2] = byte;
         if (byte == 0x00 || byte == 0xFF) {
             rxd_line_state = byte == 0xFF;
-            long long now = now_ms();
-            low_until_ms = rxd_line_state ? 0 : now + 250;
+            // A PTY BREAK is a level sample. Hold it for at most 250 ms
+            // in the ECU's 990 kHz machine-cycle clock.
+            low_until_tick = rxd_line_state ? 0 : emulated_tick + 247500;
             fprintf(stderr,
-                    "[K-LINE] BREAK detected (RXD=%s, hold until +%lld ms)\n",
+                    "[K-LINE] BREAK detected (RXD=%s, tick=%lld, hold=%lld ticks)\n",
                     (rxd_line_state ? "HIGH" : "LOW"),
-                    rxd_line_state ? 0LL : low_until_ms - now);
+                    emulated_tick,
+                    rxd_line_state ? 0LL : 247500LL);
             fflush(stderr);
         } else {
             (void)!write(mfd, &byte, 1);

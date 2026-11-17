@@ -27,8 +27,10 @@ def sleep_ms(ms):
     time.sleep(ms / 1000.0)
 
 
-def send_5baud_init(ser: serial.Serial, value: int, pty_mode: bool):
-    print(f"\n[INIT] 5-baud init: 0x{value:02X} (PTY mode: {pty_mode})")
+def send_5baud_init(ser: serial.Serial, value: int, pty_mode: bool,
+                    bit_ms: float = BIT_MS):
+    print(f"\n[INIT] 5-baud init: 0x{value:02X} (PTY mode: {pty_mode}, "
+          f"bit={bit_ms:.2f} ms)")
 
     # start + 8 data (LSB first) + stop
     bits = [0] + [(value >> i) & 1 for i in range(8)] + [1]
@@ -38,13 +40,13 @@ def send_5baud_init(ser: serial.Serial, value: int, pty_mode: bool):
         # Send every bit level explicitly; a MARK must release the prior BREAK.
         for b in bits:
             ser.write(b"\xff\x00\xff" if b else b"\xff\x00\x00")
-            sleep_ms(BIT_MS)
+            sleep_ms(bit_ms)
     else:
         # Porta serial real: use break_condition
         # (obs.: alguns drivers exigem pequeno gap entre bits)
         for b in bits:
             ser.break_condition = b == 0  # SPACE=LOW quando 0
-            sleep_ms(BIT_MS)
+            sleep_ms(bit_ms)
         ser.break_condition = False  # idle alto
 
     print("[INIT] 5-baud concluído")
@@ -306,7 +308,8 @@ def ecu_write_packet(ser, frame_id, data=None, counter=0):
     return send_ecu_packet(ser, frame_id, data, counter)
 
 
-def ecu_handshake(ser, pty_mode: bool):
+def ecu_handshake(ser, pty_mode: bool, skip_5baud: bool = False,
+                  bit_ms: float = BIT_MS):
     global packet_counter
     print("\n" + "=" * 60)
     print("INICIANDO HANDSHAKE K-LINE")
@@ -318,11 +321,13 @@ def ecu_handshake(ser, pty_mode: bool):
     sleep_ms(50)
 
     # 1) 5-baud init (0x10 para MA1.7)
-    send_5baud_init(ser, 0x10, pty_mode)
+    if not skip_5baud:
+        send_5baud_init(ser, 0x10, pty_mode, bit_ms)
 
     # 2) The Fiat emulator sends five keys after sync; hardware may differ.
     print("\n[HANDSHAKE] Aguardando resposta da ECU...")
-    sync = read_byte_with_timeout(ser, 2000, "Sync: ")
+    sync = read_byte_with_timeout(ser, 3000 if skip_5baud else 2000,
+                                  "Sync: ")
     if sync is None:
         print("[ERRO] Timeout aguardando 0x55")
         return False
@@ -617,16 +622,32 @@ def main():
     modes = {"--handshake-only", "--diagnostics-once", "--faults-once",
              "--frame38-probe"}
     options = sys.argv[2:]
+    skip_5baud = "--skip-5baud" in options
+    clock_options = [arg for arg in options if arg.startswith("--cpu-ticks-per-second=")]
     fault_options = [arg for arg in options if arg.startswith("--expect-fault-triplet=")]
     mode_options = [arg for arg in options if arg in modes]
     if (len(sys.argv) < 2 or len(fault_options) > 1 or len(mode_options) > 1 or
-            len(options) != len(fault_options) + len(mode_options) or
+            len(clock_options) > 1 or
+            len(options) != len(fault_options) + len(mode_options) + skip_5baud +
+            len(clock_options) or
             (fault_options and mode_options not in
              (["--diagnostics-once"], ["--faults-once"]))):
         print("Uso: python3 test_pty.py /dev/pts/X|/dev/ttyUSB0 "
               "[--handshake-only|--diagnostics-once|--faults-once|--frame38-probe "
-              "[--expect-fault-triplet=02061B]]")
+              "[--expect-fault-triplet=02061B] [--skip-5baud] "
+              "[--cpu-ticks-per-second=N]]")
         return False
+    bit_ms = BIT_MS
+    if clock_options:
+        try:
+            tick_rate = float(clock_options[0].split("=", 1)[1])
+        except ValueError:
+            return False
+        if not 100000 <= tick_rate <= 2000000:
+            return False
+        bit_ms = 198000000.0 / tick_rate
+        print(f"[INIT] CPU observado: {tick_rate:.0f} ticks/s; "
+              f"5-baud PTY: {bit_ms:.2f} ms/bit")
     expected_triplet = None
     if fault_options:
         try:
@@ -668,7 +689,7 @@ def main():
         print("Conectado!\n")
         time.sleep(0.2)
 
-        ok = ecu_handshake(ser, pty_mode)
+        ok = ecu_handshake(ser, pty_mode, skip_5baud, bit_ms)
         if ok:
             print("\n" + "=" * 60)
             print("HANDSHAKE CONCLUÍDO COM SUCESSO!")

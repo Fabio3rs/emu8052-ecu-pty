@@ -4,8 +4,9 @@ namespace ecu_hw {
 
 // CC3/P1.3-to-injector binding and active-low polarity are candidates.
 struct InjectorStageParameters {
-    // Gasoline equivalent: ~385 g/min at 1 bar, near catalog 380 g/min.
-    double rated_flow_m3_s = 900e-6 / 60.0;
+    // Single injector for four cylinders: 940 cc/min rated at 3 bar.
+    // With 1 bar rail differential this gives ~402 g/min for gasoline.
+    double rated_flow_m3_s = 940e-6 / 60.0;
     double rated_delta_pa = 300000.0;
     double fuel_density_kg_m3 = 740.0;
     double rail_absolute_pa = 200000.0;

@@ -40,6 +40,16 @@ TEST(CrankDynamics, WheelHasTwoMissingPositionsAndStopsWithoutDrive) {
     EXPECT_DOUBLE_EQ(crank.angle_rad(), stopped_angle);
 }
 
+TEST(CrankDynamics, FrictionMatchesMotoredIdleOrderOfMagnitude) {
+    engine::CrankDynamics crank;
+    for (int tick = 0; tick < 400000; ++tick)
+        crank.step(true);
+    const double fmep_pa = crank.friction_torque_nm() *
+                           4.0 * std::acos(-1.0) / 0.001580;
+    EXPECT_GT(fmep_pa, 100000.0);
+    EXPECT_LT(fmep_pa, 150000.0);
+}
+
 TEST(CrankDynamics, RejectsInvalidParametersAndTorque) {
     engine::CrankParameters parameters;
     parameters.inertia_kg_m2 = 0.0;

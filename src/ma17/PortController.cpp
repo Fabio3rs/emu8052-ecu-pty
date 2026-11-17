@@ -11,15 +11,15 @@ namespace ma17 {
 
 uint8_t PortController::read(em8051 *cpu, uint8_t address) {
     if (address == 0xE8) { // P4: the K-line transceiver drives pin P4.5.
-        if (!bridge_.override_rxd && bridge_.low_until_ms &&
-            PtyBridge::now_ms() >= bridge_.low_until_ms) {
+        if (!bridge_.override_rxd && bridge_.low_until_tick &&
+            ticks_ >= bridge_.low_until_tick) {
             if (!bridge_.rxd_line_state) {
                 fprintf(stderr,
                         "[K-LINE] UNBREAK: RXD LOW→HIGH (timer expired)\n");
                 fflush(stderr);
             }
             bridge_.rxd_line_state = true;
-            bridge_.low_until_ms = 0;
+            bridge_.low_until_tick = 0;
         }
 
         uint8_t p4 = cpu->mSFR[address - 0x80];

@@ -8,6 +8,7 @@ namespace engine {
 namespace {
 constexpr double gas_constant_j_per_kg_k = 287.0;
 constexpr double kelvin_offset = 273.15;
+constexpr double pi = 3.14159265358979323846;
 } // namespace
 
 IntakeFuel::IntakeFuel(IntakeFuelParameters parameters)
@@ -35,6 +36,12 @@ double IntakeFuel::pressure_pa() const {
     return air_mass_kg_ * gas_constant_j_per_kg_k *
            (air_temperature_c_ + kelvin_offset) /
            parameters_.manifold_volume_m3;
+}
+
+double IntakeFuel::pumping_torque_nm() const {
+    const double intake_pressure_drop_pa =
+        std::max(0.0, parameters_.ambient_pressure_pa - pressure_pa());
+    return intake_pressure_drop_pa * parameters_.displacement_m3 / (4.0 * pi);
 }
 
 IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,

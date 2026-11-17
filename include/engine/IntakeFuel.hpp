@@ -29,6 +29,8 @@ class IntakeFuel {
                     double injected_fuel_kg);
 
     double pressure_pa() const;
+    // Four-stroke intake pumping work per crank revolution, as mean torque.
+    double pumping_torque_nm() const;
     double air_mass_kg() const { return air_mass_kg_; }
     double fuel_film_kg() const { return fuel_film_kg_; }
     double fuel_vapor_kg() const { return fuel_vapor_kg_; }

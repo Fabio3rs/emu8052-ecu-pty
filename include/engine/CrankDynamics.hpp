@@ -5,9 +5,11 @@ namespace engine {
 // Estimated equivalent crank/flywheel parameters; SI units throughout.
 struct CrankParameters {
     double inertia_kg_m2 = 0.20;
-    double starter_torque_nm = 30.0;
+    double starter_torque_nm = 50.0;
     double breakaway_torque_nm = 4.0;
-    double running_friction_nm = 3.0;
+    // ~1.1 bar FMEP near 900 rpm for a 1.58 L four-stroke engine.
+    // Provisional motored estimate; includes accessories, not pumping.
+    double running_friction_nm = 12.5;
     double viscous_friction_nm_per_rad_s = 0.02;
     double wheel_offset_rad = 0.0; // Position zero relative to crank zero.
 };
@@ -28,6 +30,7 @@ class CrankDynamics {
     double angle_rad() const { return angle_rad_; }
     double speed_rad_s() const { return speed_rad_s_; }
     double rpm() const;
+    double friction_torque_nm() const;
     int wheel_position() const;
     double wheel_phase_rad() const;
 
