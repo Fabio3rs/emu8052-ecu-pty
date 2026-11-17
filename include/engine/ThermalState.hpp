@@ -13,6 +13,13 @@ struct ThermalParameters {
     double wall_air_w_per_k = 12.0;
     double air_ambient_w_per_k = 20.0;
     double coolant_ambient_w_per_k = 5.0;
+    double thermostat_open_c = 87.0;
+    double thermostat_full_open_c = 95.0;
+    double radiator_still_w_per_k = 30.0;
+    double radiator_speed_w_per_k_per_kmh = 3.0;
+    double radiator_fan_w_per_k = 260.0;
+    double fan_on_c = 100.0;
+    double fan_off_c = 95.0;
     double air_sensor_tau_s = 0.3;
     double coolant_sensor_tau_s = 1.0;
 };
@@ -23,7 +30,8 @@ class ThermalState {
                  ThermalParameters parameters = {});
 
     void advance_ticks(uint64_t ticks, double air_flow_kg_s = 0.0,
-                       double coolant_heat_w = 0.0);
+                       double coolant_heat_w = 0.0,
+                       double vehicle_speed_kmh = 0.0);
 
     double ambient_c() const { return ambient_c_; }
     double air_c() const { return air_c_; }
@@ -31,6 +39,8 @@ class ThermalState {
     double coolant_c() const { return coolant_c_; }
     double air_sensor_c() const { return air_sensor_c_; }
     double coolant_sensor_c() const { return coolant_sensor_c_; }
+    double thermostat_open_fraction() const;
+    bool fan_on() const { return fan_on_; }
 
   private:
     ThermalParameters parameters_;
@@ -40,6 +50,7 @@ class ThermalState {
     double coolant_c_;
     double air_sensor_c_;
     double coolant_sensor_c_;
+    bool fan_on_ = false;
 };
 
 } // namespace engine

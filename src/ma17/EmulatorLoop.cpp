@@ -497,12 +497,16 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                       *context.physical_input, false, 0.0, load,
                                       false);
             if (context.thermal && context.ticks % 990 == 0) {
+                context.vehicle_speed_kmh += std::clamp(
+                    context.vehicle_speed_target_kmh - context.vehicle_speed_kmh,
+                    -0.02, 0.02);
                 context.thermal->advance_ticks(
                     990,
                     context.intake
                         ? std::max(0.0, context.intake->last_air_in_kg_s())
                         : 0.0,
-                    context.coolant_heat_pending_j * 1000.0);
+                    context.coolant_heat_pending_j * 1000.0,
+                    context.vehicle_speed_kmh);
                 context.coolant_heat_pending_j = 0.0;
             }
             if (context.intake && context.throttle && context.thermal &&
@@ -562,10 +566,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.ticks, context.coil_channel);
         }
         if (context.thermal && context.ticks % 990 == 0) {
+            context.vehicle_speed_kmh += std::clamp(
+                context.vehicle_speed_target_kmh - context.vehicle_speed_kmh,
+                -0.02, 0.02);
             context.thermal->advance_ticks(
                 990, context.intake ? std::max(0.0, context.intake->last_air_in_kg_s())
                                     : 0.0,
-                context.coolant_heat_pending_j * 1000.0);
+                context.coolant_heat_pending_j * 1000.0,
+                context.vehicle_speed_kmh);
             context.coolant_heat_pending_j = 0.0;
         }
         if (context.throttle && context.ticks == context.pedal_step_tick) {
@@ -1034,13 +1042,18 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.thermal && context.ticks % 990000 == 0) {
             fprintf(stdout, "{\"type\":\"thermal\",\"tick\":%lld,"
                             "\"air_c\":%.3f,\"wall_c\":%.3f,"
-                            "\"coolant_c\":%.3f,\"iat_c\":%.3f,"
+                            "\"coolant_c\":%.3f,\"vehicle_kmh\":%.2f,"
+                            "\"thermostat_open\":%.3f,\"fan_on\":%u,"
+                            "\"iat_c\":%.3f,"
                             "\"ect_c\":%.3f,\"adc2_v\":%.4f,"
                             "\"adc3_v\":%.4f,\"adc3_upper\":%u,"
                             "\"ram61\":%u,"
                             "\"ram62\":%u,\"ram63\":%u}\n",
                     context.ticks, context.thermal->air_c(),
                     context.thermal->wall_c(), context.thermal->coolant_c(),
+                    context.vehicle_speed_kmh,
+                    context.thermal->thermostat_open_fraction(),
+                    context.thermal->fan_on() ? 1U : 0U,
                     context.thermal->air_sensor_c(),
                     context.thermal->coolant_sensor_c(),
                     context.sensor_circuit->air_voltage(context.thermal->air_sensor_c()),
@@ -1236,8 +1249,13 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
         snapshot.fuel_film_kg = context.intake->fuel_film_kg();
         snapshot.fuel_vapor_kg = context.intake->fuel_vapor_kg();
     }
-    if (context.thermal)
+    if (context.thermal) {
         snapshot.coolant_c = context.thermal->coolant_c();
+        snapshot.vehicle_speed_kmh = context.vehicle_speed_kmh;
+        snapshot.thermostat_open_fraction =
+            context.thermal->thermostat_open_fraction();
+        snapshot.radiator_fan_on = context.thermal->fan_on();
+    }
     if (context.injector_stage)
         snapshot.injector_pulses = context.injector_stage->pulse_count();
     return snapshot;

@@ -22,6 +22,7 @@ namespace lab {
 enum class ControlType {
     Pedal,
     Load,
+    VehicleSpeed,
     Starter,
     Key,
     Pause,
@@ -78,6 +79,7 @@ class SimSession {
     void set_speed(double speed);
     void set_pedal(double pull_m);
     void set_load(double torque_nm);
+    void set_vehicle_speed(double kmh);
     void set_starter(bool engaged);
     void set_key(bool on);
     void schedule_control(AppliedControl control);

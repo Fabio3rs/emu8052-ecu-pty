@@ -25,6 +25,8 @@ const char *control_name(ControlType type) {
         return "pedal";
     case ControlType::Load:
         return "load";
+    case ControlType::VehicleSpeed:
+        return "vehicle_speed";
     case ControlType::Starter:
         return "starter";
     case ControlType::Key:
@@ -53,7 +55,8 @@ const char *control_name(ControlType type) {
 
 bool parse_control_name(const std::string &name, ControlType &type) {
     for (ControlType candidate :
-         {ControlType::Pedal, ControlType::Load, ControlType::Starter,
+         {ControlType::Pedal, ControlType::Load, ControlType::VehicleSpeed,
+          ControlType::Starter,
           ControlType::Key, ControlType::Pause, ControlType::Resume,
           ControlType::StepTicks, ControlType::StepIgnition,
           ControlType::StepInjector, ControlType::StepSpark,
@@ -76,6 +79,8 @@ bool valid_control(const AppliedControl &control) {
         return control.value >= 0.0 && control.value <= 0.025;
     case ControlType::Load:
         return control.value >= 0.0 && control.value <= 60.0;
+    case ControlType::VehicleSpeed:
+        return control.value >= 0.0 && control.value <= 200.0;
     case ControlType::Starter:
     case ControlType::Key:
         return control.value == 0.0 || control.value == 1.0;
@@ -330,6 +335,11 @@ void SimSession::set_load(double torque_nm) {
     schedule_control({0, ControlType::Load, std::clamp(torque_nm, 0.0, 60.0)});
 }
 
+void SimSession::set_vehicle_speed(double kmh) {
+    schedule_control({0, ControlType::VehicleSpeed,
+                      std::clamp(kmh, 0.0, 200.0)});
+}
+
 void SimSession::set_starter(bool engaged) {
     schedule_control({0, ControlType::Starter, engaged ? 1.0 : 0.0});
 }
@@ -554,6 +564,9 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
             self.load_torque_nm_ = command->value;
             self.load_override_ = true;
             break;
+        case ControlType::VehicleSpeed:
+            context.vehicle_speed_target_kmh = command->value;
+            break;
         case ControlType::Starter:
             self.starter_engaged_ = command->value != 0.0;
             self.starter_override_ = true;
@@ -618,6 +631,7 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
                     break;
                 case ControlType::Pedal:
                 case ControlType::Load:
+                case ControlType::VehicleSpeed:
                 case ControlType::Starter:
                 case ControlType::Key:
                 case ControlType::Pause:

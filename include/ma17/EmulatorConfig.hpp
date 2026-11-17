@@ -43,6 +43,7 @@ struct EmulatorConfig {
     long long tps_restore_tick = 0;
     int tps_open_mv = -1; // Explicit test voltage; board bias is unknown.
     double initial_coolant_c = 20.0;
+    double vehicle_speed_kmh = 0.0;
     double battery_v = 12.5;
     int ethanol_percent = 0; // Explicit E0 baseline; E22/E25 are candidate fuel cases.
     long long ect_open_tick = 0;

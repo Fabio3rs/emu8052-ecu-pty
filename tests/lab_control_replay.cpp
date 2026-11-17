@@ -50,7 +50,7 @@ bool run(const char *rom, const std::vector<lab::AppliedControl> &controls,
 int main(int argc, char **argv) {
     if (argc != 2)
         return 2;
-    const std::array<lab::AppliedControl, 10> commands{{
+    const std::array<lab::AppliedControl, 11> commands{{
         {0, lab::ControlType::Key, 0.0},
         {50000, lab::ControlType::Key, 1.0},
         {50000, lab::ControlType::Pause, 0.0},
@@ -60,13 +60,16 @@ int main(int argc, char **argv) {
         {400000, lab::ControlType::Starter, 0.0},
         {500000, lab::ControlType::Pedal, 0.008},
         {700000, lab::ControlType::Load, 24.0},
+        {800000, lab::ControlType::VehicleSpeed, 60.0},
         {900000, lab::ControlType::Pedal, 0.0},
     }};
     Result original;
     if (!run(argv[1], {commands.begin(), commands.end()}, original) ||
         original.history.size() != commands.size() ||
         original.history[4].tick != 50007 ||
-        original.snapshot.crank_angle_rad <= 0.0 || original.events.empty() ||
+        original.snapshot.crank_angle_rad <= 0.0 ||
+        original.snapshot.vehicle_speed_kmh <= 0.0 ||
+        original.events.empty() ||
         original.event_overflow != 0)
         return 1;
     const char *trace_path = "lab-control-trace-test.txt";
@@ -97,6 +100,8 @@ int main(int argc, char **argv) {
         replay.snapshot.pc != original.snapshot.pc ||
         replay.snapshot.rpm != original.snapshot.rpm ||
         replay.snapshot.crank_angle_rad != original.snapshot.crank_angle_rad ||
+        replay.snapshot.vehicle_speed_kmh !=
+            original.snapshot.vehicle_speed_kmh ||
         replay.snapshot.ram47 != original.snapshot.ram47 ||
         replay.snapshot.injector_pulses != original.snapshot.injector_pulses ||
         replay.snapshot.burns != original.snapshot.burns ||

@@ -79,6 +79,9 @@ struct EmulatorLoopContext {
     long long tps2_high_tick = 0;
     long long tps2_restore_tick = 0;
     engine::ThermalState *thermal = nullptr;
+    // Explicit road-speed scenario; drivetrain and gear ratio are not modeled.
+    double vehicle_speed_kmh = 0.0;
+    double vehicle_speed_target_kmh = 0.0;
     ecu_hw::Ma17SensorCircuit *sensor_circuit = nullptr;
     engine::IntakeFuel *intake = nullptr;
     engine::Combustion combustion{};

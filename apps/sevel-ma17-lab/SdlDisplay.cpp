@@ -468,6 +468,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     double pedal_pull_m = snapshot.pedal_pull_m;
     double pedal_applied_m = pedal_pull_m;
     double load_nm = snapshot.applied_load_nm;
+    double road_speed_target_kmh = snapshot.vehicle_speed_kmh;
     double remembered_load_nm = load_nm > 0.0 ? load_nm : 24.0;
     bool pedal_user_override = false;
     bool load_user_override = false;
@@ -824,6 +825,15 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     activate_button(LabButtonAction::PedalDown);
                 else if (event.key.key == SDLK_L)
                     activate_button(LabButtonAction::Load);
+                else if (!replay_controls &&
+                         (event.key.key == SDLK_PAGEUP ||
+                          event.key.key == SDLK_PAGEDOWN)) {
+                    road_speed_target_kmh = std::clamp(
+                        road_speed_target_kmh +
+                            (event.key.key == SDLK_PAGEUP ? 10.0 : -10.0),
+                        0.0, 200.0);
+                    session->set_vehicle_speed(road_speed_target_kmh);
+                }
                 else if (!replay_controls && event.key.key == SDLK_S) {
                     keyboard_starter_held = true;
                     session->set_starter(true);
@@ -1239,17 +1249,22 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         if (compact_overlay)
             std::snprintf(status, sizeof(status),
                           "RPM %.0f  TPS %.1fD  T1m %.2fV  T2m %.2fV  "
-                          "LAM %.2f  ECT %.0fC",
+                          "LAM %.2f  ECT %.0fC  ROAD %.0f  FAN %s",
                           displayed.rpm,
                           displayed.throttle_angle_rad * 57.2958,
                           displayed.tps_track1_v, displayed.tps_track2_v,
-                          displayed.lambda, displayed.coolant_c);
+                          displayed.lambda, displayed.coolant_c,
+                          displayed.vehicle_speed_kmh,
+                          displayed.radiator_fan_on ? "ON" : "off");
         else
             std::snprintf(status, sizeof(status),
-                          "RPM %.0f  TPS %.1f deg  lambda %.2f  coolant %.1f C",
+                          "RPM %.0f  TPS %.1f deg  lambda %.2f  coolant %.1f C  "
+                          "road %.0f km/h  fan %s",
                           displayed.rpm,
                           displayed.throttle_angle_rad * 57.2958,
-                          displayed.lambda, displayed.coolant_c);
+                          displayed.lambda, displayed.coolant_c,
+                          displayed.vehicle_speed_kmh,
+                          displayed.radiator_fan_on ? "ON" : "off");
         draw_status(0, status);
         const char *help_hint = show_help ? "H: CLOSE" : "H: HELP";
         font.draw(screen,
@@ -1310,9 +1325,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         if (!compact_overlay) {
             std::snprintf(status, sizeof(status),
                           "TPS1 model %.2f V  TPS2 model %.2f V  "
-                          "lambda model %.2f V",
+                          "lambda model %.2f V  THERM %.0f%%",
                           displayed.tps_track1_v, displayed.tps_track2_v,
-                          displayed.lambda_voltage_v);
+                          displayed.lambda_voltage_v,
+                          displayed.thermostat_open_fraction * 100.0);
             draw_status(4, status);
             char idle_status[72] = "  IAC? NO BINDING";
             if (displayed.idle_bridge_candidate)
@@ -1402,7 +1418,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             constexpr std::array<const char *, 7> help_lines{
                 "K KEY  |  HOLD S START  |  UP/DOWN PEDAL  |  L LOAD",
                 "SPACE PAUSE  |  . STEP 10MS  |  , NEXT IGNITION",
-                "+/- SPEED  |  M MUTE  |  [ ] VOLUME",
+                "+/- SIM  |  PGUP/DN ROAD  |  M MUTE  |  [ ] VOLUME",
                 "V SHAFT/RADIAL/AXIAL PAIRS  |  WHEEL ZOOM  |  MIDDLE PAN",
                 "WHEEL ON SCOPE: TIMEBASE  |  CLICK LABEL: CHANNEL",
                 "F/F11 FULLSCREEN  |  F12 CAPTURE  |  R RESET  |  ESC EXIT",

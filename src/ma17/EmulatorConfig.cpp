@@ -13,7 +13,8 @@ namespace ma17 {
 std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Uso: %s <rom.bin> [--8052] [--physical-crank "
-                        "--starter-ticks N --stop-ticks N]\n", argv[0]);
+                        "--starter-ticks N --stop-ticks N "
+                        "--vehicle-kmh 0..200]\n", argv[0]);
         return std::nullopt;
     }
 
@@ -191,6 +192,16 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
             const long value = std::strtol(argv[++index], &end, 10);
             if (*argv[index] && *end == '\0' && value >= 0 && value <= 120) {
                 config.initial_coolant_c = static_cast<double>(value);
+                continue;
+            }
+        }
+        if (index + 1 < argc && strcmp(argv[index], "--vehicle-kmh") == 0) {
+            errno = 0;
+            char *end = nullptr;
+            const long value = std::strtol(argv[++index], &end, 10);
+            if (!errno && end != argv[index] && *end == '\0' &&
+                value >= 0 && value <= 200) {
+                config.vehicle_speed_kmh = static_cast<double>(value);
                 continue;
             }
         }
@@ -546,7 +557,8 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                config.tps2_high_tick || config.tps2_restore_tick ||
                config.tps_open_tick || config.tps_restore_tick ||
                config.tps_open_mv >= 0 ||
-               config.initial_coolant_c != 20.0 || config.ect_open_tick ||
+               config.initial_coolant_c != 20.0 ||
+               config.vehicle_speed_kmh != 0.0 || config.ect_open_tick ||
                config.ect_restore_tick || config.adc4_mv >= 0 ||
                config.adc7_boundary_v >= 0.0 ||
                config.adc7_step_v >= 0.0 || config.adc7_step_tick ||

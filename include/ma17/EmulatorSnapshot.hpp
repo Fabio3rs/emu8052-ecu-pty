@@ -22,6 +22,9 @@ struct EmulatorSnapshot {
     double lambda = 0.0;
     double lambda_voltage_v = 0.0;
     double coolant_c = 0.0;
+    double vehicle_speed_kmh = 0.0;
+    double thermostat_open_fraction = 0.0;
+    bool radiator_fan_on = false;
     double idle_stem_m = 0.0;
     uint16_t pc = 0;
     uint8_t ram47 = 0;

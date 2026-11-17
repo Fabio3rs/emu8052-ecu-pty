@@ -80,13 +80,15 @@ void print_lab_state(const ma17::EmulatorSnapshot &snapshot,
           snapshot.pedal_pull_m, snapshot.applied_load_nm,
           snapshot.fuel_film_kg, snapshot.fuel_vapor_kg, snapshot.tps_track1_v,
           snapshot.tps_track2_v, snapshot.lambda, snapshot.lambda_voltage_v,
-          snapshot.coolant_c})
+          snapshot.coolant_c, snapshot.vehicle_speed_kmh,
+          snapshot.thermostat_open_fraction})
         real(value);
-    for (std::uint64_t value : std::array<std::uint64_t, 12>{
+    for (std::uint64_t value : std::array<std::uint64_t, 13>{
              snapshot.pc, snapshot.ram47, snapshot.ram27_faults,
              snapshot.ram28_faults, snapshot.cc3_high, snapshot.p50_high,
              snapshot.p51_high, snapshot.lamp_on_candidate, snapshot.key_on,
-             snapshot.injector_pulses, snapshot.burns, snapshot.missed_sparks})
+             snapshot.injector_pulses, snapshot.burns, snapshot.missed_sparks,
+             snapshot.radiator_fan_on})
         hash_word(state_hash, value);
     for (auto burns : snapshot.burns_by_cylinder)
         hash_word(state_hash, burns);

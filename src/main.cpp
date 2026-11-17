@@ -505,6 +505,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         loop.tps2_high_tick = config->tps2_high_tick;
         loop.tps2_restore_tick = config->tps2_restore_tick;
         loop.thermal = &thermal;
+        loop.vehicle_speed_target_kmh = config->vehicle_speed_kmh;
         loop.sensor_circuit = &sensor_circuit;
         loop.pump_relay_p34_candidate = config->pump_relay_p34;
         loop.lambda_adc_pin_override_v = config->lambda_stuck_v;
