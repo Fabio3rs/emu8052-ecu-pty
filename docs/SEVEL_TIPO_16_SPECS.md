@@ -13,7 +13,7 @@ Fotografias do conjunto de mostradores com iluminação verde original acesa e m
 - **Fundo de escala:** **$8000\text{ RPM}$** (marcas numéricas: `0, 10, 20, 30, 40, 50, 60, 70, 80`).
 - **Passo da escala:**
   - Marcas principais a cada $1000\text{ RPM}$ ($10\times 100$).
-  - Marcas secundárias a cada $200\text{ RPM}$ ($2\times 100$).
+  - Marcas secundárias a cada $100\text{ RPM}$ ($1\times 100$).
 - **Faixa de Marcha Lenta (Idle Zone):** $850\text{ a }900\text{ RPM}$ (ponteiro estabilizado logo abaixo do número 10).
 - **Faixa Amarela (*Yellow Line*):** Início em **$5600\text{ RPM}$** até **$6000\text{ RPM}$** (`#F5CD1E`).
 - **Faixa Vermelha (*Redline*):** Início em **$6000\text{ RPM}$** até **$8000\text{ RPM}$** (`#EE4445`).
