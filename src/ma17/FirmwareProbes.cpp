@@ -325,6 +325,10 @@ void trace_pre_tick_boot_and_crank(const em8051 &cpu, long long tick,
 }
 
 void trace_pre_tick_engine(const em8051 &cpu, long long tick) {
+    if (!cpu.mUpperData || !cpu.mExtData) {
+        return;
+    }
+
     static const bool trace_idle_pedal_gate =
         std::getenv("MA17_TRACE_IDLE_PEDAL_GATE") != nullptr;
     if (trace_idle_pedal_gate && tick >= 9900000 &&

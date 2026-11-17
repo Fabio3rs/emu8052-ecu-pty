@@ -140,15 +140,9 @@ void render_sevel_scene_donor(Renderer &renderer,
     for (const auto &call : calls)
         submit_shape(call.indices, identity, call.color);
     if (mesh_library) {
-        const float pitch =
-            static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);
-        const float head_y =
-            static_cast<float>(geometry.visual_estimate_rod_length_m +
-                               SevelVisualGeometry::crank_radius_m +
-                               dimensions.visual_estimate_head_height_m);
         constexpr float visual_estimate_valve_width_scale_m = 0.018f;
         constexpr float visual_estimate_valve_height_scale_m = 0.015f;
-        const auto &shape = mesh_indices[1];
+        const auto &valve_shape = mesh_indices[1];
         for (std::size_t cylinder = 0; cylinder < 4; ++cylinder) {
             const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
             for (int valve = 0; valve < 2; ++valve) {
@@ -168,15 +162,13 @@ void render_sevel_scene_donor(Renderer &renderer,
                 const ysVector color =
                     valve == 0 ? ysVector{0.38f, 0.79f, 0.81f, 1.0f}
                                : ysVector{0.78f, 0.52f, 0.41f, 1.0f};
-                submit_shape(shape, transform, color);
+                submit_shape(valve_shape, transform, color);
             }
         }
     }
     if (mesh_library) {
         const auto poses = sevel_cylinder_poses(
             snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
-        const float pitch =
-            static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);
         for (std::size_t cylinder = 0; cylinder < poses.size(); ++cylinder) {
             const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
             const auto &pose = poses[cylinder];

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include <SDL3/SDL_audio.h>
 
 #include <atomic>
@@ -11,7 +13,8 @@ class SimSession;
 
 class LiveAudio final {
   public:
-    LiveAudio(SimSession &session, SDL_AudioStream *stream);
+    LiveAudio(SimSession &session EMU_LIFETIMEBOUND,
+              SDL_AudioStream *stream EMU_LIFETIMEBOUND);
     ~LiveAudio();
     LiveAudio(const LiveAudio &) = delete;
     LiveAudio &operator=(const LiveAudio &) = delete;

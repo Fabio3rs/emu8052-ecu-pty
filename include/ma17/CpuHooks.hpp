@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include <cstdint>
 
 struct em8051;
@@ -13,7 +15,9 @@ class UartScheduler;
 // runtime dependencies while one ECU instance is active.
 class CpuHooks {
   public:
-    CpuHooks(UartScheduler &uart, PortController &ports, long long &ticks);
+    CpuHooks(UartScheduler &uart EMU_LIFETIMEBOUND,
+             PortController &ports EMU_LIFETIMEBOUND,
+             long long &ticks EMU_LIFETIMEBOUND);
     ~CpuHooks();
     CpuHooks(const CpuHooks &) = delete;
     CpuHooks &operator=(const CpuHooks &) = delete;

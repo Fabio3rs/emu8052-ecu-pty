@@ -6,7 +6,8 @@ namespace ma17 {
 
 // ISO 9141-2 slow init for address 10h at the Fiat 11.88 MHz clock.
 struct FiveBaudInjector {
-    explicit FiveBaudInjector(PtyBridge &pty_bridge) : bridge(pty_bridge) {}
+    explicit FiveBaudInjector(PtyBridge &pty_bridge EMU_LIFETIMEBOUND)
+        : bridge(pty_bridge) {}
 
     void start(long long current_tick);
     void tick(long long current_tick);

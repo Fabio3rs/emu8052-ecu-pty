@@ -36,7 +36,27 @@ elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC")
     add_compile_options(/W4 /WX)
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     message(STATUS "Setting Clang flags")
-    add_compile_options(-Werror -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-padded -Wno-global-constructors -Wno-exit-time-destructors -Wno-weak-vtables -Wno-documentation -Wno-documentation-unknown-command -Wno-unsafe-buffer-usage -Wno-unsafe-buffer-usage-in-libc-call -Wno-unused-macros -Wno-c99-designator -Wno-covered-switch-default)
+    # Keep all Clang diagnostics enabled, except the explicitly reviewed categories below.
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Werror>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Weverything>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-c++98-compat>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-c++98-compat-pedantic>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-padded>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-global-constructors>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-exit-time-destructors>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-weak-vtables>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-documentation>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-documentation-unknown-command>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-unsafe-buffer-usage>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-unsafe-buffer-usage-in-libc-call>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-macros>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-c99-designator>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-covered-switch-default>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-switch-default>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-ctad-maybe-unsupported>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-float-equal>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-old-style-cast>
+                        $<$<COMPILE_LANGUAGE:CXX>:-Wno-reserved-macro-identifier>)
 endif()
 
 if(ENABLE_TESTS)

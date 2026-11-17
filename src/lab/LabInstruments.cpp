@@ -100,7 +100,8 @@ void draw_donor_trace(SDL_Renderer *renderer,
     for (const auto &point : trace) {
         if (has_previous && previous.x == point.x && previous.y == point.y)
             continue;
-        scope.addDataPoint(point.x, point.y);
+        scope.addDataPoint(static_cast<double>(point.x),
+                           static_cast<double>(point.y));
         previous = Point(point.x, point.y);
         has_previous = true;
     }

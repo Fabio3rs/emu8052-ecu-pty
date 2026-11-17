@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -80,7 +81,8 @@ TEST(SevelGeometry, RejectsImpossibleDimensions) {
     lab::SevelVisualGeometry geometry;
     geometry.visual_estimate_rod_length_m = 0.02;
     EXPECT_THROW(lab::cylinder_pose(0.0, 1, geometry), std::invalid_argument);
-    EXPECT_THROW(lab::cylinder_pose(NAN, 1), std::invalid_argument);
+    EXPECT_THROW(lab::cylinder_pose(std::numeric_limits<double>::quiet_NaN(), 1),
+                 std::invalid_argument);
     EXPECT_THROW(lab::cylinder_pose(0.0, 5), std::invalid_argument);
 }
 
@@ -115,7 +117,9 @@ TEST(SevelValves, FollowsConfiguredPhysicalTdcReference) {
     EXPECT_EQ(lab::valve_lift_fraction(450.0 * pi / 180.0, 0,
                                        lab::ValveKind::Intake, reference),
               0.0);
-    EXPECT_THROW(lab::valve_lift_fraction(0.0, 0, lab::ValveKind::Intake, NAN),
+    EXPECT_THROW(lab::valve_lift_fraction(
+                     0.0, 0, lab::ValveKind::Intake,
+                     std::numeric_limits<double>::quiet_NaN()),
                  std::invalid_argument);
 }
 

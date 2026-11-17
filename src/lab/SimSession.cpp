@@ -616,7 +616,13 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
                     self.step_event_type_ =
                         ma17::EmulatorEventType::LampCandidate;
                     break;
-                default:
+                case ControlType::Pedal:
+                case ControlType::Load:
+                case ControlType::Starter:
+                case ControlType::Key:
+                case ControlType::Pause:
+                case ControlType::Resume:
+                case ControlType::StepTicks:
                     break;
                 }
             }

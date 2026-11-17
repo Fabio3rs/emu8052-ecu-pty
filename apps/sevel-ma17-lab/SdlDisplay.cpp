@@ -310,7 +310,8 @@ void draw_volume_slider(SDL_Renderer *screen, FontRenderer &font, int width,
                          (box.w - 4.0f) * volume, 3.0f * scale};
     SDL_RenderFillRect(screen, &fill);
     char label[32];
-    std::snprintf(label, sizeof(label), "VOLUME %.0f%%", volume * 100.0f);
+    std::snprintf(label, sizeof(label), "VOLUME %.0f%%",
+                  static_cast<double>(volume) * 100.0);
     font.draw(screen, box.x + 8.0f, box.y + 5.0f * scale, label,
               enabled ? SDL_Color{235, 241, 246, 255}
                       : SDL_Color{94, 108, 116, 255},
@@ -351,7 +352,8 @@ void draw_pedal_slider(SDL_Renderer *screen, FontRenderer &font, int width,
                          (box.w - 4.0f) * fraction, 3.0f * scale};
     SDL_RenderFillRect(screen, &fill);
     char label[32];
-    std::snprintf(label, sizeof(label), "PEDAL %.0f%%", fraction * 100.0f);
+    std::snprintf(label, sizeof(label), "PEDAL %.0f%%",
+                  static_cast<double>(fraction) * 100.0);
     font.draw(screen, box.x + 8.0f, box.y + 5.0f * scale, label,
               enabled ? SDL_Color{235, 241, 246, 255}
                       : SDL_Color{94, 108, 116, 255},
@@ -565,14 +567,16 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     const auto set_pedal_from_pointer = [&](float x, int width, int height) {
         const SDL_FRect box = pedal_slider_rect(width, height);
         pedal_user_override = true;
-        pedal_pull_m = 0.025 * std::clamp((x - box.x) / box.w, 0.0f, 1.0f);
+        pedal_pull_m = 0.025 * static_cast<double>(
+            std::clamp((x - box.x) / box.w, 0.0f, 1.0f));
         session->set_pedal(pedal_pull_m);
     };
     const auto set_load_from_pointer = [&](float x, int width, int height) {
         const auto box = lab_button_rect(
             static_cast<std::size_t>(LabButtonAction::Load), width, height);
         load_user_override = true;
-        load_nm = 60.0 * std::clamp((x - box.x) / box.width, 0.0f, 1.0f);
+        load_nm = 60.0 * static_cast<double>(
+            std::clamp((x - box.x) / box.width, 0.0f, 1.0f));
         if (load_nm > 0.0)
             remembered_load_nm = load_nm;
         session->set_load(load_nm);
@@ -1258,7 +1262,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 audio_source ? audio_source->mode_discarded_samples() : 0ULL,
                 audio_source ? audio_source->device_need_samples() : 0ULL,
                 audio_source ? audio_source->empty_queue_observations() : 0ULL,
-                sound_state, sound_volume * 100.0f);
+                sound_state, static_cast<double>(sound_volume) * 100.0);
         draw_status(1, status);
         constexpr double degrees_per_radian =
             180.0 / 3.14159265358979323846;
@@ -1438,8 +1442,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     }
     if (audio_source)
         audio_source->stop();
-    if (audio_stream)
-        SDL_DestroyAudioStream(audio_stream);
     if (session)
         std::fprintf(
             stdout,
@@ -1453,6 +1455,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             audio_source ? audio_source->mode_discarded_samples() : 0ULL,
             audio_source ? audio_source->device_need_samples() : 0ULL,
             audio_source ? audio_source->max_pcm_peak() : 0U);
+    audio_source.reset();
+    if (audio_stream)
+        SDL_DestroyAudioStream(audio_stream);
     gpu_renderer.reset();
     if (gpu_window)
         SDL_DestroyWindow(gpu_window);

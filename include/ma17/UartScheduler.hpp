@@ -12,7 +12,8 @@ namespace ma17 {
 // Models the Fiat MA1.7 UART's separate SBUF paths and tick-delayed TI/RI.
 class UartScheduler {
   public:
-    UartScheduler(PtyBridge &pty_bridge, long long &emulated_ticks)
+    UartScheduler(PtyBridge &pty_bridge EMU_LIFETIMEBOUND,
+                  long long &emulated_ticks EMU_LIFETIMEBOUND)
         : bridge_(pty_bridge), ticks_(emulated_ticks) {}
 
     void bind_cpu(em8051 *cpu);

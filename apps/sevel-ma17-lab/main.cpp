@@ -244,14 +244,14 @@ int main(int argc, char **argv) {
     }
 #endif
     if (bench_preset) {
-        const auto has_option = [&harness_args](const char *option) {
-            return std::find(harness_args.begin(), harness_args.end(),
-                             option) != harness_args.end();
+        const auto has_option = [](const std::vector<std::string> &args,
+                                   const char *option) {
+            return std::find(args.begin(), args.end(), option) != args.end();
         };
-        if (!has_option("--idle-contact-p43") &&
-            !has_option("--idle-contact-p46"))
+        if (!has_option(harness_args, "--idle-contact-p43") &&
+            !has_option(harness_args, "--idle-contact-p46"))
             harness_args.emplace_back("--idle-contact-p46");
-        if (!has_option("--idle-bridge-p15-p16"))
+        if (!has_option(harness_args, "--idle-bridge-p15-p16"))
             harness_args.emplace_back("--idle-bridge-p15-p16");
         constexpr std::array<std::pair<const char *, const char *>, 5> values{{
             {"--adc7-mv", "1232"},
@@ -261,7 +261,7 @@ int main(int argc, char **argv) {
             {"--lambda-adc-gain", "5"},
         }};
         for (const auto &[option, value] : values) {
-            if (!has_option(option)) {
+            if (!has_option(harness_args, option)) {
                 harness_args.emplace_back(option);
                 harness_args.emplace_back(value);
             }

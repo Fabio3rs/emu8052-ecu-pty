@@ -12,9 +12,10 @@ namespace lab {
 
 std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
                                                  std::size_t expected_size) {
+    std::vector<unsigned char> obj;
     std::ifstream input(path);
     if (!input)
-        return {};
+        return obj;
     const std::string encoded(std::istreambuf_iterator<char>{input}, {});
     std::vector<unsigned char> compressed;
     compressed.reserve(encoded.size() * 3 / 4);
@@ -30,7 +31,7 @@ std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
             continue;
         }
         if (padding)
-            return {};
+            return obj;
         unsigned int digit = 0;
         if (character >= 'A' && character <= 'Z')
             digit = static_cast<unsigned int>(character - 'A');
@@ -43,7 +44,7 @@ std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
         else if (character == '/')
             digit = 63;
         else
-            return {};
+            return obj;
         quartet = (quartet << 6) | digit;
         bits += 6;
         if (bits >= 8) {
@@ -53,13 +54,15 @@ std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
         }
     }
     if (compressed.empty() || encoded.empty() || bits >= 6)
-        return {};
-    std::vector<unsigned char> obj(expected_size);
+        return obj;
+    obj.resize(expected_size);
     uLongf decoded_size = obj.size();
     if (uncompress(obj.data(), &decoded_size, compressed.data(),
                    static_cast<uLong>(compressed.size())) != Z_OK ||
-        decoded_size != expected_size)
-        return {};
+        decoded_size != expected_size) {
+        obj.clear();
+        return obj;
+    }
     return obj;
 }
 

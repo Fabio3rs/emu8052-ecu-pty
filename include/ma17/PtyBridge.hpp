@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -10,7 +12,7 @@ namespace ma17 {
 
 struct PtyBridge {
     using ReceiveCallback = void (*)(uint8_t);
-    explicit PtyBridge(ReceiveCallback receive_callback)
+    explicit PtyBridge(ReceiveCallback receive_callback EMU_LIFETIMEBOUND)
         : on_byte(receive_callback) {}
     ~PtyBridge();
     PtyBridge(const PtyBridge &) = delete;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include "engine/IntakeFuel.hpp"
 #include "engine/FuelBlend.hpp"
 
@@ -107,7 +109,8 @@ class Combustion {
         return crank_angle_rad < pulse_end_rad_ ? pulse_torque_nm_ : 0.0;
     }
     unsigned long long burns() const { return burns_; }
-    const std::array<unsigned long long, 4> &burns_by_cylinder() const {
+    const std::array<unsigned long long, 4> &burns_by_cylinder() const
+        EMU_LIFETIMEBOUND {
         return burns_by_cylinder_;
     }
     unsigned long long missed_sparks() const { return missed_sparks_; }

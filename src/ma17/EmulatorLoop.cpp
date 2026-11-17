@@ -66,8 +66,8 @@ using MovcBucketCounts = std::map<std::pair<uint64_t, uint16_t>,
 using LookupKey = std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, uint8_t,
                              uint8_t, uint8_t, uint8_t, uint8_t, uint8_t>;
 using LookupCounts = std::map<LookupKey, unsigned long long>;
-static MovcCounts *movc_counts = nullptr;
-static MovcBucketCounts *movc_bucket_counts = nullptr;
+static thread_local MovcCounts *movc_counts = nullptr;
+static thread_local MovcBucketCounts *movc_bucket_counts = nullptr;
 static uint64_t movc_bucket_ticks = 0;
 static uint64_t movc_tick = 0;
 static em8051operation original_movc_pc = nullptr;
@@ -76,7 +76,7 @@ static std::array<em8051operation, 256> original_indirect_reads{};
 using IndirectReadKey = std::tuple<uint16_t, uint8_t, uint8_t>;
 using IndirectReadCounts = std::map<IndirectReadKey,
                                     std::pair<unsigned long long, uint64_t>>;
-static IndirectReadCounts *indirect_read_counts = nullptr;
+static thread_local IndirectReadCounts *indirect_read_counts = nullptr;
 static int indirect_read_address = -1;
 
 static uint8_t trace_indirect_read(em8051 *cpu) {
@@ -201,8 +201,11 @@ static uint8_t trace_movc(em8051 *cpu, uint8_t opcode,
             std::exit(2);
         }
         FILE *input = std::fopen(path, "rb");
-        if (!input || std::fread(donor.bytes.data(), 1, donor.bytes.size(), input)
-                          != donor.bytes.size() || std::fgetc(input) != EOF) {
+        if (!input || std::fseek(input, 0, SEEK_END) != 0 ||
+            std::ftell(input) != static_cast<long>(donor.bytes.size()) ||
+            std::fseek(input, 0, SEEK_SET) != 0 ||
+            std::fread(donor.bytes.data(), 1, donor.bytes.size(), input) !=
+                donor.bytes.size()) {
             fprintf(stderr, "Matrix donor must be a readable 32768-byte ROM: %s\n",
                     path);
             if (input) std::fclose(input);
@@ -1244,10 +1247,13 @@ void run_emulator_loop(EmulatorLoopContext &context) {
     em8051 &cpu = context.cpu;
     uint16_t last_pc = cpu.mPC;
     std::array<uint8_t, 0x8000> pc_seen{};
-    MovcCounts local_movc_counts;
-    MovcBucketCounts local_movc_bucket_counts;
+    static thread_local MovcCounts local_movc_counts;
+    static thread_local MovcBucketCounts local_movc_bucket_counts;
     LookupCounts lookup_counts;
-    IndirectReadCounts local_indirect_read_counts;
+    static thread_local IndirectReadCounts local_indirect_read_counts;
+    local_movc_counts.clear();
+    local_movc_bucket_counts.clear();
+    local_indirect_read_counts.clear();
     const bool trace_movc_enabled = std::getenv("MA17_TRACE_MOVC") != nullptr;
     if (const char *setting = std::getenv("MA17_TRACE_INDIRECT_IRAM_ADDRESS")) {
         char *end = nullptr;

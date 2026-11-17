@@ -14,8 +14,10 @@ namespace ma17 {
 class PortController {
   public:
     using ContactProvider = bool (*)(void *);
-    PortController(PtyBridge &pty_bridge, long long &emulated_ticks,
-                   std::chrono::steady_clock::time_point &startup_time,
+    PortController(PtyBridge &pty_bridge EMU_LIFETIMEBOUND,
+                   long long &emulated_ticks EMU_LIFETIMEBOUND,
+                   std::chrono::steady_clock::time_point &startup_time
+                       EMU_LIFETIMEBOUND,
                    bool p4_6_force_low = false,
                    bool p4_7_force_low = false,
                    long long p4_6_low_from_tick = -1,
