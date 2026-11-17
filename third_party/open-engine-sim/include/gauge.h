@@ -33,6 +33,7 @@ class Gauge {
     void setBand(const Band &band, int index) {
         m_bands.at(static_cast<std::size_t>(index)) = band;
     }
+    const std::vector<Band> &bands() const { return m_bands; }
 
     float m_value;
     float m_thetaMin;

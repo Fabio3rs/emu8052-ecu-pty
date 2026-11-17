@@ -227,7 +227,8 @@ panel labels the observed P5 channel for each candidate coil pair. Both
 mechanical views also show a short cyan spark symbol at each cylinder of the
 active pair; the yellow/red combustion marker remains independent.
 See
-[the Lab progress ledger](docs/SEVEL_MA17_LAB_PROGRESS.md) and
+[the Lab progress ledger](docs/SEVEL_MA17_LAB_PROGRESS.md),
+[real vehicle technical specifications](docs/SEVEL_TIPO_16_SPECS.md), and
 [third-party notices](THIRD_PARTY_NOTICES.md) for verified tests and provenance.
 
 ### Project Status

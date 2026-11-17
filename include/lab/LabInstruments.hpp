@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ma17/EmulatorEvent.hpp"
+#include "ma17/EmulatorSnapshot.hpp"
+#include "lab/DonorScene.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -36,5 +38,13 @@ int scope_channel_at(float x, float y, int width, int height);
 void draw_lab_trends(SDL_Renderer *renderer, FontRenderer &font,
                      const SDL_FRect &panel, long long tick,
                      const std::deque<TrendPoint> &history);
+
+void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
+                            const SDL_FRect &bounds,
+                            const ma17::EmulatorSnapshot &snapshot,
+                            const std::array<ScenePulse, 4> &pulses,
+                            const std::array<float, 2> &spark_glows,
+                            float ui_scale,
+                            const std::array<Gauge, 3> *gauges = nullptr);
 
 } // namespace lab

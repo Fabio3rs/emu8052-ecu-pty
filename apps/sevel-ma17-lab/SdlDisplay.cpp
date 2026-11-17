@@ -115,8 +115,10 @@ void draw_axial_crank_views(SDL_Renderer *screen, FontRenderer &font,
         const float panel_y = 238.0f * scale + step * static_cast<float>(pair);
         const SDL_FRect panel{(compact ? 8.0f : 16.0f) * scale, panel_y,
                               panel_size, panel_size};
-        SDL_SetRenderDrawColor(screen, 24, 36, 49, 255);
+        SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
         SDL_RenderFillRect(screen, &panel);
+        SDL_SetRenderDrawColor(screen, 42, 42, 50, 255);
+        SDL_RenderRect(screen, &panel);
         font.draw(screen, panel.x + (compact ? 5.0f : 8.0f) * scale,
                   panel.y + 3.0f * scale,
                   pair == 0 ? (compact ? "1/4" : "AXIAL 1/4")
@@ -138,6 +140,163 @@ void draw_axial_crank_views(SDL_Renderer *screen, FontRenderer &font,
     }
 }
 
+void draw_shaft_mechanical_details(SDL_Renderer *screen,
+                                   const ma17::EmulatorSnapshot &snapshot,
+                                   SceneCamera camera, float scene_width,
+                                   float scene_height, float ui_scale) {
+    if (scene_width <= 0.0f || scene_height <= 0.0f)
+        return;
+    const auto project = [&](float wx, float wy) -> SDL_FPoint {
+        const float cx =
+            4.0f * camera.zoom * wx + 2.0f * camera.pan_x / scene_width;
+        const float cy =
+            4.0f * camera.zoom * wy - 0.4f - 2.0f * camera.pan_y / scene_height;
+        return {(cx + 1.0f) * scene_width * 0.5f,
+                (1.0f - cy) * scene_height * 0.5f};
+    };
+
+    const SevelVisualGeometry geometry{};
+    const SceneDimensions dimensions{};
+    constexpr float bore_m = 0.0864f;
+    const float pitch =
+        static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);
+    const float head_y =
+        static_cast<float>(geometry.visual_estimate_rod_length_m +
+                           SevelVisualGeometry::crank_radius_m +
+                           dimensions.visual_estimate_head_height_m);
+    const float cam_y = head_y + 0.042f;
+    constexpr float crank_r =
+        static_cast<float>(SevelVisualGeometry::crank_radius_m);
+    const float crank_base_angle =
+        static_cast<float>(snapshot.crank_angle_rad - snapshot.tdc_phase_rad);
+    const auto poses = sevel_cylinder_poses(
+        snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
+    constexpr float pi = 3.14159265f;
+
+    // 1. Stylized intake (electric cyan) & exhaust (electric magenta) runners
+    for (int cylinder = 0; cylinder < 4; ++cylinder) {
+        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
+        const SDL_FPoint in_port = project(center - 0.021f, cam_y + 0.008f);
+        const SDL_FPoint in_sweep = project(center - 0.038f, cam_y + 0.030f);
+        const SDL_FPoint ex_port = project(center + 0.021f, cam_y + 0.008f);
+        const SDL_FPoint ex_sweep = project(center + 0.038f, cam_y + 0.030f);
+
+        SDL_SetRenderDrawColor(screen, 0, 229, 255, 180);
+        SDL_RenderLine(screen, in_port.x, in_port.y, in_sweep.x, in_sweep.y);
+        SDL_RenderLine(screen, in_port.x + 1.0f, in_port.y, in_sweep.x + 1.0f,
+                       in_sweep.y);
+
+        SDL_SetRenderDrawColor(screen, 255, 64, 129, 180);
+        SDL_RenderLine(screen, ex_port.x, ex_port.y, ex_sweep.x, ex_sweep.y);
+        SDL_RenderLine(screen, ex_port.x + 1.0f, ex_port.y, ex_sweep.x + 1.0f,
+                       ex_sweep.y);
+    }
+
+    // 2. Dynamic valve springs (compressing/expanding with cam lift)
+    for (int cylinder = 0; cylinder < 4; ++cylinder) {
+        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
+        for (int valve = 0; valve < 2; ++valve) {
+            const auto kind =
+                valve == 0 ? ValveKind::Intake : ValveKind::Exhaust;
+            const float x = center + (valve == 0 ? -0.021f : 0.021f);
+            const float lift = static_cast<float>(
+                valve_lift_fraction(snapshot.crank_angle_rad,
+                                    static_cast<std::size_t>(cylinder), kind,
+                                    snapshot.tdc_phase_rad) *
+                dimensions.visual_estimate_valve_lift_m);
+            const float top_y = head_y + 0.027f;
+            const float bot_y = head_y + 0.007f - lift * 0.4f;
+            const SDL_FPoint p_top = project(x, top_y);
+            const SDL_FPoint p_bot = project(x, bot_y);
+
+            const float spring_h = p_bot.y - p_top.y;
+            constexpr int coils = 5;
+            const float coil_w = 4.0f * ui_scale;
+
+            SDL_SetRenderDrawColor(screen, 160, 175, 190, 220);
+            SDL_FPoint prev = {p_top.x, p_top.y};
+            for (int c = 1; c <= coils; ++c) {
+                const float frac =
+                    static_cast<float>(c) / static_cast<float>(coils);
+                const float cy = p_top.y + spring_h * frac;
+                const float cx = p_top.x + ((c % 2 == 1) ? coil_w : -coil_w);
+                SDL_RenderLine(screen, prev.x, prev.y, cx, cy);
+                prev = {cx, cy};
+            }
+            SDL_RenderLine(screen, prev.x, prev.y, p_bot.x, p_bot.y);
+        }
+    }
+
+    // 3. Articulated kinematics, counterweights, and piston details
+    for (int cylinder = 0; cylinder < 4; ++cylinder) {
+        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
+        const auto &pose = poses[static_cast<std::size_t>(cylinder)];
+        const float cyl_phase = (cylinder == 0 || cylinder == 3)
+                                    ? crank_base_angle
+                                    : crank_base_angle + pi;
+
+        const float crank_y = crank_r * std::cos(cyl_phase);
+        const float throw_x = crank_r * std::sin(cyl_phase) * 0.35f;
+        const float piston_y = static_cast<float>(pose.piston_pin_y_m);
+
+        const SDL_FPoint p_crank = project(center + throw_x, crank_y);
+        const SDL_FPoint p_wrist = project(center, piston_y);
+        const SDL_FPoint p_main = project(center, 0.0f);
+
+        const float counter_y = -crank_r * std::cos(cyl_phase) * 0.85f;
+        const float counter_x = -crank_r * std::sin(cyl_phase) * 0.30f;
+        const SDL_FPoint p_counter = project(center + counter_x, counter_y);
+
+        // Counterweight web
+        SDL_SetRenderDrawColor(screen, 85, 95, 110, 255);
+        const float cw_thick = 3.5f * ui_scale;
+        SDL_RenderLine(screen, p_main.x - cw_thick, p_main.y,
+                       p_counter.x - cw_thick, p_counter.y);
+        SDL_RenderLine(screen, p_main.x, p_main.y, p_counter.x, p_counter.y);
+        SDL_RenderLine(screen, p_main.x + cw_thick, p_main.y,
+                       p_counter.x + cw_thick, p_counter.y);
+
+        // Connecting rod articulated beam
+        SDL_SetRenderDrawColor(screen, 215, 225, 235, 255);
+        SDL_RenderLine(screen, p_crank.x - 1.0f, p_crank.y, p_wrist.x - 1.0f,
+                       p_wrist.y);
+        SDL_RenderLine(screen, p_crank.x, p_crank.y, p_wrist.x, p_wrist.y);
+        SDL_RenderLine(screen, p_crank.x + 1.0f, p_crank.y, p_wrist.x + 1.0f,
+                       p_wrist.y);
+
+        // Big-end journal cap
+        SDL_SetRenderDrawColor(screen, 240, 245, 250, 255);
+        const float r_big = 3.5f * ui_scale;
+        const SDL_FRect big_journal{p_crank.x - r_big, p_crank.y - r_big,
+                                    r_big * 2.0f, r_big * 2.0f};
+        SDL_RenderFillRect(screen, &big_journal);
+
+        // Piston details: wrist pin & dual compression rings
+        const SDL_FPoint p_crown = project(center, piston_y + 0.010f);
+        const float bore_px =
+            project(center + bore_m * 0.38f, piston_y).x -
+            project(center - bore_m * 0.38f, piston_y).x;
+
+        SDL_SetRenderDrawColor(screen, 38, 40, 48, 255);
+        const float ring_w = bore_px * 0.90f;
+        SDL_RenderLine(screen, p_crown.x - ring_w * 0.5f,
+                       p_crown.y + 2.0f * ui_scale, p_crown.x + ring_w * 0.5f,
+                       p_crown.y + 2.0f * ui_scale);
+        SDL_RenderLine(screen, p_crown.x - ring_w * 0.5f,
+                       p_crown.y + 5.0f * ui_scale, p_crown.x + ring_w * 0.5f,
+                       p_crown.y + 5.0f * ui_scale);
+
+        // Wrist pin hole
+        const float r_pin = 2.5f * ui_scale;
+        const SDL_FRect pin_rect{p_wrist.x - r_pin, p_wrist.y - r_pin,
+                                 r_pin * 2.0f, r_pin * 2.0f};
+        SDL_SetRenderDrawColor(screen, 28, 30, 36, 255);
+        SDL_RenderFillRect(screen, &pin_rect);
+        SDL_SetRenderDrawColor(screen, 180, 195, 210, 255);
+        SDL_RenderRect(screen, &pin_rect);
+    }
+}
+
 void draw_combustion_order(SDL_Renderer *screen, FontRenderer &font,
                            float scene_width, int height, float ui_scale,
                            const std::array<ScenePulse, 4> &pulses,
@@ -148,8 +307,10 @@ void draw_combustion_order(SDL_Renderer *screen, FontRenderer &font,
     const SDL_FRect panel{
         16.0f, static_cast<float>(height) - 218.0f - 47.0f * ui_scale,
         scene_width - 32.0f, 47.0f * ui_scale};
-    SDL_SetRenderDrawColor(screen, 24, 36, 49, 255);
+    SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
     SDL_RenderFillRect(screen, &panel);
+    SDL_SetRenderDrawColor(screen, 42, 42, 50, 255);
+    SDL_RenderRect(screen, &panel);
     font.draw(screen, panel.x + 9.0f * ui_scale, panel.y + 8.0f * ui_scale,
               "BURNS  1 > 3 > 4 > 2", {235, 241, 246, 255}, ui_scale);
     char spark_label[96];
@@ -485,6 +646,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     SceneCamera camera;
     int view_mode = 0; // Shaft, four sections, axial 1/4, axial 2/3.
     bool show_help = false;
+    bool show_debug = false;
     std::array<Gauge, 3> gauges{};
     std::deque<TrendPoint> trends;
     Uint64 last_frame_ticks = SDL_GetTicks();
@@ -493,7 +655,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     std::vector<SDL_Vertex> scene_vertices;
     constexpr std::size_t scene_batch_vertices = 8190;
     scene_vertices.reserve(scene_batch_vertices);
-    gauges[0].m_max = 7000.0f;
+    gauges[0].m_max = 8000.0f;
     gauges[1].m_max = 90.0f;
     gauges[2].m_max = 5.0f;
     gauges[0].m_minorStep = 100;
@@ -695,6 +857,21 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         view_selector_rect(view_width, view_height);
                     const SDL_FRect fullscreen =
                         fullscreen_button_rect(view_width, view_height);
+                    const float click_ui_scale = lab_ui_scale(view_width, view_height);
+                    const float click_scene_w = static_cast<float>(view_width) * 0.76f;
+                    const float click_panel_w = std::min(static_cast<float>(view_width) - 32.0f, click_scene_w + 48.0f);
+                    const float click_help_x = 16.0f + click_panel_w - 75.0f * click_ui_scale;
+                    const float click_debug_x = click_help_x - 85.0f * click_ui_scale;
+                    if (event.button.y >= 16.0f && event.button.y <= 42.0f * click_ui_scale) {
+                        if (event.button.x >= click_help_x && event.button.x <= 16.0f + click_panel_w) {
+                            show_help = !show_help;
+                            continue;
+                        }
+                        if (event.button.x >= click_debug_x && event.button.x < click_help_x) {
+                            show_debug = !show_debug;
+                            continue;
+                        }
+                    }
                     if (view_width >= 1280 && view_height >= 720 &&
                         event.button.x >= fullscreen.x &&
                         event.button.x < fullscreen.x + fullscreen.w &&
@@ -797,6 +974,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 event.key.windowID == SDL_GetWindowID(window) &&
                 event.key.key == SDLK_H)
                 show_help = !show_help;
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_D)
+                show_debug = !show_debug;
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
                 (event.key.key == SDLK_F || event.key.key == SDLK_F11))
@@ -1036,7 +1217,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 }
             }
         }
-        SDL_SetRenderDrawColor(screen, 15, 22, 34, 255);
+        SDL_SetRenderDrawColor(screen, 10, 10, 12, 255);
         SDL_RenderClear(screen);
         const SDL_Rect scene_clip{0, 0, static_cast<int>(scene_width),
                                   static_cast<int>(scene_height)};
@@ -1076,23 +1257,30 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
         const float ui_scale = lab_ui_scale(width, height);
         const bool compact_overlay = width < 1100 || height < 690;
+        const float status_panel_h =
+            (show_debug ? (compact_overlay ? 74.0f : 102.0f)
+                        : (compact_overlay ? 44.0f : 52.0f)) * ui_scale;
         const SDL_FRect status_panel{
             16.0f, 16.0f,
             std::min(static_cast<float>(width) - 32.0f, scene_width + 48.0f),
-            (compact_overlay ? 72.0f : 100.0f) * ui_scale};
-        SDL_SetRenderDrawColor(screen, 23, 34, 46, 255);
+            status_panel_h};
+        SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
         SDL_RenderFillRect(screen, &status_panel);
-        SDL_SetRenderDrawColor(screen, 65, 91, 104, 255);
+        SDL_SetRenderDrawColor(screen, 45, 45, 55, 255);
         SDL_RenderRect(screen, &status_panel);
-        if (!radial_view)
+        if (!radial_view) {
+            draw_shaft_mechanical_details(screen, displayed, camera, scene_width,
+                                          scene_height, ui_scale);
             draw_axial_crank_views(screen, font, displayed, meshes, scene_width,
                                    height, ui_scale);
+        }
         if (lab_buttons_visible(width, height)) {
             const SDL_FRect selector = view_selector_rect(width, height);
-            SDL_SetRenderDrawColor(screen, radial_view ? 40 : 24,
-                                   radial_view ? 64 : 36, 49, 255);
+            SDL_SetRenderDrawColor(screen, radial_view ? 35 : 20,
+                                   radial_view ? 50 : 20,
+                                   radial_view ? 60 : 24, 255);
             SDL_RenderFillRect(screen, &selector);
-            SDL_SetRenderDrawColor(screen, 90, 128, 142, 255);
+            SDL_SetRenderDrawColor(screen, 70, 70, 85, 255);
             SDL_RenderRect(screen, &selector);
             font.draw(screen, selector.x + 8.0f, selector.y + 8.0f,
                       view_mode == 0   ? "V: SHAFT"
@@ -1103,9 +1291,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             if (width >= 1280 && height >= 720) {
                 const SDL_FRect fullscreen =
                     fullscreen_button_rect(width, height);
-                SDL_SetRenderDrawColor(screen, 24, 36, 49, 255);
+                SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
                 SDL_RenderFillRect(screen, &fullscreen);
-                SDL_SetRenderDrawColor(screen, 90, 128, 142, 255);
+                SDL_SetRenderDrawColor(screen, 70, 70, 85, 255);
                 SDL_RenderRect(screen, &fullscreen);
                 font.draw(screen, fullscreen.x + 8.0f, fullscreen.y + 8.0f,
                           (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)
@@ -1151,21 +1339,14 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                       status_panel.y + status_panel.h + 10.0f * ui_scale,
                       label, {176, 218, 226, 255}, ui_scale);
         }
-        draw_lab_gauge(screen, font, static_cast<float>(width) * 0.86f,
-                       static_cast<float>(height) * 0.35f, 105.0f * ui_scale,
-                       displayed.rpm, 7000.0, "RPM",
-                       SDL_Color{249, 190, 96, 255}, gauges[0].needlePosition(),
-                       ui_scale, &gauges[0]);
-        draw_lab_gauge(screen, font, static_cast<float>(width) * 0.81f,
-                       static_cast<float>(height) * 0.58f, 52.0f * ui_scale,
-                       displayed.throttle_angle_rad * 57.2958, 90.0, "TPS",
-                       SDL_Color{99, 211, 220, 255}, gauges[1].needlePosition(),
-                       ui_scale, &gauges[1]);
-        draw_lab_gauge(screen, font, static_cast<float>(width) * 0.92f,
-                       static_cast<float>(height) * 0.58f, 52.0f * ui_scale,
-                       displayed.lambda, 5.0, "LAM",
-                       SDL_Color{200, 144, 232, 255},
-                       gauges[2].needlePosition(), ui_scale, &gauges[2]);
+        const float cluster_x = static_cast<float>(width) * 0.765f;
+        const float cluster_y = status_panel.y + status_panel.h + 8.0f * ui_scale;
+        const float cluster_w = static_cast<float>(width) * 0.228f;
+        const float scope_y = static_cast<float>(height) - 146.0f - 12.0f;
+        const float cluster_h = scope_y - cluster_y - 6.0f * ui_scale;
+        const SDL_FRect cluster_bounds{cluster_x, cluster_y, cluster_w, cluster_h};
+        draw_oes_right_cluster(screen, font, cluster_bounds, displayed,
+                               pulses, spark_glows, ui_scale, &gauges);
         if (focus_cylinder == 0 && width >= 2400 && height >= 1000 &&
             width > 2 * height) {
             const float gauge_y =
@@ -1173,9 +1354,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             const float radius = 62.0f * ui_scale;
             draw_lab_gauge(
                 screen, font, scene_width * 0.52f, gauge_y, radius,
-                displayed.coolant_c, 120.0, "COOLANT C",
+                displayed.coolant_c, 130.0, "COOLANT C",
                 SDL_Color{236, 173, 106, 255},
-                std::clamp(static_cast<float>(displayed.coolant_c / 120.0),
+                std::clamp(static_cast<float>(displayed.coolant_c / 130.0),
                            0.0f, 1.0f),
                 ui_scale);
             draw_lab_gauge(
@@ -1197,14 +1378,16 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             audio_source ? audio_source->recent_pcm_peak() : 0U,
             audio_source ? audio_source->device_need_samples() : 0ULL,
             audio_source ? audio_source->dropped_samples() : 0ULL);
-        draw_pedal_slider(screen, font, width, height, pedal_pull_m,
-                          session && !replay_controls);
-        if (width >= 1000 && height >= 690) {
-            const SDL_FRect trend_panel{static_cast<float>(width) * 0.77f,
-                                        static_cast<float>(height) * 0.66f,
-                                        static_cast<float>(width) * 0.21f,
-                                        static_cast<float>(height) * 0.11f};
-            draw_lab_trends(screen, font, trend_panel, displayed.tick, trends);
+        if (show_debug) {
+            draw_pedal_slider(screen, font, width, height, pedal_pull_m,
+                              session && !replay_controls);
+            if (width >= 1000 && height >= 690) {
+                const SDL_FRect trend_panel{static_cast<float>(width) * 0.77f,
+                                            static_cast<float>(height) * 0.66f,
+                                            static_cast<float>(width) * 0.21f,
+                                            static_cast<float>(height) * 0.11f};
+                draw_lab_trends(screen, font, trend_panel, displayed.tick, trends);
+            }
         }
         draw_lab_scope(screen, font, width, height, displayed.tick, events,
                        scope_channels_visible, scope_span_ticks);
@@ -1267,10 +1450,17 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                           displayed.radiator_fan_on ? "ON" : "off");
         draw_status(0, status);
         const char *help_hint = show_help ? "H: CLOSE" : "H: HELP";
-        font.draw(screen,
-                  status_panel.x + status_panel.w -
-                      (font.measure(help_hint) + 12.0f) * ui_scale,
-                  24.0f, help_hint, {99, 211, 220, 255}, ui_scale);
+        const char *debug_hint = show_debug ? "D: VITAL" : "D: DEBUG";
+        const float help_x = status_panel.x + status_panel.w -
+                             (font.measure(help_hint) + 12.0f) * ui_scale;
+        const float debug_x =
+            help_x - (font.measure(debug_hint) + 14.0f) * ui_scale;
+        font.draw(screen, help_x, 24.0f, help_hint, {99, 211, 220, 255},
+                  ui_scale);
+        font.draw(screen, debug_x, 24.0f, debug_hint,
+                  show_debug ? SDL_Color{249, 190, 96, 255}
+                             : SDL_Color{99, 211, 220, 255},
+                  ui_scale);
         const char *sound_state = "on";
         if (!audio_source)
             sound_state = enable_audio ? "unavailable" : "off";
@@ -1278,120 +1468,132 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             sound_state = "muted";
         else if (audio_source->suspended())
             sound_state = "paused";
-        if (width < 1100)
+        if (!show_debug) {
             std::snprintf(
                 status, sizeof(status),
-                "key %s  CC3 %llu  burns %llu  RAM27/28 %02X/%02X  "
-                "lost %llu  sound %s",
+                "KEY %s  |  INJ %llu  |  BURNS %llu  |  LOAD %.0f Nm  |  AUDIO %s (%.0f%%)",
                 displayed.key_on ? "ON" : "off", displayed.injector_pulses,
-                displayed.burns, static_cast<unsigned>(displayed.ram27_faults),
-                static_cast<unsigned>(displayed.ram28_faults),
-                session ? session->event_overflow() : 0ULL, sound_state);
-        else
-            std::snprintf(
-                status, sizeof(status),
-                "key %s  CC3 %llu  burns %llu  RAM27/28 %02X/%02X  "
-                "lost %llu  lag %llu  skip %llu  short~%llu  empty %llu  "
-                "sound %s %.0f%%",
-                displayed.key_on ? "ON" : "off", displayed.injector_pulses,
-                displayed.burns, static_cast<unsigned>(displayed.ram27_faults),
-                static_cast<unsigned>(displayed.ram28_faults),
-                session ? session->event_overflow() : 0ULL,
-                audio_source ? audio_source->dropped_samples() : 0ULL,
-                audio_source ? audio_source->mode_discarded_samples() : 0ULL,
-                audio_source ? audio_source->device_need_samples() : 0ULL,
-                audio_source ? audio_source->empty_queue_observations() : 0ULL,
+                displayed.burns, displayed.applied_load_nm,
                 sound_state, static_cast<double>(sound_volume) * 100.0);
-        draw_status(1, status);
-        constexpr double degrees_per_radian =
-            180.0 / 3.14159265358979323846;
-        double cycle_phase =
-            std::fmod((displayed.crank_angle_rad - displayed.tdc_phase_rad) *
-                          degrees_per_radian,
-                      720.0);
-        if (cycle_phase < 0.0)
-            cycle_phase += 720.0;
-        std::snprintf(status, sizeof(status),
-                      "tick %lld  phase~%03u/720  PC %04X  CC3 %u  "
-                      "P5.0 %u  P5.1 %u  "
-                      "lamp candidate %s",
-                      displayed.tick, static_cast<unsigned>(cycle_phase),
-                      static_cast<unsigned>(displayed.pc),
-                      displayed.cc3_high ? 1U : 0U,
-                      displayed.p50_high ? 1U : 0U,
-                      displayed.p51_high ? 1U : 0U,
-                      displayed.lamp_on_candidate ? "ON" : "off");
-        draw_status(2, status);
-        if (!compact_overlay) {
-            std::snprintf(status, sizeof(status),
-                          "TPS1 model %.2f V  TPS2 model %.2f V  "
-                          "lambda model %.2f V  THERM %.0f%%",
-                          displayed.tps_track1_v, displayed.tps_track2_v,
-                          displayed.lambda_voltage_v,
-                          displayed.thermostat_open_fraction * 100.0);
-            draw_status(4, status);
-            char idle_status[72] = "  IAC? NO BINDING";
-            if (displayed.idle_bridge_candidate)
+            draw_status(1, status);
+        } else {
+            if (width < 1100)
                 std::snprintf(
-                    idle_status, sizeof(idle_status),
-                    "  IAC? P1.5/6 %u/%u STEM~%.1fMM CT %s%s",
-                    displayed.p15_high ? 1U : 0U,
-                    displayed.p16_high ? 1U : 0U,
-                    displayed.idle_stem_m * 1000.0,
-                    displayed.idle_contact_closed ? "closed" : "open",
-                    displayed.idle_motor_connected ? "" : " DISC");
+                    status, sizeof(status),
+                    "key %s  CC3 %llu  burns %llu  RAM27/28 %02X/%02X  "
+                    "lost %llu  sound %s",
+                    displayed.key_on ? "ON" : "off", displayed.injector_pulses,
+                    displayed.burns, static_cast<unsigned>(displayed.ram27_faults),
+                    static_cast<unsigned>(displayed.ram28_faults),
+                    session ? session->event_overflow() : 0ULL, sound_state);
+            else
+                std::snprintf(
+                    status, sizeof(status),
+                    "key %s  CC3 %llu  burns %llu  RAM27/28 %02X/%02X  "
+                    "lost %llu  lag %llu  skip %llu  short~%llu  empty %llu  "
+                    "sound %s %.0f%%",
+                    displayed.key_on ? "ON" : "off", displayed.injector_pulses,
+                    displayed.burns, static_cast<unsigned>(displayed.ram27_faults),
+                    static_cast<unsigned>(displayed.ram28_faults),
+                    session ? session->event_overflow() : 0ULL,
+                    audio_source ? audio_source->dropped_samples() : 0ULL,
+                    audio_source ? audio_source->mode_discarded_samples() : 0ULL,
+                    audio_source ? audio_source->device_need_samples() : 0ULL,
+                    audio_source ? audio_source->empty_queue_observations() : 0ULL,
+                    sound_state, static_cast<double>(sound_volume) * 100.0);
+            draw_status(1, status);
+            constexpr double degrees_per_radian =
+                180.0 / 3.14159265358979323846;
+            double cycle_phase =
+                std::fmod((displayed.crank_angle_rad - displayed.tdc_phase_rad) *
+                              degrees_per_radian,
+                          720.0);
+            if (cycle_phase < 0.0)
+                cycle_phase += 720.0;
+            std::snprintf(status, sizeof(status),
+                          "tick %lld  phase~%03u/720  PC %04X  CC3 %u  "
+                          "P5.0 %u  P5.1 %u  "
+                          "lamp candidate %s",
+                          displayed.tick, static_cast<unsigned>(cycle_phase),
+                          static_cast<unsigned>(displayed.pc),
+                          displayed.cc3_high ? 1U : 0U,
+                          displayed.p50_high ? 1U : 0U,
+                          displayed.p51_high ? 1U : 0U,
+                          displayed.lamp_on_candidate ? "ON" : "off");
+            draw_status(2, status);
+            if (!compact_overlay) {
+                std::snprintf(status, sizeof(status),
+                              "TPS1 model %.2f V  TPS2 model %.2f V  "
+                              "lambda model %.2f V  THERM %.0f%%",
+                              displayed.tps_track1_v, displayed.tps_track2_v,
+                              displayed.lambda_voltage_v,
+                              displayed.thermostat_open_fraction * 100.0);
+                draw_status(4, status);
+                char idle_status[72] = "  IAC? NO BINDING";
+                if (displayed.idle_bridge_candidate)
+                    std::snprintf(
+                        idle_status, sizeof(idle_status),
+                        "  IAC? P1.5/6 %u/%u STEM~%.1fMM CT %s%s",
+                        displayed.p15_high ? 1U : 0U,
+                        displayed.p16_high ? 1U : 0U,
+                        displayed.idle_stem_m * 1000.0,
+                        displayed.idle_contact_closed ? "closed" : "open",
+                        displayed.idle_motor_connected ? "" : " DISC");
+                std::snprintf(
+                    status, sizeof(status),
+                    "pedal %.1f mm  load %.0f Nm  film model %.1f mg  vapor %.1f "
+                    "mg%s",
+                    displayed.pedal_pull_m * 1000.0, displayed.applied_load_nm,
+                    displayed.fuel_film_kg * 1e6, displayed.fuel_vapor_kg * 1e6,
+                    idle_status);
+                draw_status(5, status);
+            }
             std::snprintf(
                 status, sizeof(status),
-                "pedal %.1f mm  load %.0f Nm  film model %.1f mg  vapor %.1f "
-                "mg%s",
-                displayed.pedal_pull_m * 1000.0, displayed.applied_load_nm,
-                displayed.fuel_film_kg * 1e6, displayed.fuel_vapor_kg * 1e6,
-                idle_status);
-            draw_status(5, status);
+                "%sROM PUB F84E-50 %02X/%02X/%02X  "
+                "HIST F85E-60 %02X/%02X/%02X",
+                replay_controls ? "REPLAY | " : "",
+                static_cast<unsigned>(displayed.rom_current_fault_banks[0]),
+                static_cast<unsigned>(displayed.rom_current_fault_banks[1]),
+                static_cast<unsigned>(displayed.rom_current_fault_banks[2]),
+                static_cast<unsigned>(displayed.rom_history_fault_banks[0]),
+                static_cast<unsigned>(displayed.rom_history_fault_banks[1]),
+                static_cast<unsigned>(displayed.rom_history_fault_banks[2]));
+            draw_status(3, status);
         }
-        std::snprintf(
-            status, sizeof(status),
-            "%sROM PUB F84E-50 %02X/%02X/%02X  "
-            "HIST F85E-60 %02X/%02X/%02X",
-            replay_controls ? "REPLAY | " : "",
-            static_cast<unsigned>(displayed.rom_current_fault_banks[0]),
-            static_cast<unsigned>(displayed.rom_current_fault_banks[1]),
-            static_cast<unsigned>(displayed.rom_current_fault_banks[2]),
-            static_cast<unsigned>(displayed.rom_history_fault_banks[0]),
-            static_cast<unsigned>(displayed.rom_history_fault_banks[1]),
-            static_cast<unsigned>(displayed.rom_history_fault_banks[2]));
-        draw_status(3, status);
-        const SDL_FRect lamp_panel{
-            static_cast<float>(width) * 0.78f, 88.0f * ui_scale,
-            std::min(260.0f * ui_scale,
-                     static_cast<float>(width) * 0.22f - 16.0f * ui_scale),
-            32.0f * ui_scale};
-        SDL_SetRenderDrawColor(screen, 32, 46, 59, 255);
-        SDL_RenderFillRect(screen, &lamp_panel);
-        const SDL_FRect lamp_square{lamp_panel.x + 8.0f * ui_scale,
-                                    lamp_panel.y + 8.0f * ui_scale,
-                                    16.0f * ui_scale, 16.0f * ui_scale};
-        if (displayed.lamp_on_candidate)
-            SDL_SetRenderDrawColor(screen, 255, 176, 59, 255);
-        else
-            SDL_SetRenderDrawColor(screen, 75, 83, 87, 255);
-        SDL_RenderFillRect(screen, &lamp_square);
-        SDL_SetRenderDrawColor(screen, 235, 241, 246, 255);
-        font.draw(screen, lamp_panel.x + 32.0f * ui_scale,
-                  lamp_panel.y + 12.0f * ui_scale,
-                  width < 1100 ? "LAMP? CAND." : "MA1.7 LAMP? CANDIDATE",
-                  {235, 241, 246, 255}, ui_scale);
-        if (bench_preset) {
-            const SDL_FRect bench_panel{
-                lamp_panel.x, lamp_panel.y + lamp_panel.h + 4.0f * ui_scale,
-                lamp_panel.w, 22.0f * ui_scale};
-            SDL_SetRenderDrawColor(screen, 46, 39, 30, 255);
-            SDL_RenderFillRect(screen, &bench_panel);
-            font.draw(screen, bench_panel.x + 8.0f * ui_scale,
-                      bench_panel.y + 6.0f * ui_scale,
-                      width < 1100 ? "WARM BENCH*"
-                                   : "WARM BENCH / CANDIDATE I/O",
-                      {249, 190, 96, 255}, ui_scale);
+        if (show_debug) {
+            const SDL_FRect lamp_panel{
+                static_cast<float>(width) * 0.78f, 88.0f * ui_scale,
+                std::min(260.0f * ui_scale,
+                         static_cast<float>(width) * 0.22f - 16.0f * ui_scale),
+                32.0f * ui_scale};
+            SDL_SetRenderDrawColor(screen, 32, 46, 59, 255);
+            SDL_RenderFillRect(screen, &lamp_panel);
+            const SDL_FRect lamp_square{lamp_panel.x + 8.0f * ui_scale,
+                                        lamp_panel.y + 8.0f * ui_scale,
+                                        16.0f * ui_scale, 16.0f * ui_scale};
+            if (displayed.lamp_on_candidate)
+                SDL_SetRenderDrawColor(screen, 255, 176, 59, 255);
+            else
+                SDL_SetRenderDrawColor(screen, 75, 83, 87, 255);
+            SDL_RenderFillRect(screen, &lamp_square);
+            SDL_SetRenderDrawColor(screen, 235, 241, 246, 255);
+            font.draw(screen, lamp_panel.x + 32.0f * ui_scale,
+                      lamp_panel.y + 12.0f * ui_scale,
+                      width < 1100 ? "LAMP? CAND." : "MA1.7 LAMP? CANDIDATE",
+                      {235, 241, 246, 255}, ui_scale);
+            if (bench_preset) {
+                const SDL_FRect bench_panel{
+                    lamp_panel.x, lamp_panel.y + lamp_panel.h + 4.0f * ui_scale,
+                    lamp_panel.w, 22.0f * ui_scale};
+                SDL_SetRenderDrawColor(screen, 46, 39, 30, 255);
+                SDL_RenderFillRect(screen, &bench_panel);
+                font.draw(screen, bench_panel.x + 8.0f * ui_scale,
+                          bench_panel.y + 6.0f * ui_scale,
+                          width < 1100 ? "WARM BENCH*"
+                                       : "WARM BENCH / CANDIDATE I/O",
+                          {249, 190, 96, 255}, ui_scale);
+            }
         }
         if (show_help) {
             const float panel_width = std::min(

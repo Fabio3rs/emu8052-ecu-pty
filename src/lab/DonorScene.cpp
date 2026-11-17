@@ -3,6 +3,7 @@
 #include "geometry_generator.h"
 #include "shaders.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -32,8 +33,8 @@ void render_sevel_scene_donor(Renderer &renderer,
                               std::array<ScenePulse, 4> pulses) {
     constexpr std::array<const char *, 2> names{"Piston", "Valve"};
     std::array<const AuthoredMeshLibrary::Mesh *, 2> meshes{};
-    int vertex_capacity = 256;
-    int index_capacity = 384;
+    int vertex_capacity = 512;
+    int index_capacity = 768;
     if (mesh_library) {
         for (std::size_t index = 0; index < meshes.size(); ++index) {
             meshes[index] = mesh_library->find(names[index]);
@@ -84,20 +85,59 @@ void render_sevel_scene_donor(Renderer &renderer,
         }
         if (pulse.strength <= 0.0f)
             continue;
-        const float y = head_y - 0.015f;
-        const float radius = 0.008f + 0.004f * pulse.strength;
-        generator.startShape();
-        if (!generator.generateLine2d(
-                {x - radius, y - radius, x + radius, y + radius, 0.003f}) ||
-            !generator.generateLine2d(
-                {x - radius, y + radius, x + radius, y - radius, 0.003f}))
-            throw std::length_error("SEVEL pulse scene capacity");
-        GeometryGenerator::GeometryIndices indices;
-        generator.endShape(&indices);
-        const ysVector color = pulse.misfire
-                                   ? ysVector{0.93f, 0.35f, 0.30f, 1.0f}
-                                   : ysVector{1.0f, 0.82f, 0.36f, 1.0f};
-        pulse_calls.push_back({indices, color});
+        if (!mesh_library) {
+            const float y = head_y - 0.015f;
+            const float radius = 0.008f + 0.004f * pulse.strength;
+            generator.startShape();
+            if (!generator.generateLine2d(
+                    {x - radius, y - radius, x + radius, y + radius, 0.003f}) ||
+                !generator.generateLine2d(
+                    {x - radius, y + radius, x + radius, y - radius, 0.003f}))
+                throw std::length_error("SEVEL pulse scene capacity");
+            GeometryGenerator::GeometryIndices indices;
+            generator.endShape(&indices);
+            const ysVector color = pulse.misfire
+                                       ? ysVector{0.93f, 0.35f, 0.30f, 1.0f}
+                                       : ysVector{1.0f, 0.82f, 0.36f, 1.0f};
+            pulse_calls.push_back({indices, color});
+        } else {
+            const auto poses = sevel_cylinder_poses(
+                snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
+            const float piston_crown_y =
+                static_cast<float>(poses[cylinder].piston_pin_y_m) + 0.008f;
+            const float chamber_height =
+                std::clamp(head_y - piston_crown_y, 0.008f, 0.055f);
+            const float center_y = head_y - chamber_height * 0.5f;
+            constexpr float bore = 0.0864f;
+
+            GeometryGenerator::Trapezoid2dParameters trap;
+            trap.center_x = x;
+            trap.center_y = center_y;
+            trap.height = chamber_height;
+            trap.top = bore * 0.62f;
+            trap.base = bore * 0.74f;
+
+            generator.startShape();
+            if (!generator.generateTrapezoid2d(trap))
+                throw std::length_error("SEVEL combustion chamber fire capacity");
+            GeometryGenerator::GeometryIndices indices;
+            generator.endShape(&indices);
+
+            ysVector flame_color;
+            if (pulse.misfire) {
+                flame_color = {0.85f, 0.22f, 0.18f, 0.70f};
+            } else if (pulse.strength > 0.7f) {
+                const float s = (pulse.strength - 0.7f) / 0.3f;
+                flame_color = {1.0f, 0.85f + 0.15f * s, 0.20f + 0.60f * s, 0.95f};
+            } else if (pulse.strength > 0.3f) {
+                const float s = (pulse.strength - 0.3f) / 0.4f;
+                flame_color = {1.0f, 0.45f + 0.40f * s, 0.05f + 0.15f * s, 0.85f};
+            } else {
+                const float s = pulse.strength / 0.3f;
+                flame_color = {0.65f + 0.30f * s, 0.18f + 0.25f * s, 0.05f, 0.50f + 0.30f * s};
+            }
+            pulse_calls.push_back({indices, flame_color});
+        }
     }
     std::array<GeometryGenerator::GeometryIndices, 2> mesh_indices{};
     if (mesh_library) {
@@ -113,7 +153,7 @@ void render_sevel_scene_donor(Renderer &renderer,
         }
     }
 
-    renderer.beginFrame({0.035f, 0.07f, 0.10f, 1.0f});
+    renderer.beginFrame({0.027f, 0.027f, 0.035f, 1.0f});
     renderer.setSceneViewport(0.0f, 0.0f, viewport_width, viewport_height);
     renderer.uploadGeometry(
         generator.getVertexData(), generator.getCurrentVertexCount(),
@@ -308,7 +348,7 @@ void render_sevel_radial_donor(Renderer &renderer,
             throw std::length_error("SEVEL radial mesh capacity");
         generator.endShape(&shapes[index]);
     }
-    renderer.beginFrame({0.035f, 0.07f, 0.10f, 1.0f});
+    renderer.beginFrame({0.027f, 0.027f, 0.035f, 1.0f});
     renderer.setSceneViewport(0.0f, 0.0f, viewport_width, viewport_height);
     renderer.uploadGeometry(
         generator.getVertexData(), generator.getCurrentVertexCount(),
@@ -415,7 +455,7 @@ void render_axial_crank_donor(Renderer &renderer,
     ysMatrix projection = identity;
     projection.m[0][0] = 0.52f;
     projection.m[1][1] = 0.52f;
-    renderer.beginFrame({0.035f, 0.07f, 0.10f, 1.0f});
+    renderer.beginFrame({0.027f, 0.027f, 0.035f, 1.0f});
     renderer.setSceneViewport(0.0f, 0.0f, viewport_size, viewport_size);
     renderer.uploadGeometry(
         mesh->vertices.data(), static_cast<int>(mesh->vertices.size()),

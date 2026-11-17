@@ -19,11 +19,11 @@ template <typename Sink>
 void for_each_sevel_segment(const ma17::EmulatorSnapshot &snapshot,
                             SevelVisualGeometry geometry,
                             SceneDimensions dimensions, Sink &&add_segment) {
-    const ysVector metal{0.55f, 0.67f, 0.72f, 1.0f};
-    const ysVector piston_color{0.91f, 0.76f, 0.49f, 1.0f};
-    const ysVector housing{0.20f, 0.34f, 0.42f, 1.0f};
-    const ysVector intake_color{0.38f, 0.79f, 0.81f, 1.0f};
-    const ysVector exhaust_color{0.78f, 0.52f, 0.41f, 1.0f};
+    const ysVector metal{0.80f, 0.83f, 0.88f, 1.0f};
+    const ysVector piston_color{0.92f, 0.94f, 0.96f, 1.0f};
+    const ysVector housing{0.20f, 0.22f, 0.26f, 1.0f};
+    const ysVector intake_color{0.0f, 0.898f, 1.0f, 1.0f};
+    const ysVector exhaust_color{1.0f, 0.25f, 0.50f, 1.0f};
     constexpr float bore_m = 0.0864f;
     const float pitch =
         static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);

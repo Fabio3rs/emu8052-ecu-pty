@@ -58,7 +58,7 @@ inline void render_sevel_scene(Renderer &renderer,
 
     for_each_sevel_segment(snapshot, geometry, dimensions, add_segment);
 
-    renderer.beginFrame({0.035f, 0.07f, 0.10f, 1.0f});
+    renderer.beginFrame({0.027f, 0.027f, 0.035f, 1.0f});
     renderer.setSceneViewport(0.0f, 0.0f, viewport_width, viewport_height);
     renderer.uploadGeometry(vertices.data(), static_cast<int>(vertices.size()),
                             indices.data(), static_cast<int>(indices.size()));
