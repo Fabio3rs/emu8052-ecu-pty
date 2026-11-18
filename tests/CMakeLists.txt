@@ -36,7 +36,7 @@ if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
         LAB_MESH_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/authored_meshes.obj.zlib.b64"
         LAB_FONT_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/slkscr.ttf.zlib.b64")
     target_link_libraries(lab_mesh_asset_test PRIVATE GTest::GTest
-        GTest::Main open-engine-sim-geometry ZLIB::ZLIB)
+        GTest::Main open-engine-sim-geometry ZLIB::ZLIB SDL3::SDL3)
     gtest_discover_tests(lab_mesh_asset_test)
 endif()
 add_executable(lab_runner_smoke runner_snapshot_smoke.cpp)
@@ -44,6 +44,9 @@ target_link_libraries(lab_runner_smoke PRIVATE emu8051-tty_lib)
 add_test(NAME LabRunner.OriginalRomSnapshot
     COMMAND lab_runner_smoke
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+add_test(NAME LabRunner.AdcFaultTelemetry
+    COMMAND lab_runner_smoke
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin adc_fault)
 add_test(NAME PhysicalCrank.FiatRomRpm
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_physical_crank.py
             $<TARGET_FILE:emu8051-tty>

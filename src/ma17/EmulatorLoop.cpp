@@ -1210,6 +1210,8 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     snapshot.tick = context.ticks;
     snapshot.pc = cpu.mPC;
     snapshot.ram47 = cpu.mLowerData[0x47];
+    for (std::size_t index = 0; index < snapshot.rom_iram_60_67.size(); ++index)
+        snapshot.rom_iram_60_67[index] = cpu.mLowerData[0x60 + index];
     snapshot.ram27_faults = cpu.mLowerData[0x27];
     snapshot.ram28_faults = cpu.mLowerData[0x28];
     for (std::size_t index = 0; index < 3; ++index) {
@@ -1217,6 +1219,9 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
         snapshot.rom_history_fault_banks[index] = cpu.mExtData[0xF85E + index];
     }
     snapshot.cc3_high = cpu.cc3_output_pin != 0;
+    for (uint8_t channel = 0; channel < snapshot.adc_last_conversion.size();
+         ++channel)
+        snapshot.adc_last_conversion[channel] = adc_observation(channel);
     snapshot.p50_high = (cpu.mSFR[0xF8 - 0x80] & 0x01u) != 0;
     snapshot.p51_high = (cpu.mSFR[0xF8 - 0x80] & 0x02u) != 0;
     snapshot.lamp_on_candidate = context.diagnostic_lamp.lamp_on();
@@ -1227,7 +1232,14 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     if (context.idle_bridge_candidate)
         snapshot.idle_stem_m = context.idle_actuator.stem_m();
     snapshot.key_on = context.key_on;
+    snapshot.vehicle_speed_kmh = context.vehicle_speed_kmh;
+    snapshot.vehicle_speed_available = true;
+    if (context.sensor_circuit) {
+        snapshot.battery_supply_v = context.sensor_circuit->supply_voltage();
+        snapshot.battery_supply_available = true;
+    }
     if (context.physical_crank) {
+        snapshot.crank_available = true;
         snapshot.crank_angle_rad = context.physical_crank->angle_rad();
         snapshot.tdc_phase_rad = context.combustion.tdc_phase_rad();
         snapshot.rpm = context.physical_crank->rpm();
@@ -1239,13 +1251,17 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
         snapshot.missed_sparks = context.combustion.missed_sparks();
         snapshot.burns_by_cylinder = context.combustion.burns_by_cylinder();
         snapshot.lambda = context.exhaust.lambda();
+        snapshot.exhaust_sample_available =
+            context.exhaust.has_exhaust_sample();
         snapshot.lambda_voltage_v = context.exhaust.voltage_v();
     }
     if (context.throttle) {
+        snapshot.throttle_available = true;
         snapshot.throttle_angle_rad = context.throttle->angle_rad();
         snapshot.idle_contact_closed = context.throttle->contact_closed();
         snapshot.pedal_pull_m = context.throttle->cable_pull_m();
         if (context.tps_circuit) {
+            snapshot.tps_available = true;
             snapshot.tps_track1_v = context.tps_circuit->track1_voltage(
                 snapshot.throttle_angle_rad);
             snapshot.tps_track2_v = context.tps_circuit->track2_voltage(
@@ -1253,18 +1269,25 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
         }
     }
     if (context.intake) {
+        snapshot.manifold_pressure_pa = context.intake->pressure_pa();
+        snapshot.air_in_kg_s = context.intake->last_air_in_kg_s();
+        snapshot.injected_fuel_total_kg = context.intake->injected_total_kg();
+        snapshot.intake_available = true;
         snapshot.fuel_film_kg = context.intake->fuel_film_kg();
         snapshot.fuel_vapor_kg = context.intake->fuel_vapor_kg();
     }
     if (context.thermal) {
+        snapshot.thermal_available = true;
         snapshot.coolant_c = context.thermal->coolant_c();
-        snapshot.vehicle_speed_kmh = context.vehicle_speed_kmh;
+        snapshot.intake_air_c = context.thermal->air_sensor_c();
         snapshot.thermostat_open_fraction =
             context.thermal->thermostat_open_fraction();
         snapshot.radiator_fan_on = context.thermal->fan_on();
     }
-    if (context.injector_stage)
+    if (context.injector_stage) {
+        snapshot.injector_available = true;
         snapshot.injector_pulses = context.injector_stage->pulse_count();
+    }
     return snapshot;
 }
 

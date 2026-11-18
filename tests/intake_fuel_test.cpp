@@ -367,8 +367,10 @@ TEST(Ma17IgnitionStage, KeyCycleClearsDwellAndKeepsOpenCoil) {
 
 TEST(ExhaustLambda, TransportAndWarmupPrecedeNarrowbandResponse) {
     engine::ExhaustLambda exhaust;
+    EXPECT_FALSE(exhaust.has_exhaust_sample());
     exhaust.admit({0.0001, 0.00001, 0.00001}, 0.002, 0);
     exhaust.step(0.01, 9900);
+    EXPECT_FALSE(exhaust.has_exhaust_sample());
     EXPECT_DOUBLE_EQ(exhaust.lambda(), 5.0);
     EXPECT_DOUBLE_EQ(exhaust.voltage_v(), 0.45);
     for (int step = 2; step <= 200; ++step) {
@@ -377,6 +379,7 @@ TEST(ExhaustLambda, TransportAndWarmupPrecedeNarrowbandResponse) {
                           static_cast<int64_t>(step) * 9900);
         exhaust.step(0.01, static_cast<int64_t>(step) * 9900);
     }
+    EXPECT_TRUE(exhaust.has_exhaust_sample());
     EXPECT_TRUE(exhaust.valid());
     EXPECT_LT(exhaust.lambda(), 1.0);
     EXPECT_GT(exhaust.voltage_v(), 0.8);

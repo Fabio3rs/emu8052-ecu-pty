@@ -41,6 +41,22 @@ void Gauge::reset(float value) {
     m_needleVelocity = 0.0f;
 }
 
+float Gauge::angleForFraction(float fraction) const {
+    // Donor Gauge::render: gamma transforms a dial fraction before the sweep.
+    const float s = std::pow(std::clamp(fraction, 0.0f, 1.0f), m_gamma);
+    return s * m_thetaMax + (1.0f - s) * m_thetaMin;
+}
+
+bool Gauge::isMajorTick(int offset) const {
+    return m_majorStep > 0 && offset % m_majorStep == 0;
+}
+
+bool Gauge::showsTick(int offset) const {
+    return isMajorTick(offset) ||
+           (m_minorStep > 0 &&
+            static_cast<long long>(offset) + m_minorStep <= m_maxMinorTick);
+}
+
 void Gauge::update(float dt) {
     if (m_max <= m_min)
         return;

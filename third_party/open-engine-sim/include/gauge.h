@@ -26,6 +26,9 @@ class Gauge {
     void update(float dt);
     void reset(float value);
     float needlePosition() const { return m_needlePosition; }
+    float angleForFraction(float fraction) const;
+    bool isMajorTick(int offset) const;
+    bool showsTick(int offset) const;
 
     void setBandCount(int bands) {
         m_bands.resize(static_cast<std::size_t>(std::max(0, bands)));

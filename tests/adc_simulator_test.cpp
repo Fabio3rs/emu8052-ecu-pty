@@ -35,14 +35,26 @@ TEST(AdcSimulator, DynamicVoltageIsQuantizedAtConversionStart) {
         &voltage);
     em8051 cpu{};
     cpu.mSFR[0xD8 - 0x80] = 6;
+    ma17::set_adc_tick(10);
     ma17::start_adc_conversion(&cpu, 0xDA);
     EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 128);
     EXPECT_EQ(ma17::read_addatl(&cpu, 0xDA), 0);
+    const auto first = ma17::adc_observation(6);
+    EXPECT_TRUE(first.sampled);
+    EXPECT_TRUE(first.voltage_available);
+    EXPECT_EQ(first.tick, 10);
+    EXPECT_DOUBLE_EQ(first.pin_voltage_v, 2.5);
+    EXPECT_EQ(first.count, 512);
 
     voltage = 4.0;
     EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 128);
+    EXPECT_DOUBLE_EQ(ma17::adc_observation(6).pin_voltage_v, 2.5);
+    ma17::set_adc_tick(20);
     ma17::start_adc_conversion(&cpu, 0xDA);
     EXPECT_EQ(ma17::read_addat(&cpu, 0xD9), 204);
     EXPECT_EQ(ma17::read_addatl(&cpu, 0xDA), 128);
+    EXPECT_DOUBLE_EQ(ma17::adc_observation(6).pin_voltage_v, 4.0);
+    EXPECT_EQ(ma17::adc_observation(6).tick, 20);
     ma17::set_adc_voltage_provider(nullptr, nullptr);
+    EXPECT_FALSE(ma17::adc_observation(6).sampled);
 }

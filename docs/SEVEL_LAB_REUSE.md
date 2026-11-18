@@ -7,6 +7,16 @@ the original Ange Yaghi copyright and license text are in
 at `85f7c3b959a908ed5232ede4f1a4ac7eafe6b630` is a comparison source,
 not a build dependency. No proprietary community-edition files are imported.
 
+The donor checkout currently has local changes in
+`assets/shaders/engine_sim.vertex.spv`, `src/desktop_main.cpp` and
+`src/sdl_gpu_renderer.cpp`. Their working-tree SHA-256 values are
+`9d61d719d3366b118158fb14c2325ca0ef4b1c38e57f7306b0f1c590e7d09c8b`,
+`24fea13743a6005dfdec53c43e460bf24935a168e476b2a6529ffb5978662ca9`
+and `541599fe5e62584782f10dfd1dd2ebe6916d0a64fbfeb136b74a8e6d6f7c0bd6`
+respectively. The imported shader and renderer adaptations are itemized
+below; `desktop_main.cpp` is not imported. The local `SDL_shadercross`
+checkout is at `1ff05bec573988a98ef9e0260b4da44f512b8367`.
+
 | Donor path | Local path | License | Modification | SHA-256 |
 | --- | --- | --- | --- | --- |
 | `include/renderer.h` | `third_party/open-engine-sim/include/renderer.h` | MIT | None | `60729e83c038d4510ce9f01180b562049d72cb05ed91d36c9d50e3107e5bf8` |
@@ -54,14 +64,18 @@ not a build dependency. No proprietary community-edition files are imported.
 | `src/leveling_filter.cpp` | `third_party/open-engine-sim/src/leveling_filter.cpp` | MIT | None | `15ed4a87dc2ab4be3e748ae459d0b83e4dc05335161f08e03a177e4f41f47eb9` |
 | `src/jitter_filter.cpp` | `third_party/open-engine-sim/src/jitter_filter.cpp` | MIT | Fixed array destruction; added `<cstring>` | `d6928569af9758a78ebb9bb1d9879a29d439782310bb2caebd334d0f4a3b68dc` |
 | `src/synthesizer.cpp` | `third_party/open-engine-sim/src/synthesizer.cpp` | MIT | Free transfer buffers | `9daf3b88e2ea0032d7af704c520f0dc9baf243c6a0abc7bb27f56ddaad1766b6` |
-| `include/gauge.h` | `third_party/open-engine-sim/include/gauge.h` | MIT | Retained donor configuration and `std::vector<Band>`; removed application-bound render methods, added reset/getter and bounded band access | Donor `97c1289d779da8da6662e287fc59d238336592894c7efa7594e9667afd57e981`; local `5a13193b6028132f2b55aa212b45079fc41966897667dda8bb97b4b7da04b4e2` |
-| `src/gauge.cpp` | `third_party/open-engine-sim/src/gauge.cpp` | MIT | Retained constructor and spring-damped update; removed GPU rendering, guarded zero range and bounded frame delta | Donor `b8df51e45a9da4b8d71784c1b0d53a6bfcdc2ae97107c93964bc4850c526b9dc`; local `e0c848bae23bd79aa9d38715bba2c1b14cb1da2812c4b6931d308140995b4be3` |
-| `src/gauge.cpp` (radial ticks) | `src/lab/LabInstruments.cpp` | MIT | Adapted to SDL3 software gauges | Donor `b8df51e45a9da4b8d71784c1b0d53a6bfcdc2ae97107c93964bc4850c526b9dc` |
+| `include/gauge.h` | `third_party/open-engine-sim/include/gauge.h` | MIT | Retained donor configuration and `std::vector<Band>`; removed application-bound rendering, added bounded band access and reusable sweep/tick queries | Donor `97c1289d779da8da6662e287fc59d238336592894c7efa7594e9667afd57e981`; local `d0bf330b5ec7256b4d2150495b644cda00f639a08ca896f3db077ef6e15278c1` |
+| `src/gauge.cpp` | `third_party/open-engine-sim/src/gauge.cpp` | MIT | Retained constructor and spring update; extracted donor gamma/sweep and major/minor tick decisions for the SDL dial; guarded zero range and bounded frame delta | Donor `b8df51e45a9da4b8d71784c1b0d53a6bfcdc2ae97107c93964bc4850c526b9dc`; local `88d8ee818d99d36c6634d646606db99a80aafc5bbc7ad36dd858459b9855d87f` |
+| `src/gauge.cpp` (radial ticks and needle) | `src/lab/LabInstruments.cpp` | MIT | All profile dials now use the adapted donor sweep, tick visibility/length and constant-width needle; the tachometer keeps its persistent `Gauge` and the other dials build geometry from their SEVEL scales. The clutch keeps the donor's 0.8π–0.2π arc and displays `N/D` | Donor `b8df51e45a9da4b8d71784c1b0d53a6bfcdc2ae97107c93964bc4850c526b9dc` |
+| `src/labeled_gauge.cpp` (`LabeledGauge::render` bands and radii) | `third_party/open-engine-sim/include/labeled_gauge_layout.h`, `src/lab/LabInstruments.cpp` | MIT | Extracted title, gauge and value bands, center offset, radius and needle proportions into backend-neutral layout; SEVEL labels and values use those bands in the SDL adapter | Donor `efbfd64c015a9cf7424e180d9437428cc44dd37ea334359388ec3c9837661340` |
 | `include/oscilloscope.h` | `third_party/open-engine-sim/include/oscilloscope.h` | MIT | Removed application-bound render methods; replaced raw point arrays with a bounded `std::vector` ring and ordered-point accessor | Donor `c7823144db2db9a307041af83359b698814346e097ccadbb4590d875a35a6d43`; local `ecd3da6e3966d0c993f146e1a6a5a1ac81ceb3d5d89f9f3de565f6518b02f5ee` |
 | `src/oscilloscope.cpp` | `third_party/open-engine-sim/src/oscilloscope.cpp` | MIT | Retained sample-window and dynamic range logic; replaced raw arrays with `std::vector`, removed GPU rendering and added ordered-point output for the Lab | Donor `10d6d0a80903631f5c84a208e7af057607c61283ac0a3904c796895af744c334`; local `ff0897176b67bd32bac23a71fc7c6ac417b7da2cf15ec622ff6aa75432a52685` |
 | `src/oscilloscope.cpp` (path algorithm) | `src/lab/LabInstruments.cpp` | MIT | Adapted `startPath`/`generatePathSegment` through the unmodified donor `GeometryGenerator`; event traces remain tick-based and use `std::vector` storage | Donor `10d6d0a80903631f5c84a208e7af057607c61283ac0a3904c796895af744c334` |
 | `src/ui_button.cpp` (frame/hover/held design) | `apps/sevel-ma17-lab/SdlDisplay.cpp`, `include/lab/LabButtons.hpp` | MIT | Adapted button drawing and hit testing to SDL3 software renderer and the Lab's command queue; no donor UI runtime copied | Donor `81192da119c73446ab5ae340a7731f87ef10db604ba2c93110fb3dff4babc48d` |
 | `src/firing_order_display.cpp` (circular cylinder indicator) | `apps/sevel-ma17-lab/SdlDisplay.cpp` | MIT | Adapted the donor's ring-and-light presentation to a fixed SEVEL 1–3–4–2 strip; brightness comes from actual recent combustion/misfire events, without importing donor engine state | Donor `34d6326043d9da2a316da3f387a9947b60cb126cc2e4ea8962dc0c9a24124f85` |
+| `src/load_simulation_cluster.cpp` (`drawCurrentGear`, `drawGearChevron`, `onMouseClick`, clutch gauge profile) | `apps/sevel-ma17-lab/SdlDisplay.cpp`, `src/lab/LabInstruments.cpp` | MIT | Adapted donor gear card and clutch gauge layout to SDL3. The full card now follows donor title/body font sizes (24/64 px, fitted to the available bands), 0.28 chevron width and 3 px strokes; compact layouts retain the horizontal N–5 card. The adjacent clutch scale shows `N/D` without a needle. The gear tooltip displays Fiat manual ratios and an ideal speed reference with an explicitly estimated 0.29 m tire radius; neither donor transmission solver nor clutch state is imported | Donor `fff1235c0f6d5804114e24b5f3ec8477e2d68e6edeffe36404b156397532fe6e` |
+| `src/load_simulation_cluster.cpp` (`drawCurrentGear` bands and `drawGearChevron` size) | `third_party/open-engine-sim/include/gear_card_layout.h`, `apps/sevel-ma17-lab/SdlDisplay.cpp` | MIT | Extracted the donor's 0.86/0.62/0.22 vertical divisions, 0.28 chevron size and clickable up/down regions; SDL flips the donor Y axis and keeps a horizontal control for compact windows | Donor `fff1235c0f6d5804114e24b5f3ec8477e2d68e6edeffe36404b156397532fe6e` |
+| `src/right_gauge_cluster.cpp` (cell hierarchy and `throttleControlBounds`), `src/afr_cluster.cpp` (upper/lower split) | `third_party/open-engine-sim/include/right_gauge_layout.h`, `src/lab/LabInstruments.cpp` | MIT | Extracted the donor's half-panel cells, three stacked intake gauges, equal AFR/fuel widths, upper/lower sensor cells and proportional throttle-control rectangle; SDL flips Y and supplies SEVEL values | Donor right cluster `1255cd5bc817534c3eb3eca20841ac43d3bc2a844c296ba57932bf01310aefc4`; AFR cluster `f5571f93b14592cd2f08ef4542923c17f366cf4a6021a4cd351cf7523cf02139` |
 | `assets/es/sound-library/smooth/smooth_39.wav` | `third_party/open-engine-sim/assets/smooth_39.wav.zlib.b64` | MIT (donor root) | Complete WAV, losslessly packaged with zlib/Base64 | Original WAV `75de9db47063395665d36b6d4232f477aae385feaa9ba158353fbdaf122db5cc`; packaged text `f64df2895813394ec2a5b4d248474f38f74da2fbe031495f5d8bcbfc63f47496` |
 | `assets/es/sound-library/smooth/smooth_39.wav` (first 2048 PCM frames) | `include/lab/SevelImpulse.hpp` | MIT (donor root) | Exact PCM samples in `std::array`; runtime convolution gain is configured separately | Local text `c925313058584b5656eef3f5cd7fbfc26566675f5ea953a63f56eb831dc70159` |
 
@@ -80,8 +94,9 @@ real MA1.7/SEVEL combustion events for offline WAV and SDL3 live playback.
 The 2048-frame donor-derived impulse retains 99.69% of the complete WAV's
 sample energy and is convolved at 35% mix. The complete source is archived
 losslessly above. This is an acoustic effect, not a Fiat exhaust measurement.
-The three live Lab dials instantiate the adapted donor `Gauge` class for
-spring-damped needle state; SDL software draws their radial geometry. The
+The Lab instantiates three adapted donor `Gauge` objects for spring-damped
+needle state; the current OES-style tachometer uses the first object's
+position, while SDL software draws the dial geometry. The
 three ECU channels instantiate the adapted donor `Oscilloscope` ring to order
 event samples and render them with the donor's geometry path generator.
 Oversized traces retain the SDL line fallback.
@@ -117,3 +132,43 @@ The shapes are planar; their scales are drawing estimates only. The packaged
 asset decoded to 918,973 bytes with the original OBJ hash above. The SDL3 GPU
 renderer and remaining donor UI classes remain pending for the primary window.
 Each later import needs its transitive dependencies, license review and hash.
+
+## GUI component boundary after the dual-view layout
+
+The donor's `LabeledGauge` directly inherits `UiElement` and calls
+`EngineSimApplication` drawing and child-element APIs. Its
+`RightGaugeCluster` also owns donor `Engine` and `Simulator` pointers and
+reads donor fuel, manifold and AFR state. Importing those classes as live
+widgets would pull the donor solver across the presentation boundary. The
+SEVEL SDL renderer instead uses the copied `Gauge` state, donor radial-tick
+geometry and donor label/frame proportions, with all values and scales from
+`SevelInstrumentProfile` and `EmulatorSnapshot`. `oscilloscope.cpp` and
+`GeometryGenerator` are copied, built and used by the digital pin traces;
+the new analog scope currently draws timestamped SDL lines with fixed units.
+The unused `draw_lab_gauge` software path was removed; the visible analog
+instruments use `draw_profile_dial` and one SEVEL profile. This remains an
+SDL adaptation of donor gauge geometry, not the donor `Gauge::render` or
+`LabeledGauge::render` transplanted unchanged; its band and radius math is
+extracted into `labeled_gauge_layout.h` and used by the SDL dial renderer.
+The donor `desktop_application.cpp`, `labeled_gauge.cpp`,
+`right_gauge_cluster.cpp` (apart from its throttle control bounds),
+`engine_view.cpp` and
+`oscilloscope_cluster.cpp` remain reference files in the preserved checkout,
+not falsely listed as imported production modules. Their composition and
+focus behavior still require further adaptation for the requested UI.
+
+The analog scope now uses the copied `ui_math.h::Grid` directly for preview
+placement and follows the focus-above-previews arrangement of donor
+`src/oscilloscope_cluster.cpp::render` (checkout
+`1e226ee7bfbeb1d5012c7696aee82a57355df281`, SHA-256
+`2d45315af8d654078dfe9637a5e779f20bd7f785466482eebc93569cb39cff52`).
+Its SDL adapter in `LabInstruments.cpp` uses six columns and two rows for
+eleven SEVEL groups at 360 px or taller, or eleven columns and one row from
+248 to 359 px; below 248 px the preview cards are hidden. Plotting and mouse
+selection share the resulting rectangles in both visible arrangements.
+The donor `oscilloscope_cluster.cpp` source itself remains outside production
+because its `EngineSimApplication` and simulator references are not read-only
+SEVEL adapters.
+
+The current channel-to-reading-point inventory and remaining validity gaps
+are in [SEVEL_LAB_CHANNEL_MAP.md](SEVEL_LAB_CHANNEL_MAP.md).

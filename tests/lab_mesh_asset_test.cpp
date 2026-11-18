@@ -33,8 +33,10 @@ TEST(LabMeshAsset, DecodesUnmodifiedDonorFont) {
 
 TEST(LabButtons, EveryVisibleControlHasAUniqueHitTarget) {
     EXPECT_TRUE(lab::lab_buttons_visible(900, 620));
-    EXPECT_FALSE(lab::lab_buttons_visible(899, 620));
-    EXPECT_FALSE(lab::lab_buttons_visible(900, 619));
+    EXPECT_TRUE(lab::lab_buttons_visible(899, 620));
+    EXPECT_TRUE(lab::lab_buttons_visible(900, 619));
+    EXPECT_FALSE(lab::lab_buttons_visible(599, 620));
+    EXPECT_FALSE(lab::lab_buttons_visible(900, 349));
     for (std::size_t index = 0; index < lab::lab_button_labels.size();
          ++index) {
         const auto box = lab::lab_button_rect(index, 1280, 720);
@@ -43,7 +45,7 @@ TEST(LabButtons, EveryVisibleControlHasAUniqueHitTarget) {
                                            720),
                   static_cast<lab::LabButtonAction>(index));
     }
-    EXPECT_EQ(lab::hit_test_lab_button(20.0f, 560.0f, 1280, 720),
+    EXPECT_EQ(lab::hit_test_lab_button(20.0f, 700.0f, 1280, 720),
               lab::LabButtonAction::None);
     EXPECT_EQ(lab::hit_test_lab_button(20.0f, 504.0f, 500, 400),
               lab::LabButtonAction::None);

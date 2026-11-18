@@ -92,6 +92,7 @@ class ExhaustLambda {
             packets_.pop_front();
         }
         if (arriving_air_kg > 0.0) {
+            has_exhaust_sample_ = true;
             target_lambda_ = arriving_lambda_air_kg / arriving_air_kg;
             target_charge_lambda_ =
                 arriving_charge_lambda_air_kg / arriving_air_kg;
@@ -127,6 +128,7 @@ class ExhaustLambda {
     }
 
     bool valid() const { return temperature_c_ >= 300.0; }
+    bool has_exhaust_sample() const { return has_exhaust_sample_; }
     double lambda() const { return lambda_; }
     double charge_lambda() const { return charge_lambda_; }
     double temperature_c() const { return temperature_c_; }
@@ -150,6 +152,7 @@ class ExhaustLambda {
     double lambda_ = 5.0;
     double charge_lambda_ = 5.0;
     double voltage_v_ = 0.45;
+    bool has_exhaust_sample_ = false;
 };
 
 } // namespace engine

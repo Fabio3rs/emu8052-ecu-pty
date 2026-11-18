@@ -44,15 +44,41 @@ Fotografias do conjunto de mostradores com iluminação verde original acesa e m
 - **Diâmetro dos cilindros (Bore):** $86.400\text{ a }86.450\text{ mm}$ (Classes de pistão: A: 86.360–86.370, C: 86.380–86.390, E: 86.400–86.410 mm).
 - **Curso dos pistões (Stroke):** $67.400\text{ mm}$.
 - **Taxa de compressão:** $9.2 : 1$ (gasolina).
-- **Folga entre pistão e camisa:** $0.010\text{ mm}$ nominal.
+- **Folga entre pistão e camisa:** $0.030\text{ a }0.050\text{ mm}$.
 - **Ordem de ignição e combustão:** **$1 - 3 - 4 - 2$**.
 - **Diâmetro dos mancais principais:** $\varnothing\ 54.507\text{ a }54.520\text{ mm}$ (5 mancais de apoio).
 - **Diâmetro dos moentes do virabrequim:** Buchas do eixo auxiliar $\varnothing_1 = 38.700\text{ a }38.730\text{ mm}$, $\varnothing_2 = 35.036\text{ a }35.066\text{ mm}$.
 
 ### 2.2 Desempenho & Curvas Características (CEE DIN)
-- **Potência máxima:** **$82\text{ CV}$** ($60\text{ kW}$) a **$6000\text{ RPM}$**.
-- **Torque máximo:** **$130\text{ N}\cdot\text{m}$** ($13.3\text{ kgf}\cdot\text{m}$) a **$3000\text{ RPM}$**.
+- **Potência máxima ABNT:** **$82\text{ CV}$** ($60.4\text{ kW}$) a **$6000\text{ RPM}$**.
+- **Torque máximo ABNT:** **$13.3\text{ daN}\cdot\text{m}$** ($133\text{ N}\cdot\text{m}$; $13.0\text{ kgf}\cdot\text{m}$) a **$3000\text{ RPM}$**.
+- **Curva CEE:** a página 6 mostra curvas medidas pelo método CEE; seus picos não devem ser rotulados como os valores ABNT acima.
 - **Regime de rotação máxima recomendada:** $6000\text{ RPM}$ contínua / corte por ECU em ~6300–6500 RPM.
+
+As páginas digitalizadas em `PhotosECU/curso_numeros.png`,
+`PhotosECU/desenhos_pistoes.png` e `PhotosECU/curva_potencia.png` são as
+referências diretas para os números e para a forma das curvas. O desenho do
+pistão mostra topo plano, três anéis próximos ao topo e saia curva na base;
+`PhotosECU/desenhos_motor.png` mostra a biela e o virabrequim. Os recortes
+do manual servem como referências visuais, não como texturas do motor animado.
+
+### 2.3 Transmissão e ignição documentadas
+
+- **Caixa:** C.513.5.13, cinco marchas; relações 3.909, 2.238, 1.541,
+  1.156 e 0.891; ré 3.909 (`PhotosECU/manual_cambio.png`).
+- **Diferencial:** 63/16 = 3.9375, apresentado como 3.938 no manual;
+  a página de relações totais nas rodas imprime 15.393, 8.813, 5.784,
+  4.107 e 3.343 (`PhotosECU/manual_cambio_2.png`). Para 3ª–5ª, esses
+  números divergem dos produtos 1.541, 1.156 e 0.891 × 3.9375, que dão
+  6.068, 4.552 e 3.508. Para apresentação e futura dinâmica aproximada,
+  adotar as cinco relações da página de câmbio multiplicadas por 3.9375;
+  identificar as relações totais impressas como uma tabela divergente,
+  sem afirmar precisão de calibração. O velocímetro atual mostra uma
+  entrada de cenário.
+- **Embreagem:** monodisco a seco com comando mecânico
+  (`PhotosECU/manual_embreagem.png`).
+- **Ignição:** distribuição estática SPI, ordem 1–3–4–2; avanço de
+  6° ± 2° em 850 ± 50 RPM (`PhotosECU/manual_ignicao_ecu.png`).
 
 ---
 

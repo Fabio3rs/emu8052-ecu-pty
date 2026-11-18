@@ -1299,3 +1299,993 @@ not renamed or unmounted for this run.
 The GUI-disabled Lab and Lab-disabled original CLI configurations rebuilt
 after the session lifecycle guard. The GUI-disabled `lab_session_smoke`
 target also rebuilt, and its `LabSession.PauseAndControls` test passed 1/1.
+
+The analog scope now shows six live miniature traces above the selected
+full-size graph. Clicking a miniature selects its group and resets the
+trigger channel to that group's first signal. The strip is omitted when the
+scope panel is under 248 px high, preserving the compact trace area. NativeLab
+built with `--parallel "$(nproc)"`; 11 selected capture/control/scope tests and
+the new `LabControls.ScopeCardTps1920x1080` click test passed. Captures at
+1920×1080 and 2560×1440 show the selected card and the graph without overlap.
+
+The analog analysis panel can now expand to the center's available height
+with `Z` or its header button and return to the normal two-view layout with
+the same controls. In expanded mode, the panel starts at y=100 px; its
+coordinates, group selectors, traces, zoom anchor and cursor hit tests use
+the expanded bounds. The NativeLab 1920×1080 capture is
+`build-lab/sevel-scope-maximized-1920x1080.png`. Its automated test toggled
+by key, restored by button, and expanded again before capture. The focused
+NativeLab build and five tests passed, including the piston orientation and
+normal 1920×1080 and 3440×1440 layouts.
+
+The seventh analog group, `ADC TPS`, plots the last completed ADC0/TPS2 and
+ADC6/TPS1 conversion voltages. `AdcObservation` carries the driven voltage,
+10-bit count and conversion tick into each snapshot; it keeps these separate
+from the pre-fault TPS circuit model. The archive retains both sides of a
+large ADC-pin voltage jump. NativeLab built with `--parallel "$(nproc)"` and
+passed `LabRunner.AdcFaultTelemetry`, `LabRunner.OriginalRomSnapshot`,
+`LabCapture.AdcTpsFault1920x1080` and
+`LabSession.WarmScenarioDeterminism` (4/4). In
+`build-lab/sevel-adc-tps-fault-1920x1080.png`, the lower trace shows the
+temporary 5 V TPS1 pin fault and its recovery. The upper trace has no fault.
+The ADC TPS CSV additionally records each channel's 10-bit count, conversion
+tick and observation age. `LabCapture.AdcTpsFault1920x1080` checks the high
+fault value, recovery and timestamp ordering; the existing TPS CSV test also
+passed in NativeLab (2/2 focused tests).
+
+The added Fiat manual scans in `PhotosECU/` confirm the corrected piston
+silhouette, 86.4 × 67.4 mm geometry, 1–3–4–2 firing order, five gearbox
+ratios and the differential. `docs/SEVEL_TIPO_16_SPECS.md` now identifies
+the exact source images and corrects piston clearance and ABNT peak units.
+The scanned CEE graph is a visual reference for a later vector trace; its
+curve has not been digitized or used as live torque or power telemetry.
+For a first approximate gearbox version, use the individual five ratios
+from `manual_cambio.png` and the 63/16 differential from
+`manual_cambio_2.png`, then calculate total ratios directly. The printed
+total-ratio table disagrees for 3rd–5th; the current road-speed display is
+still scenario input and no gear/clutch dynamics are yet implemented.
+`SevelTransmission.hpp` now holds the ratios and a tested total-ratio
+calculation. The Lab adapts the donor `LoadSimulationCluster` gear card with
+up/down click zones; `Q`/`E` select neutral through fifth. At 1920×1080 the
+card fits above the combustion strip, and `LabControls.GearWidget1920x1080`
+verified keyboard and pointer selection. The selected ratio is explicitly
+marked `REF`; the card does not yet transmit torque or drive vehicle speed.
+
+The digital ECU scope now has four independently selectable lanes. CC3,
+P5.0 and P5.1 still use recorded pin events; `IDLE SW SAMP` reads the
+physical contact from retained snapshots and breaks its trace at missing
+throttle data or gaps over 250 ms. NativeLab's
+`LabCapture.DigitalZoom1920x1080` passed, and the resulting image
+`build-lab/sevel-digital-zoom-1920x1080.png` was inspected for lane spacing
+and label legibility. This capture shows the contact closed throughout;
+the step on a change has not yet received a dedicated image test.
+The digital plot now marks relative time on its X axis. A pin lane without
+retained events shows `NO EDGE` instead of a fabricated low trace, and a
+lane with its first retained event inside the window starts there rather
+than at the left edge. NativeLab rebuilt and passed the digital-zoom and
+1920×1080 layout captures (2/2); the zoom capture was inspected again.
+
+The analog scope heading now chooses a shorter measured layout when its
+full text would reach the panel edge. At 1280×720 the group, time window,
+point count, effective rate and live/history state remain visible. The
+navigation capture test now clicks inside the actual plot bounds; its old
+coordinate landed in the preview strip, so its double-click reset never
+executed. NativeLab passed the corrected navigation tests at 1280×720 and
+1920×1080 (2/2), and the new 1280×720 capture was inspected.
+
+The instrument profile now distinguishes a channel without a valid current
+reading from a quantity not published by the model. Defined gauges render
+`--` and report `MISSING` in the tooltip when unavailable; VE still renders
+`N/D`. NativeLab built with `--parallel "$(nproc)"` and passed the compact
+button-bar and 1920×1080 layout captures (2/2); the latter was inspected.
+
+The digital ECU scope now plots timestamped spark-pair chevrons, combustion
+squares and misfire crosses in a separate event strip on taller panels.
+The pin traces remain electrical high/low intervals; the event shapes do
+not infer dwell or injector opening. NativeLab rebuilt with `nproc` and
+passed both digital captures (2/2). The new
+`build-lab/sevel-digital-events-1920x1080.png` was inspected, and its test
+checks the spark and combustion colors in the event region.
+
+The analog scope now exposes two more pairs of last completed ADC
+conversions: ADC1 battery divider with ADC5 conditioned lambda, and ADC2
+IAT with ADC3 ECT NTC. The preview cards, group key, labels and CSV
+columns use the same group mapping. The archive preserves both sides of
+large jumps on all six identified ADC channels. NativeLab captures at
+1920×1080 show temporary ADC5 and ADC3 fault stimuli and recovery; both
+tests check the recorded pin voltage, 10-bit count, conversion tick and
+age in the CSV. Export filenames now include the group to separate
+parallel captures.
+
+The Thermal scope now overlays physical coolant ECT and air-sensor IAT
+temperatures on a shared °C axis, while thermostat opening and a sampled
+fan-state step track remain below. `EmulatorSnapshot::intake_air_c` only reads the
+existing `ThermalState::air_sensor_c()`; it does not change sensor or engine
+physics. The archive retains IAT extrema. NativeLab passed
+`LabCapture.thermalScope1920x1080`, the ADC2/3 fault capture, the gear-card
+capture and warm-scenario determinism (4/4). The thermal CSV test checks
+both physical temperature columns, their distinct live readings and the
+sampled fan column;
+`build-lab/sevel-thermal-scope-1920x1080.png` was inspected. ADC2/3
+voltages remain in their separate conversion scope.
+
+The Battery scope separates the physical sensor-circuit supply voltage
+from the last ADC1 conversion after its modeled divider. Both have distinct
+axes, source labels and CSV columns; ADC1 also retains count, conversion
+tick and age. The ten preview cards remain visible at 1920×1080. A
+12.0 V scenario produced 12.00 V supply and about 3.12 V at ADC1 in
+`build-lab/sevel-battery-scope-1920x1080.png`; the NativeLab capture,
+thermal capture, ADC battery/lambda capture and warm determinism passed
+4/4. A 14.5 V test scenario hit the existing idle-actuator 12.5 V drive
+limit before the Lab window opened; this validation therefore used 12.0 V
+and did not change the actuator model.
+
+The snapshot now also copies raw ECU lower-RAM bytes 60h–67h without
+assigning sensor meanings. The debug inspector prints their addresses and
+hex values; ADC-group CSV exports each byte as a separate unsigned column
+alongside the last conversion's pin voltage, count, tick and age. This
+keeps ROM-processed state distinct from the harness ADC observation.
+NativeLab rebuilt with `nproc` and passed the battery, ADC TPS-fault,
+ADC battery/lambda and warm-determinism tests (4/4). The battery capture
+test checks all eight raw columns have bounded byte values.
+
+The debug view now keeps the status bar at two lines and places ECU details
+in a framed, opaque inspector inside the mechanical column. The candidate
+lamp indicator moved into its title. Its raw IRAM row remains legible at
+1280×720 and 1920×1080; the redundant RPM/lambda trend overlay was removed
+because those signals already have dedicated scopes. NativeLab passed both
+debug captures and the 1280×720 scope-navigation test (3/3); the two debug
+PNGs were visually inspected for text and gauge overlap.
+
+The 900×620 debug capture exposed a compact-only overlap: the inspector
+covered the KEY/START/pedal/load/pause/speed/mute button row. It now anchors
+above the same button rectangle used for hit testing and ends before the
+analog panel. `LabCapture.BatteryDebugCompact900x620` checks a decoded
+button pixel against its active fill, so another overlay cannot silently
+hide KEY. NativeLab passed this capture and compact view selection (2/2);
+`build-lab/sevel-battery-debug-900x620.png` was inspected after the fix.
+
+The UI-43 state matrix now has four original-ROM captures at 1280×720 in
+`.work/gui-review/`. `stopped-1280x720-t800000.png` uses `--live
+--bench-preset` with the key off and reports 0 rpm/0 burns. The
+`auto-1280x720-t800000.png` uses `--auto-start` and reports 940 rpm/13
+burns. `replay-load-1280x720-t800000.png` uses the checked-in
+`tests/data/lab_control_replay.txt`: at the same tick it shows 24 N·m
+applied load, pedal command, disabled replay controls, 655 rpm and eight
+burns. Each has a matching `.log` with `[LAB-CAPTURE] tick=800000` and
+`[LAB-STATE]` fingerprints. All three PNGs were visually inspected.
+`paused-1280x720-f12.png` was captured after automatic start at tick
+1,522,000, with key on and about 1000 rpm. The F12 test now waits for an
+active motor, verifies that the paused tick stays fixed and waits for the
+PNG's complete IEND chunk before copying it. It passed in NativeLab.
+These initially established the before state. The matched after captures
+for the lambda-validity change are listed below. Other resolutions and
+independent UI scale choices still need a controlled matrix.
+An attempted match for `.work/current-baseline.png` at tick 148,000
+produced 254 rpm with the bench preset and 253 rpm without it, while the
+unlabeled old image shows 433 rpm. The tick and resolution alone therefore
+do not establish a like-for-like scenario comparison.
+
+The gear card, left pedal/volume sliders and header help/debug hitboxes
+now read column edges from `LabLayout` instead of repeating 24%/66%
+width calculations in `SdlDisplay.cpp`. NativeLab rebuilt with `nproc`;
+mouse button bar, fullscreen return, gear selection and radial view mouse
+tests passed 4/4. The refreshed 3440×1440 original-ROM capture at
+`.work/gui-review/current-3440x1440.png` passed its capture check and was
+visually inspected; the gear card fits between TBI and the combustion strip.
+
+Lambda validity now follows delivery of the first exhaust packet to the
+existing `ExhaustLambda` model. The new read-only observation flag travels
+through `EmulatorSnapshot`; the gauge and analog scope show `--`/a gap
+before that event instead of reporting the model's default λ=5.0 as a
+measurement. The oxygen-sensor voltage remains a separate modeled channel
+and still shows its pre-arrival 0.45 V baseline. NativeLab rebuilt with
+`nproc` and passed ten focused exhaust, scope, capture and determinism tests.
+At 1280×720, `stopped-lambda-validity-1280x720.png` shows no lambda value,
+while `idle-lambda-validity-1280x720.png` shows a live λ≈1.24 at tick
+1,500,000. Both images were inspected; no exhaust dynamics were changed.
+
+For UI-43, `.work/gui-review/` now contains these before/after PNG pairs
+from the original ROM. Each pair is 1280×720 at the same 100% GUI scale;
+the first three have identical `[LAB-STATE]` fingerprints in their logs.
+Names in the table are relative to that directory.
+
+| State | Before PNG | After PNG | Tick | Changed RGB pixels |
+| --- | --- | --- | ---: | ---: |
+| Key off, stopped | `stopped-1280x720-t800000.png` | `stopped-lambda-validity-1280x720.png` | 800,000 | 792 |
+| Auto-start, idle | `auto-1280x720-t800000.png` | `after-auto-1280x720-t800000.png` | 800,000 | 215 |
+| Pedal 8 mm and load 24 N·m, control replay | `replay-load-1280x720-t800000.png` | `after-replay-load-1280x720-t800000.png` | 800,000 | 384 |
+| Paused after auto-start, F12 | `paused-1280x720-f12.png` | `after-paused-1280x720-f12.png` | 1,522,000 | 195 |
+
+The stopped pair changes the lambda panel from the initial 5.0 value to
+`--` and removes the unsupported trace; the other pairs retain their
+live values. Remaining pixel differences include visual needle smoothing
+and capture-time UI state. The paused pair has the same displayed tick,
+but the F12 test does not export a full physical-state fingerprint.
+
+The compact 900×620 layout was checked after the lambda-validity change.
+`LabCapture.StoppedCompact900x620` captures the original ROM with the key
+off and verifies 0 CC3 pulses and 0 burns; the header now uses the same
+exhaust-sample validity as the gauge and shows `LAM --`. That capture
+exposed overlapping scope text: the two retention counters sat on the
+second signal label. On panels below 280 px high they now share a short
+line inside the first track. NativeLab rebuilt with `nproc` and passed
+the stopped compact, battery/debug compact and Full HD layout captures
+3/3. The refreshed `build-lab/sevel-stopped-900x620.png` was inspected;
+the lambda, retention and SONDA V labels occupy separate rows.
+
+The two mechanical cameras now fit recorded donor triangles independently
+over 16 sampled crank phases instead of using height-dependent zoom and pan
+corrections. The same target rectangle is used after resize, focus selection
+and `R` view reset; compact framing leaves room for shaft-detail lines above
+the head and the control row below the crank. The projection retains one
+pixels-per-metre factor for both axes. NativeLab rebuilt with 24 jobs and
+passed 14 focused motion, capture, fullscreen and view-selection checks;
+the 900×620, 1280×720, 1920×1080 and 3440×1440 captures were inspected.
+The fit samples visual poses only and never modifies the running snapshot.
+`LabCapture.PhysicalMotion` now captures eight original-ROM ticks from
+1,500,000 to 2,150,000 (about 131 ms at the configured tick rate). Besides
+checking motion and rising combustion/injection counters, it checks that
+bright mechanical pixels remain clear of all four viewport edges in both
+views. NativeLab passed this expanded test in 16.63 s. This samples a little
+over two revolutions near 1000 rpm; it is not a proof for every continuous
+phase or manual zoom position.
+
+The camera reset is also exposed as a `FIT` button beside the view selector.
+In the compact layout both buttons moved from the right gauge column into
+the free mechanical control row. The same rectangles drive drawing and
+mouse hit testing. Two new NativeLab tests zoom with the wheel, click `FIT`
+and verify the reset handler at 900×620 and 1920×1080; the compact view
+selector and fullscreen return tests also passed (5/5). Both `FIT` captures
+were inspected for overlap and framing.
+
+The ignition cluster now separates three existing event classes. Four
+numbered discs respond only to combustion outcomes, with a red `!` on a
+misfire; pair rows show ECU `PIN` edges and ignition-stage `SPK` events
+independently. The display afterglow does not alter their recorded timestamps
+or electrical widths. NativeLab rebuilt with 24 jobs, passed the compact and
+Full HD captures plus the physical-motion test (4/4), and both ignition
+panels were inspected for legibility.
+
+The fuel card now uses `--` when its defined mass or pulse channels lack a
+valid reading; `N/D` remains for undefined quantities such as volumetric
+efficiency. Its accumulated mass, vapor, film and pulse rows have separate
+profile IDs and source tooltips. The tooltips render after the neighboring
+gauges so their text remains visible. NativeLab passed the stopped compact,
+Full HD and new fuel-tooltip captures (3/3); the tooltip screenshot shows
+`FUEL FILM [MG]`, `INTAKE MANIFOLD MODEL`, validity and snapshot tick.
+
+The donor-style gear selector now remains visible at 1280×720 below the
+volume bar; mouse shift tests pass there and at 1920×1080. Its N/1–5 state
+and total ratio remain visual references without drivetrain coupling.
+The compact 150% and 200% layouts now show a horizontal `GEAR N–5 REF`
+selector beside the second button row. It shares the desktop selector's
+state and click handling; NativeLab captured both compact sizes and passed
+all four gear widget tests, including the original 1280×720 and 1920×1080
+cards.
+An original-ROM NativeLab capture starting at 0 °C demonstrates the coolant
+gauge below its 50 °C minimum: the numeric 0.2 °C remains visible while the
+needle stops at the scale end and a red `LOW` marker appears. The marker was
+enlarged, and `LabCapture.CoolantUnderrange1920x1080` checks that both marker
+and numeric glyphs remain present in the captured panel.
+
+`--ui-scale 100|150|200` now configures SDL logical presentation separately
+from physical scenario arguments. Layout and hit tests use the logical size;
+SDL converts pointer events. The 1920×1080 200% compact layout places the
+essential controls above both mechanical views. At 1280×720, 150% and 200%
+use a two-row control strip and a compact single-channel scope preview with
+`Z:MAX`; the trace still comes from timestamped history. NativeLab passed
+the nine capture jobs spanning 1280×720, 1920×1080, 3440×1440 and all three
+scales, plus a 200% mouse click that switched to the radial view. A separate
+NativeLab 200% test entered fullscreen with F11, captured 1920×1080, returned
+to 1280×720, captured again and clicked the scaled view selector. Captures
+are in `build-lab/sevel-ui-scale-*.png`. These jobs verify execution and
+capture, not a full visual acceptance. Selected signals, cameras, units,
+free resize under explicit scale and scope maximize require further validation.
+
+The 1280×720/150–200% right cluster now switches between three compact tabs.
+`VITAL` gives RPM, coolant and lambda full-width donor-style dials;
+`DATA` lists sonde voltage, manifold pressure, air flow, integrated
+injected mass, film, vapor and pulse count with the existing source tooltips.
+`IGNITION` reuses the four combustion discs and two PIN/SPK pair rows.
+Both views retain the same snapshot and validity flags. NativeLab passed the
+200% vital/data/ignition click and capture checks (3/3); the resulting
+`build-lab/sevel-ui-scale-200-details-1280x720.png` and ignition capture
+were inspected for legibility. Other secondary channels remain pending.
+
+UI scale is now saved in SDL's per-user `presentation.txt` with a versioned,
+validated value. Ctrl+1/2/3 selects 100/150/200%; Ctrl+0 restores automatic
+scale. An explicit `--ui-scale` is a launch override, and finite-frame captures
+ignore saved scale unless the flag is provided. The new NativeLab preference
+test used an isolated XDG directory, verified save/reload/reset across
+processes, confirmed that a CLI override does not replace the saved value,
+and verified that an invalid value falls back to automatic scale.
+Camera positions and alternate units are not saved yet.
+
+The desktop column dividers are now draggable. `LabLayout` keeps their shared
+boundaries and enforces 220 px for controls, 360 px for mechanics/scope and
+280 px for instruments; the button bar receives the same left width for
+drawing and hit testing. A 1920×1080 mouse test moved both dividers, clicked
+the relocated view selector and captured the result. NativeLab built with
+`--parallel 24`; the new drag test and existing donor-style gear widget test
+passed 2/2 under the existing graphical test runner. The captured layout was
+inspected. NativeLab's direct process currently has no `DISPLAY` or Wayland
+display and SDL reports no video device, so direct-desktop validation remains
+pending.
+
+The presentation preference now stores UI scale and both desktop divider
+fractions in `v4` format. The loader accepts the older scale-only `v1` format,
+validates all values and falls back to the usable default on invalid input.
+Divider release saves the new proportions; Ctrl+R restores 24/42/34 without
+changing the saved scale, while plain R still fits the mechanical camera.
+Finite-frame captures ignore saved proportions for reproducibility. NativeLab
+built with 24 workers, and the preference, drag and donor-style gear tests
+passed 3/3. The preference test covered separate launches, CLI scale override,
+divider save/reload/reset, malformed proportions and legacy v1 loading.
+
+The divider interaction test now also clicks the gear card and TPS
+oscilloscope preview after resizing both columns. It verifies the relocated
+view selector, gear `1` and TPS group in the window title. NativeLab passed
+the extended 1920×1080 run; its tick 6,000,000 PNG shows both views, the
+selected gear and TPS graph inside their resized panels.
+
+UI-09 now has Bench, Analysis and Mechanics desktop compositions. Ctrl+4/5/6
+selects them; Analysis reserves 56% of the height for the scope, Mechanics
+reserves 25%, and Bench retains the existing adaptive 40% layout. Both engine
+views stay present. The selected mode is saved in the `v4` presentation file,
+while `v1` and `v2` remain readable. Ctrl+R resets the mode and dividers.
+The status bar identifies the active UI mode separately from the BENCH
+scenario label. NativeLab built with 24 workers; mode persistence and two
+1920×1080 capture tests passed 3/3. The Analysis and Mechanics PNGs in
+`build-lab/` were inspected for motor and scope clipping.
+
+The horizontal divider between mechanics and scope is now draggable in the
+desktop layout. It keeps at least 180 px for the scope and roughly 300 px for
+the two mechanical viewports; the shared `LabLayout` rectangle drives both
+scope drawing and channel hit testing. Its height fraction persists in `v4`
+preferences. Selecting a preset or Ctrl+R clears the custom height. NativeLab
+built with 24 workers; the preference test and 1920×1080 divider capture
+passed 2/2. The capture was inspected with both engine views and TPS scope
+inside their resized regions. `v1`, `v2` and `v3` preferences remain readable.
+
+The `v5` presentation preference now also stores analog/digital scope choice,
+selected analog group, the two time-window lengths and the four digital
+visibility bits. They are read on interactive startup and saved on clean exit;
+finite-frame capture runs keep deterministic defaults. The NativeLab
+preference test changed the analog group and both time windows with GUI input,
+hid one digital channel, restarted the process and verified every restored
+value. An invalid channel mask fell back to defaults. That test passed, as
+did the horizontal/vertical divider and 200% GUI capture regressions (4/4).
+`v1` through `v4` files remain readable. Unit and font preferences remain
+pending.
+
+The `v6` presentation preference stores the active mechanical view and each
+camera's zoom and pan separately. Pan is saved as a fraction of its viewport;
+the first frame fits the engine before restoring the saved camera. Ctrl+R
+clears the saved camera through the normal fit path. NativeLab built with 24
+workers and the preference test verified distinct zoom/pan for both views,
+restart restoration and the active view (1/1). The donor gear card had already
+been adapted from `LoadSimulationCluster::drawCurrentGear`,
+`drawGearChevron` and `onMouseClick`; its N–5 selection remains a local GUI
+reference, without importing donor clutch or transmission physics.
+
+The `v7` presentation preference adds an independent 100/105/110% text size
+selected by Ctrl+7/8/9. `FontRenderer` applies the factor to glyph drawing
+and text measurement together, so centered labels use the same width as the
+visible text. A 130% trial capture exposed header overlap at 1280×720; the
+range was reduced, and the four axial cylinder labels now cap their width
+against the projected cylinder pitch. NativeLab built with 24 workers and
+passed preference, default radial view and 1280×720 capture tests (3/3).
+The inspected `build-lab/sevel-font110-1280x720.png` keeps the header and
+cylinder labels separate. `v1` through `v6` files remain readable. Unit
+selection still needs implementation.
+
+After the font change, NativeLab reran the nine 100/150/200% captures at
+1280×720, 1920×1080 and 3440×1440; all passed. The 1280×720 150/200%
+and 3440×1440 200% PNGs were inspected for motor clipping, gauge visibility
+and header overlap. These checks cover the fixed capture states; they do not
+prove every interactive resize or every signal extreme.
+
+The remaining unit preference spans the coolant/speed/pressure gauges,
+compact cards, tooltips, status text, scope axes and export metadata. Keep
+the published snapshot and SEVEL metric profile as canonical values. The
+implementation sequence is: (1) define validated display conversions and
+persist a unit choice; (2) route all display and export surfaces through
+those conversions; (3) validate round-trip preference, scale labels and
+captures in the existing resolution matrix. Changing only a gauge's number
+would make its scale and tooltip disagree with the displayed unit.
+
+The `v8` presentation preference adds metric/imperial units with Ctrl+U.
+`DisplayUnits` converts value, dial range, bands and tooltip unit together;
+the original SEVEL profile and snapshot remain metric. The left coolant,
+right coolant/speed/manifold gauges, compact data card, status ECT, thermal
+and intake scopes, cursor values and trigger readout use the selected view
+units. Scope CSV keeps the original metric values and channel units, adding
+`data_units=canonical_metric` and `view_units` metadata. NativeLab built with
+24 workers; the preference round-trip and invalid-unit recovery test passed,
+as did four focused metric capture/export regressions. The inspected
+`build-lab/sevel-imperial-1280x720.png` and
+`build-lab/sevel-imperial-thermal-1280x720.png` show F, MPH, inHg and the
+thermal scope's converted axes without visible clipping at that size.
+
+The 1280×720 capture at 200% UI scale exposed an interaction with saved
+cameras: a zoom from the 100% logical viewport enlarged the motor over the
+control row. `v9` preferences now record pane width and scene height and
+restore pan/zoom only for compatible viewports at the same UI scale. A CLI
+scale override leaves the saved camera untouched; the new viewport uses its
+automatic fit. The compact radial overview omits individual cylinder labels
+when they collide with its subtitle. NativeLab rebuilt with 24 workers;
+preference migration (`v1`–`v8`), camera restoration/fit, unit toggle and
+CSV checks passed. The inspected `build-lab/sevel-imperial-200-1280x720.png`
+shows both mechanical views inside their panels without the earlier overlap.
+The default metric 100/150/200% capture matrix at 1280×720, 1920×1080 and
+3440×1440 was then rerun under NativeLab after the `v9` change (9/9).
+
+Scope CSV and its paired PNG metadata now include exported sample count,
+retained-history gaps over 250 ms, cumulative raw/archive eviction counts,
+and the archive sampling policy. This makes sparse long-window exports
+distinguishable from uninterrupted raw history. NativeLab passed the TPS CSV,
+thermal scope and preference/imperial CSV checks (3/3).
+
+For UI-43, the donor's `.work/donor-gl-current-1920x1080.png` and the
+Lab's `build-lab/sevel-stopped-after-1920x1080.png` permit a 1920×1080
+layout comparison with both engines stopped. They do not represent the
+same engine or physical scenario. The Lab capture at tick 1,500,000 uses
+the original Fiat Tipo ROM and reports 0 rpm and 0 burns. The comparison
+exposed a display-only error: a tiny negative modeled intake flow rounded
+to `-0.0 g/s` while the gauge also showed `LOW`. The compact DATA card
+and desktop air-flow dial now normalize magnitudes below 0.05 g/s to zero
+at their displayed 0.1 g/s precision; the raw snapshot and scope keep the
+model value. A same-scenario before/after PNG comparison changed 893 RGB
+pixels, confined to `(1596,873)-(1796,885)` in the air-flow panel. NativeLab
+built with 24 workers, captured both states, and passed the stopped compact
+and 200% details capture tests (2/2).
+
+The 1920×1080 stopped comparison also showed a red `! MISS` label with no
+misfire event. The ignition panel now displays that warning only while a
+recent misfire pulse is visible; otherwise it shows a muted `MISS` legend.
+The original-ROM stopped capture reports 0 burns, and the controlled PNG
+comparison changes only 94 pixels within `(1861,23)-(1900,29)` in that
+label. NativeLab rebuilt with 24 workers and passed the stopped compact,
+200% details and combustion/misfire scene tests (3/3).
+
+UI-43 now also has a 1920×1080 original-ROM state matrix in
+`.work/gui-review/`, with a PNG and execution log per row:
+
+| State | PNG stem | Tick | RPM | CC3 / burns |
+| --- | --- | ---: | ---: | ---: |
+| Key off | `matrix-stopped-1920x1080-t800000` | 800,000 | 0 | 0 / 0 |
+| Auto-start idle | `matrix-idle-1920x1080-t800000` | 800,000 | 940 | 15 / 13 |
+| Replay: pedal 8 mm, load 24 N·m | `matrix-replay-load-1920x1080-t800000` | 800,000 | 655 | 10 / 8 |
+| Paused after auto-start | `matrix-paused-1920x1080-f12` | 1,574,500 | 1011 | 40 / 38 |
+
+The first three logs reproduce the exact physical-state and event hashes
+of their 1280×720 counterparts, so changing resolution did not change the
+simulation at that tick. The paused capture uses F12 after checking that
+the tick remains fixed; its tick differs from the older 1280×720 paused
+image and is not a before/after pair. The 1920×1080 idle, replay and
+paused PNGs were visually inspected for both engine views, gauges and
+scope. NativeLab passed all four captures and the existing compact/F12
+regressions (2/2). More scenarios are still needed for the full UI-43/44
+matrix, especially high load and continuous resize.
+
+The high-load replay fixture `tests/data/lab_control_high_load.txt` holds
+25 mm pedal pull and 60 N·m applied load, both within the existing GUI
+control range. At tick 3,000,000 the original-ROM capture reports 768 rpm,
+59 CC3 events and 57 burns; the lambda and sensor-voltage traces show the
+rich transition. The before/after pair
+`matrix-high-load[-after]-1920x1080-t3000000.png` and matching logs are in
+`.work/gui-review/`. Both runs have identical physical-state and event
+hashes. The replay pedal bar now labels its displayed 25 mm value alongside
+`REPLAY`, while the TBI panel separately shows the applied cable position.
+The updated label was visually checked at 1920×1080 and 1280×720. NativeLab
+built with 24 workers; replay mouse lock, gear card and stopped compact
+regressions passed (3/3). The later resize and deterministic pause checks
+are recorded below.
+
+`LabControls.ResizeSweep` now exercises one live original-ROM window through
+1280×720, 1440×810, 1600×900, 1920×1080, 900×620 and back to 1280×720,
+with six intermediate window sizes between each stop. It saves a PNG at
+each stop and checks its complete dimensions. At 1920×1080 it clicks the
+radial-view selector; after returning it clicks the axial selector and the
+first-gear card, checking the resulting window title. The 1920×1080,
+900×620 and returned 1280×720 captures were visually inspected: both
+mechanical views, scope and gauges stay inside their panels. The test's
+first implementation blocked when its unread ROM stdout pipe filled; a
+temporary log file removed that test-harness stall. NativeLab then passed
+the resize sweep twice and the fullscreen return test once. The compact
+900×620 layout now also has a visible gear card between the shortened volume
+bar and the pedal command. It uses the same selected N–5 state and click
+handler as the larger cards; the narrow label shows the gear and `REF` between
+its two arrows. The 900×620 stopped and shifted PNGs were inspected, and the
+new pointer test selects third gear after two Q/E steps. NativeLab rebuilt
+with 24 workers and passed all five gear-card sizes plus the live resize
+sweep (6/6). The deterministic paused pair is recorded below.
+
+The same horizontal gear card also fits the 900–1099 px compact range below
+620 px height. Above 900 px width, the volume bar now leaves room beside the
+pedal bar and the card derives its rectangle from those two controls. The
+1000×600 original-ROM capture shows `3 REF` with separate arrows after two
+keyboard upshifts and one pointer click. NativeLab passed the 900×620 and
+1000×600 gear hitbox checks plus the resize sweep (3/3).
+
+`tests/data/lab_pause_capture.txt` pauses the original ROM at exactly tick
+1,500,000. The F12 helper now accepts that replay, checks that the tick
+stays fixed, and captures the paused window. At both 1280×720 and 1920×1080,
+`.work/gui-review/matrix-paused-replay[-after]-<size>.png` and their logs
+form same-resolution, same-scenario before/after pairs. All four logs have
+physical-state hash `7b1a245fae2c534f` and event hash
+`be5cbae7309133bf` (998 rpm, 30 CC3 events, 28 burns). The header now
+says `PAUSED REPLAY` when both conditions hold; the disabled pedal bar still
+identifies replay separately. Other changed pixels include gauge-needle
+animation at capture time, so the full PNGs are not bitwise-equal outside
+the header. NativeLab built with 24 workers and passed both deterministic
+paused captures, the normal F12 capture and replay mouse lock (4/4).
+
+At 900×620, the original-ROM 0 °C capture exposed an overlap between the
+lambda dial's `LOW` marker and its numeric value. Short dials now place the
+larger range marker below the title while taller dials retain the bottom
+position. `LabCapture.CoolantUnderrange900x620` checks that the coolant marker
+and number remain visible and that the lambda marker stays above its value;
+the existing 1920×1080 under-range check also passes. Both captures and the
+24-worker build ran through NativeLab.
+
+The 3440×1440 original-ROM high-load replay now has a permanent NativeLab
+capture test. At tick 3,000,000 it shows 60 N·m applied load, 25 mm pedal
+command, 59 CC3 events and 57 burns. The captured frame was inspected at
+100% UI scale: both engine views, the gear card, gauges and lambda scope stay
+within their panels, and the `REPLAY` label is visible. The separate 200%
+3440×1440 bench capture also passed after the dial-marker change. Registering
+the high-load CTest exposed a replay-fixture path relative to the caller's
+working directory; the capture script now resolves both replay fixtures
+relative to itself, and the CTest passes from `build-lab`.
+
+Axial focus now carries into the analysis context: the scope heading says
+`CYL 1 VIEW` or `CYL 2 VIEW`, and the matching cylinder receives a second
+outline in the 1–3–4–2 combustion strip. These are view indicators; scope
+channels and event timestamps are unchanged. Original-ROM NativeLab captures
+for axial 1/4 at 1920×1080 and axial 2/3 at 3440×1440 were inspected, and
+both tests plus the compact coolant under-range regression passed (3/3).
+
+The debug row now uses `--` for unavailable pedal, load, film or vapor
+channels instead of presenting their fallback numbers as live measurements.
+At 1280×720, the donor-style gear card previously covered part of the audio
+diagnostics below the volume bar. The audio labels now fit on either side of
+that card; the original-ROM debug capture was inspected after the change.
+NativeLab built with 24 workers and `LabCapture.BatteryDebug1280x720` passed.
+The donor `LoadSimulationCluster` also has a clutch-pressure gauge, but this
+Lab has no clutch-pressure signal or modeled clutch state to drive it yet.
+
+Hovering over the donor-style N–5 card now shows the selected Fiat manual
+ratio, 63/16 final drive and their recomputed product. The tooltip marks the
+selection as a reference and states that road speed is scenario input; it
+does not imply a working clutch or torque transfer. The original-ROM
+third-gear capture at `build-lab/sevel-gear-tooltip-1920x1080.png` was
+inspected, and the new NativeLab capture test plus both existing 1920×1080
+and 1280×720 gear-card interaction tests passed (3/3).
+
+The adjacent donor clutch gauge is now represented on Full HD and wider
+bench layouts with its original 0–100 tick scheme. It displays `N/D` without
+a needle because no SEVEL clutch pressure or coupling state is published; a
+hover tooltip names that missing source. NativeLab built with 24 workers and
+passed the 1920×1080 gear and tooltip captures and the 3440×1440 high-load
+capture (3/3). Both screen sizes were visually inspected for overlap.
+
+The ECU inspector's CC3/injector count, burn count and crank phase now honor
+producer availability. Missing counts and invalid phase display `--` instead
+of a plausible zero; finite phase still uses the shared 720-degree reference.
+NativeLab rebuilt with 24 workers and the 1280×720 debug capture passed.
+
+The 1280×720 compact capture at 200% UI scale exposed the volume label
+touching the slider fill. Short volume bars now use a smaller label placed
+higher inside their rectangle; their fill and hitbox are unchanged. NativeLab
+built with 24 workers, passed the 100%, 150% and 200% captures (3/3), and
+all three refreshed PNGs were visually inspected.
+
+The full NativeLab UI-scale capture matrix now passes at 1280×720,
+1920×1080 and 3440×1440, each at 100%, 150% and 200% (9/9). The refreshed
+1280×720 triplet and the 150%/200% desktop and ultrawide captures were
+visually inspected. The 1920×1080 200% capture confirms the compact gear
+card beside volume and pedal; the 3440×1440 200% capture keeps both engine
+views and the right instruments inside the window. These checks cover fixed
+capture sizes; free resize and fullscreen are tracked separately.
+
+The audio slider now distinguishes key-off, simulation pause and suspended
+playback above 1× instead of labeling all three conditions `PAUSED`. A
+NativeLab original-ROM capture at
+`build-lab/sevel-audio-fast-1920x1080.png` shows `SUSP>1X 100%` at 2×;
+`LabCapture.AudioFast1920x1080` and the existing audio pause/speed/key test
+passed (2/2). No audio worker, synthesis or simulation timing changed.
+
+The tachometer now calls the adapted donor `Gauge` for its gamma sweep and
+major/minor tick decisions, using the Fiat 0–8000 rpm, 1000/200 rpm profile.
+Its needle is the donor's constant-width line geometry (4 px in the normal
+window) with the existing value and availability contract. The 1920×1080
+and 1280×720 original-ROM captures were inspected; NativeLab built with 24
+workers and passed both captures plus the two donor-gauge tests (4/4).
+Other dials still use the SDL adaptation pending the component migration.
+The same needle was checked at 200% UI scale in 1280×720 and 3440×1440
+NativeLab captures; both tests passed and the refreshed PNGs show the pointer
+inside the tachometer at each logical size.
+
+The gear card retains the donor's title/body proportions and now fits its
+24/64 px text, 0.28 chevrons and 3 px strokes to the available bands. The
+original-ROM gear mouse tests passed at seven desktop and compact sizes.
+The remaining profile dials now use donor `Gauge` sweep, tick and needle
+geometry with their SEVEL scales; the unavailable clutch dial uses the donor
+upper arc. NativeLab built with 24 workers and passed the Full HD, both
+200% UI and coolant underrange captures. The compact coolant test's needle
+mask was narrowed to exclude the now wider donor-style lambda needle.
+
+The gauge cards now scale their titles and numeric values with the space
+available, up to 24.5 px for a principal reading in the normal 1920×1080
+layout. Value baselines move upward with font size so units stay inside the
+card. NativeLab rebuilt with 24 workers and passed the 1920×1080, 1280×720,
+200% UI and both coolant-underrange captures (6/6); the Full HD PNG was
+inspected for dial text and divider overlap.
+
+The donor `LabeledGauge` band/radius math now lives in a backend-neutral
+layout component used by the SEVEL dials. The existing donor gear widget is
+also backed by a shared layout for its title, arrows, number and click zones;
+the compact horizontal variant remains a SEVEL adaptation. Neither component
+imports donor drivetrain physics. NativeLab built with 24 workers, passed the
+eight gearbox tests plus Full HD and 200% UI captures (10/10), and the Full HD
+gear tooltip PNG was visually inspected.
+
+The `Gauge` adapter now derives major ticks from the major/minor interval
+ratio. Independent rounding of converted Imperial steps could otherwise
+erase principal marks on MPH and inHg dials. NativeLab reported 24 CPUs,
+built with 24 workers, and passed the UI preference round-trip plus Full HD
+and 200% captures (3/3). The refreshed Imperial PNG was inspected with F,
+MPH and inHg scales visible.
+
+`docs/SEVEL_LAB_VISUAL_MATRIX.md` now indexes five 1920×1080 Lab
+before/current pairs: stopped, warm idle, replayed 24 N·m, replayed
+60 N·m with pedal, and paused replay. The current high-load frame was
+captured at tick 3,000,000; its direct NativeLab run matched the earlier
+ROM state and event fingerprints. Four other current frames were checked
+for dimensions and CC3/burn counts. Five focused capture tests passed,
+including the compact stopped and 3440×1440 high-load layouts.
+
+The analog scope header now prefixes its displayed cadence with `SNAP`:
+its Hz figure comes from retained snapshot intervals and is not a sensor
+or ECU channel update frequency. The 200% compact header keeps the short
+group name and LIVE/HIST state when the full heading does not fit.
+NativeLab rebuilt with 24 workers and passed Full HD, 200% compact,
+thermal-scope and TPS CSV captures (4/4); after the compact fallback fix,
+the three affected image captures passed again (3/3) and were inspected.
+
+ADC last-conversion voltage traces now use zero-order hold in the main
+scope, compact trace and group miniatures. The fault fixture's 5 V interval
+appears as a rectangle with vertical entry/exit rather than an invented
+ramp; invalid readings and intervals over 250 ms still split the trace.
+NativeLab rebuilt with 24 workers and passed the three ADC fault/group
+captures plus Full HD and 200% compact captures (5/5). The ADC TPS fault
+PNG was inspected after the change.
+
+ADC scope legends now report `AGE` in milliseconds from each channel's
+last conversion tick to the displayed snapshot tick. This makes the
+snapshot-positioned step explicit while the CSV continues to carry the
+exact conversion timestamp. NativeLab rebuilt with 24 workers and passed
+the three ADC group captures plus the 200% compact capture (4/4); the
+ADC TPS fault PNG was inspected for label fit and separate channel ages.
+
+The SEVEL dial adapter now positions titles and numeric values from the
+donor-derived `LabeledGaugeLayout` bands, alongside its existing radius and
+needle geometry. NativeLab reported 24 CPUs, rebuilt with 24 workers, and
+passed five Full HD, compact and 200% capture tests (5/5). The refreshed
+1920×1080 PNG was inspected for title/value clearance.
+
+The analog A/B cursor difference row now includes each channel's displayed
+unit, including unit conversions selected in the UI. NativeLab reported 24
+CPUs, rebuilt with 24 workers, and passed the five TPS, frozen-scope and
+scope-navigation captures (5/5). The frozen Full HD PNG shows the voltage
+difference beside its original-sample time difference; a missing lambda
+sample remains `N/D` instead of producing a fabricated delta.
+
+The four Full HD before/current matrix scenarios were refreshed with the
+current renderer in NativeLab (4/4). Stopped, idle, replayed load and high-load
+CC3/burn counts matched their earlier scenario logs. The high-load state and
+event hashes were unchanged, and all four before/current mechanical crops
+remain pixel-identical. The high-load current PNG was visually inspected.
+
+The right-panel throttle bar now uses the donor `RightGaugeCluster` control
+rectangle proportions instead of a fixed 12 px stripe. Its fill still reads
+the published SEVEL pedal position; the separate command slider and mouse
+semantics are unchanged. NativeLab reported 24 CPUs, rebuilt with 24 workers,
+and passed Full HD, compact stopped, 200% UI and 3440×1440 high-load captures
+(4/4). The refreshed Full HD PNG was inspected for the bar's fit and clearance.
+
+The whole right instrument cluster now reads one backend-neutral layout
+extracted from the donor `RightGaugeCluster` and `AfrCluster`. It assigns the
+tachometer, speed/coolant, ignition, throttle, sensor pair, fuel and three
+intake cells. The former 48/52 sensor/fuel split is now the donor's equal
+half split. NativeLab built with 24 workers and passed Full HD, compact,
+200% UI, 3440×1440 high-load and fuel-tooltip captures (5/5); the refreshed
+Full HD PNG was inspected for cell fit and label clearance.
+
+The debug status no longer labels the published injector-pulse count as
+`CC3`; it now says `INJ PULSES`, leaving `CC3` for the electrical pin scope.
+NativeLab reported 24 CPUs, rebuilt with 24 workers, and passed both battery
+debug captures plus Full HD (3/3). The 900×620 and 1280×720 debug PNGs were
+inspected for the longer label's fit.
+
+The donor-derived gear card now shows an ideal wheel RPM reference computed
+from published crank RPM and the Fiat gear and final-drive ratios. Neutral
+is undefined; missing or nonfinite crank RPM produces `--` rather than a
+plausible zero. The tooltip states the engaged-clutch assumption and keeps
+scenario road speed separate. This is kinematic presentation only; clutch,
+wheel speed and crank load remain uncoupled. NativeLab built with `nproc`
+workers and passed the two transmission calculations plus the Full HD gear
+widget and tooltip captures (4/4). The refreshed tooltip PNG was inspected.
+
+The analog scope now uses the donor `Grid` to place its focused plot above
+group previews. A tall panel uses two rows; the drawing
+and click selection share the same cells. The plot bands and cursor/footer
+positions follow the new focus rectangle, preventing traces and labels from
+crossing into the previews. The 1280×720 layout condenses retention counters
+to one line. NativeLab rebuilt with `nproc` workers and passed scope-card
+selection on both rows, drag and resize interactions, frozen scope, 720p,
+compact and ultrawide captures. The Full HD TPS/FUEL and 1280×720 PNGs were
+visually inspected. Xvfb tests now move the resized window to `(0,0)` so its
+lower cards remain reachable by mouse on a same-size virtual screen.
+
+The left TBI card now spaces its three measurement rows and gear reference
+from its own height; their hover regions follow the same row positions.
+This keeps the gear text above the lower border at 1280×720 and at Full HD
+without reducing the font. NativeLab rebuilt with `nproc` workers and passed
+the 1280×720, 1920×1080 and 3440×1440 captures (3/3); the first two PNGs
+were inspected for the TBI border clearance.
+
+The analog scope now has an `IDLE` group for the candidate idle-actuator stem
+in mm and the sampled physical idle contact in a separate state lane. The
+contact is drawn as a held step, including every retained transition within
+one screen column; unavailable producer samples remain gaps. Its CSV exports
+both source channels with IDs and provenance. The stem's -10 to 30 mm display
+range is a laboratory scale, not an asserted actuator stroke. NativeLab built
+with `nproc` and passed the new Full HD capture/CSV test plus the existing TPS
+scope test (2/2). Additional 1280×720 and 900×620 live-ROM captures passed;
+all three `IDLE` PNGs were inspected for card fit and trace visibility.
+
+The focused analog scope now has a manual `FIT Y` button and `O` shortcut.
+It computes padded per-band limits from valid samples in the visible tick
+window once, then holds those limits until `Y:RESET`, another fit, a group
+change or a unit change. A sampled state lane keeps its fixed 0–1 scale.
+NativeLab built with `nproc` and passed the Full HD idle-fit, idle-fixed and
+TPS scope captures (3/3). The fitted idle PNG was inspected: its stem axis
+shows about 6.1–9.3 mm and its sampled contact axis remains 0–1. The fit
+capture test clicks the visible button and checks the logged fitted range.
+The same button now has NativeLab click/CSV checks at 1280×720 and 900×620.
+All three sizes passed (3/3); each fitted interval contains every valid
+exported stem sample up to its recorded fit tick, and the 720p and compact
+PNGs were inspected for button and trace clearance.
+
+The 100 ms scope archive now includes the candidate idle-stem position in
+its extrema selection. It also retains samples on both sides of availability
+and finite-value transitions so a short invalid interval is not hidden by
+the long-window reduction. The original-ROM archive determinism test now
+checks the stem's early minimum and maximum alongside RPM, lambda, TPS,
+coolant, manifold pressure and fuel film. NativeLab built with `nproc` and
+passed that test and the Full HD idle-scope capture (2/2).
+
+The same archive now preserves valid ADC0/1/2/3/5/6 pin-voltage extrema
+within each 100 ms block and both sides of a transition to or from a stale
+or unavailable conversion. The original-ROM determinism test compares each
+channel's early minimum and maximum conversion against retained history,
+including the original conversion tick. NativeLab built with `nproc` and
+passed the extended archive test (1/1). A held conversion can be attached to
+several snapshots, so the test accepts any retained snapshot carrying that
+same conversion and voltage.
+
+The archive's lambda-extrema selection now uses the scope's full validity
+condition: crank available and first exhaust sample received. Earlier
+pre-exhaust lambda values cannot consume extrema slots or appear as valid
+long-window readings. Sensor voltage keeps its separate crank-based validity.
+The original-ROM archive determinism test checks the valid lambda extrema;
+NativeLab rebuilt the Lab and test with `nproc` and passed it alongside the
+Full HD idle-scope capture (2/2).
+
+The donor-style right throttle card now has separate source/validity tooltips
+for the physical angle, cable position, candidate idle stem and sampled idle
+contact. Their hit regions follow the donor throttle-control rectangle and
+the two SEVEL detail rows. A Full HD capture exposed a draw-order issue:
+later manifold/air gauges covered the tooltip text. The tooltip pass now
+runs after all right-hand gauges. NativeLab rebuilt with `nproc`, passed the
+fuel and new throttle-tooltip captures (2/2), and the final PNG was visually
+inspected with its complete source and validity text visible.
+
+Analog cursor rows now distinguish missing samples from undefined channels:
+they show `--` for a missing reading and for its unavailable two-cursor
+difference. NativeLab rebuilt the Lab with `nproc`; the Full HD idle and TPS
+scope captures passed (2/2). A dedicated cursor-value fixture is still
+required to verify the numerical readout against known source samples.
+
+The analog cursor now searches only samples inside the visible time window,
+so an adjacent hidden sample cannot suppress a valid edge reading. The
+selection helper returns a source index and keeps the original 250 ms gap
+limit and earlier-sample tie rule. A fixture checks known timestamps and TPS
+values, window edges, empty gaps, and A/B difference; NativeLab built both
+the GUI and test binary with `nproc`, then passed that fixture and the idle
+and TPS scope captures (3/3). A separate rendering assertion is still needed
+for the formatted units and `--` text in the PNG readout.
+
+Frozen and panned analog scopes now take legend values, ADC sample age and
+fan/idle contact labels from the last valid source sample at the displayed
+end tick, within the existing 250 ms gap limit. The live snapshot is used
+only while following live time. A Full HD frozen TPS capture exposed A/B
+readout text over the preview cards; the scope reserves a dedicated footer
+and uses one preview row in medium-height panels. The updated Full HD PNG
+was inspected with A/B, delta, time and previews separated. NativeLab built
+with `nproc` and passed six focused freeze, CSV, preview/card and compact
+scope tests (6/6). The card-click fixture now derives its target from the
+same 11-card grid rather than assuming ten cards.
+The 1280×720 idle scope fit capture also passed and was inspected: its
+single-row group selector remains inside the panel below the plot.
+
+Analog A/B and delta strings now share pure formatting functions with a
+known-value fixture for timestamps, units, two-decimal values, missing
+channels and signed differences. CSV selection now uses the same snapped
+source ticks shown by the cursor lines; the real-ROM TPS export test asserts
+that both boundary ticks are present as first/last data rows and in CSV
+metadata. NativeLab built the GUI and unit binary with `nproc` and passed
+the two cursor fixtures plus the Full HD frozen and CSV captures (4/4).
+
+The ECU digital pin lanes now report low interval, rise-to-rise period and
+duty when a complete rise–fall–rise cycle is retained. The high label uses
+that same cycle; an isolated high pulse is still shown without inventing a
+period. The measurement helper reads exact `EmulatorEvent.tick` edges in the
+visible window, independent of minimum pulse width in pixels. A synthetic
+one-tick pulse fixture checks high/low/period/duty and incomplete cycles.
+NativeLab built with `nproc`; the digital zoom/events captures and fixture
+passed (3/3), and the Full HD digital screenshot was inspected.
+
+Digital A/B cursors now snap to retained CC3 and ignition-pin edges within
+12 display pixels. The lines, HIGH/LOW state, exact event tick and A/B time
+difference use the original event timestamps, even when the visible pulse
+has a minimum pixel width. The idle-contact lane now snaps to the first
+valid snapshot observing a contact transition, with its readout marked
+`IDLE SAMP`. Missing samples and gaps above 250 ms prevent a transition
+from being inferred. Synthetic pin-edge and sampled-contact fixtures plus a
+live-ROM Full HD pin-click capture passed in NativeLab with `nproc`; the
+capture was inspected.
+
+The Open Engine Sim gear card was already adapted through
+`gear_card_layout.h`: its title, chevrons, number and click regions match
+the donor's proportions. The Fiat N–5 ratios and 63/16 final drive appear
+in its tooltip; the adjacent donor-style clutch gauge still reads `N/D`.
+The donor's transmission solver uses a clutch torque constraint and vehicle
+equivalent inertia `mass * (tire_radius / (differential * gear_ratio))²`.
+Those inputs and a coupled vehicle state are not yet present in the SEVEL
+session, so the current ideal wheel RPM remains a labeled kinematic
+reference. The donor gear tooltip capture passed alongside the digital
+cursor capture in NativeLab.
+
+The original-ROM replay with pedal commands at ticks 500,000 and 900,000
+now has a dedicated Full HD digital-contact capture. Two real GUI clicks on
+the sampled contact lane produced `IDLE SAMP` cursors on the first observing
+snapshots at ticks 500,000 and 900,000: 0.505051 s OPEN and 0.909091 s CLOSED.
+The screenshot shows the 404.040 ms difference and both cursor lines without
+changing replay controls or electrical edge data. NativeLab passed
+`LabCapture.DigitalIdleCursors1920x1080` (1/1); its PNG was inspected.
+
+The same real-ROM replay now exports the digital A/B selection through `C`.
+Its CSV contains the original pin/marker event ticks and sampled idle-contact
+transitions, sorted by tick and bounded by the selected 500,000–900,000 ticks.
+The header records the 990 kHz clock, sources, ROM/scenario, selection and
+visible ranges, and event overflow; the cropped PNG embeds that header.
+NativeLab passed the record-selection fixture and replay export capture
+(2/2). The CSV's 56 records and cropped PNG were inspected.
+
+`X` now freezes the digital scope independently of simulation pause. The Lab
+retains the event window, contact snapshot window, source tick, event-base
+index and overflow count at capture time. Digital cursor clicks and CSV/PNG
+export read that same retained window; another `X` resumes live following.
+The replay GUI test exported both live and frozen selections at ticks
+500,000–900,000, then advanced the motor to tick 2,000,000 with the scope
+still marked `FROZEN`. Its Full HD screenshot was inspected in NativeLab.
+
+The digital scope now uses its drawn time axis for pointer-centered wheel
+zoom. The first zoom retains the available event and sampled-contact window;
+middle-button drag pans within that retained interval, `X` returns to live
+following, and a double-click restores the default two-second span. The
+first middle-button drag from a live scope also captures the available
+window before panning. Both navigation capture tests assert the `FROZEN`
+title before applying wheel zoom, so this entry path is covered. The
+original-ROM digital-navigation captures at 1920×1080 and 1280×720 checked
+the one-second zoomed interval, an earlier end tick after panning, and the
+restored two-second live interval through three CSV exports. NativeLab also passed the
+existing digital zoom and cursor captures after this change. The exported
+PNG was visually inspected.
+
+The digital scope heading now spells out `LIVE X:FREEZE` or
+`FROZEN X:LIVE`, matching the analog scope's acquisition state while the
+separate `PAUSE` motor control remains visible at left. Both navigation
+captures passed after this change; the 1280×720 heading was inspected.
+
+The TBI panels now use `--` for an unavailable candidate actuator stem,
+matching the stem profile tooltip's `MISSING` state. The right throttle
+drawing evaluates angle, cable, stem and idle contact separately; an absent
+angle or cable no longer erases a valid contact or stem reading. NativeLab
+built with `nproc` and passed Full HD layout, compact stopped and throttle
+tooltip captures (3/3); the refreshed tooltip PNG was inspected.
+
+UI-27/45 now has a direct source-series cadence check. The original-ROM
+warm scenario replays to 1.5 s without polling and with snapshot consumers
+at 8 ms and 32 ms intervals. All 3,000 retained sample ticks, physical
+signals, ADC conversion observations and 181 digital event timestamps match
+exactly. The existing GUI frame-delay/audio test also passed at 8/32 ms;
+NativeLab built the determinism executable with `nproc` and passed both
+tests (2/2). This verifies acquisition independence from consumer polling
+for this scenario; longer archive and reset paths have separate tests.
+The decimator fixture also now covers a nonfinite sample, a long gap and
+a nonmonotonic tick reset in one source sequence; its selected indices keep
+the peak and each segment boundary. Both decimation tests passed in NativeLab.
+
+UI-43's four 1920×1080 original-ROM scenario pairs were refreshed after the
+recent TBI, scope and label work. Stopped/key-off, idle, 24 N·m replay and
+60 N·m/25 mm replay each passed the capture script. For every pair, the
+complete `[LAB-STATE]` line is identical before/current, and an RGB compare
+finds zero changed pixels in the mechanical crop `(462,90)–(1265,635)`.
+The stopped and high-load frames were inspected; the paused replay capture
+also passed and was inspected. The paused before/after logs likewise match
+in full at tick 1,500,000, with state `7b1a245fae2c534f` and event hash
+`be5cbae7309133bf`; its mechanical crop has zero changed RGB pixels.
+`docs/SEVEL_LAB_VISUAL_MATRIX.md` links all five matched pairs.
+
+UI-44's presentation pass covered the 3×3 matrix of 1280×720, 1920×1080
+and 3440×1440 at 100%, 150% and 200%, plus the live resize sweep and both
+fullscreen/return paths. NativeLab passed all 12 targeted tests after the
+scope heading fix. At 1280×720 and 200%, the analog title had extended under
+FIT Y; it now falls back to `LAMBDA LIVE` within the available heading area.
+The refreshed PNG was inspected. One ultrawide capture initially lost an
+`xdotool windowsize` race, passed alone, and passed in the rerun; the capture
+script now retries that window-manager operation for up to two seconds.
+
+The donor transmission and vehicle formulas were checked again: engaged-gear
+equivalent inertia is `mass * (tire_radius / (diff_ratio * gear_ratio))²`;
+vehicle speed follows the virtual shaft energy and mass. The Fiat ratio
+products and ideal wheel RPM are already shown as a reference. A tire radius,
+clutch torque state and coupled vehicle inertia are still required before
+these donor equations can drive the SEVEL road-speed gauge; it remains labeled
+as a scenario input.
+
+The gear tooltip now also computes ideal road speed from wheel RPM and
+`2π × 0.29 m` rolling circumference. The 0.29 m radius is explicitly an
+estimate because the available Fiat manual lacks a tire specification;
+the tooltip labels both this assumption and engaged clutch. It does not
+replace the scenario road-speed gauge. NativeLab passed three transmission
+tests, the Full HD gear tooltip capture and the 1280×720 200% capture (5/5);
+the refreshed gear tooltip PNG was inspected.
+
+The 1280×720/200% screenshot test now checks the analog heading region:
+it requires visible title pixels and no title pixels in the FIT Y button's
+reserved strip. NativeLab passed this region check. In the 38-test scope
+suite, 37 passed initially; the divider test exposed a stale click coordinate
+from the old two-row card grid. After dragging to a 348 px scope, the grid
+becomes one row, so its TPS card click now uses the resulting cell center.
+That test passed alone, and its Full HD PNG was inspected with TPS selected
+and both engine views visible. This was a test-hitbox correction; the
+renderer and physical state were not changed.
+
+The ECU inspector now repeats `STALE` in its title when the live snapshot
+stops advancing while debug is open. The title fits within the space before
+the lamp candidate label. NativeLab rebuilt with `nproc` and passed the
+1280×720 and compact 900×620 debug captures (2/2); both PNGs were inspected.
+
+UI-44 found a compact status-line overflow in the 900×620 debug capture:
+`SOUND ON` crossed the header's right border toward the instrument column.
+The shared status drawer now fits row 1 to the header's available width.
+NativeLab rebuilt with `nproc` and passed compact stopped/debug, Full HD and
+1280×720/200% captures (4/4). The compact debug PNG was inspected. Its test
+now checks visible status text and zero bright text pixels in the gap before
+the instrument column; the refreshed test passed separately (1/1).
+
+UI-06 removed the remaining `0.24`/`0.66` column calculations from the
+button rectangles. Their drawing and hit testing now read the corresponding
+`LabLayout` bounds at desktop and compact sizes. The button geometry test
+target links SDL3 for that shared header. Its old visibility expectations
+and an empty-space probe were updated to the current compact button row;
+the UI-preferences test now clicks the CC3 selector in its visible digital
+lane. NativeLab rebuilt with `nproc`. The button and preferences tests passed
+individually (2/2); six other focused mouse, replay, fit and capture tests
+passed after the production edit.

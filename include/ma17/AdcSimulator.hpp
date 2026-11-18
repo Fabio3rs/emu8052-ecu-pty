@@ -8,7 +8,15 @@ namespace ma17 {
 
 // Return true for a driven channel and supply its instantaneous pin voltage.
 using AdcVoltageProvider = bool (*)(uint8_t, void *, double &);
+struct AdcObservation {
+    uint64_t tick = 0;
+    double pin_voltage_v = 0.0;
+    uint16_t count = 0;
+    bool sampled = false;
+    bool voltage_available = false;
+};
 void set_adc_voltage_provider(AdcVoltageProvider provider, void *context);
+AdcObservation adc_observation(uint8_t channel);
 
 uint8_t read_adc_channel(uint8_t channel);
 void set_adc_tick(uint64_t tick);

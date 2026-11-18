@@ -99,7 +99,8 @@ with tempfile.TemporaryDirectory(prefix="sevel-gpu-offscreen-") as directory:
     assert gpu_data.startswith(b"\x89PNG\r\n\x1a\n")
     assert struct.unpack(">II", gpu_data[16:24]) == (960, 640)
     left, top, right, bottom = png_foreground_bounds(gpu_data)
-    assert right - left > 500 and bottom - top > 250, (left, top, right, bottom)
+    assert right - left > 300 and bottom - top > 250, (left, top, right, bottom)
+    assert abs((left + right) / 2 - 480) < 100, (left, right)
     print(f"[LAB-GPU-OFFSCREEN] tick={tick} cc3={cc3} burns={burns} "
           f"capture_tick={main_capture.group(1)} "
           f"main_png_bytes={len(data)} gpu_png_bytes={len(gpu_data)}")

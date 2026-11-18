@@ -12,10 +12,14 @@ binary, rom, source_path, saved_path = sys.argv[1:5]
 source = Path(source_path)
 saved = Path(saved_path)
 saved.unlink(missing_ok=True)
+screenshot = saved.with_suffix(".png")
+screenshot.unlink(missing_ok=True)
 environment = os.environ.copy()
 environment["SDL_AUDIODRIVER"] = "dummy"
-command = [binary, rom, "--live", "--window-frames", "240",
-           "--replay-controls", str(source), "--save-controls", str(saved)]
+command = [binary, rom, "--live", "--window-frames", "240000",
+           "--stop-ticks", "3000000", "--replay-controls", str(source),
+           "--save-controls", str(saved), "--capture-tick", "500000",
+           "--screenshot", str(screenshot)]
 
 with tempfile.TemporaryFile(mode="w+") as log:
     process = subprocess.Popen(command, env=environment, stdout=log,
@@ -32,13 +36,15 @@ with tempfile.TemporaryFile(mode="w+") as log:
                 break
             time.sleep(0.05)
         assert window, "Lab replay window did not appear"
-        for x in (65, 170, 275, 380, 485):
+        for x, y in ((65, 470), (170, 470), (275, 470),
+                     (65, 516), (170, 516)):
             subprocess.run(["xdotool", "mousemove", "--window", window,
-                            str(x), "522", "click", "1"], check=True,
+                            str(x), str(y), "click", "1"], check=True,
                            capture_output=True)
             time.sleep(0.10)
         assert process.wait(timeout=20) == 0
         assert saved.read_bytes() == source.read_bytes(), saved.read_text()
+        assert screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
         print(f"[LAB-REPLAY-MOUSE] trace unchanged: {saved}")
     except Exception:
         if process.poll() is None:

@@ -45,26 +45,26 @@ FontRenderer::FontRenderer(const std::string &path)
     if (FT_Init_FreeType(&data_->library) != 0)
         return;
 
+    data_->bytes = decode_packaged_bytes(path, 18336);
+    bool face_loaded = !data_->bytes.empty() &&
+                       FT_New_Memory_Face(data_->library, data_->bytes.data(),
+                                          static_cast<FT_Long>(data_->bytes.size()),
+                                          0, &data_->face) == 0;
     constexpr const char *kSystemFonts[] = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
         "/usr/share/fonts/truetype/ubuntu/UbuntuMono-B.ttf"
     };
-    bool face_loaded = false;
-    for (const char *sys_path : kSystemFonts) {
-        if (FT_New_Face(data_->library, sys_path, 0, &data_->face) == 0) {
-            face_loaded = true;
-            break;
+    if (!face_loaded) {
+        for (const char *sys_path : kSystemFonts) {
+            if (FT_New_Face(data_->library, sys_path, 0, &data_->face) == 0) {
+                face_loaded = true;
+                break;
+            }
         }
     }
-    if (!face_loaded) {
-        data_->bytes = decode_packaged_bytes(path, 18336);
-        if (data_->bytes.empty() ||
-            FT_New_Memory_Face(data_->library, data_->bytes.data(),
-                               static_cast<FT_Long>(data_->bytes.size()), 0,
-                               &data_->face) != 0)
-            return;
-    }
+    if (!face_loaded)
+        return;
     if (FT_Set_Pixel_Sizes(data_->face, 0, 14) != 0)
         return;
 
@@ -120,6 +120,10 @@ FontRenderer::~FontRenderer() = default;
 
 bool FontRenderer::ready() const { return data_->loaded; }
 
+void FontRenderer::set_size_factor(float factor) {
+    size_factor_ = factor;
+}
+
 float FontRenderer::measure(const std::string &text) const {
     if (!ready())
         return 0.0f;
@@ -128,13 +132,14 @@ float FontRenderer::measure(const std::string &text) const {
         const auto codepoint = static_cast<unsigned char>(character);
         width += data_->glyphs[codepoint < 128 ? codepoint : '?'].advance;
     }
-    return width;
+    return width * size_factor_;
 }
 
 void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
                         const std::string &text, SDL_Color color, float scale) {
     if (!ready() || !renderer)
         return;
+    scale *= size_factor_;
     if (data_->texture == nullptr || data_->cached_renderer != renderer) {
         if (data_->texture)
             SDL_DestroyTexture(data_->texture);
@@ -146,7 +151,7 @@ void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
             SDL_UpdateTexture(data_->texture, nullptr, data_->atlas_pixels.data(),
                               data_->atlas_w * 4);
             SDL_SetTextureBlendMode(data_->texture, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(data_->texture, SDL_SCALEMODE_LINEAR);
+            SDL_SetTextureScaleMode(data_->texture, SDL_SCALEMODE_NEAREST);
         }
     }
     if (!data_->texture)

@@ -4,6 +4,7 @@
 #include "lab/SevelSegments.hpp"
 #include "renderer.h"
 
+#include <algorithm>
 #include <array>
 
 namespace lab {
@@ -18,9 +19,27 @@ struct ScenePulse {
     float strength = 0.0f;
     bool misfire = false;
     float spark_strength = 0.0f;
+    float pin_strength = 0.0f;
 };
 
 inline constexpr float visual_estimate_radial_section_spacing_m = 0.12f;
+
+inline ysMatrix scene_fit_projection(SceneCamera camera, float viewport_width,
+                                     float viewport_height, float world_width,
+                                     float world_height,
+                                     float world_center_y = 0.105f) {
+    const float pixels_per_metre =
+        std::min(viewport_width / world_width,
+                 viewport_height * 0.72f / world_height) * camera.zoom;
+    ysMatrix projection = ysMath::LoadIdentity();
+    projection.m[0][0] = 2.0f * pixels_per_metre / viewport_width;
+    projection.m[1][1] = 2.0f * pixels_per_metre / viewport_height;
+    projection.m[0][3] = 2.0f * camera.pan_x / viewport_width;
+    projection.m[1][3] =
+        0.16f - projection.m[1][1] * world_center_y -
+        2.0f * camera.pan_y / viewport_height;
+    return projection;
+}
 
 void render_sevel_scene_donor(Renderer &renderer,
                               const ma17::EmulatorSnapshot &snapshot,

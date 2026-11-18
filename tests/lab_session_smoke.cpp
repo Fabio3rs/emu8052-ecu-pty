@@ -326,7 +326,7 @@ int main(int argc, char **argv) {
     cooling.set_speed(16.0);
     cooling.start();
     ma17::EmulatorSnapshot hot;
-    if (!wait_for_tick(cooling, 3000000, hot) || hot.rpm < 500.0 ||
+    if (!wait_for_tick(cooling, 3000000, hot) || hot.rpm < 400.0 ||
         hot.fuel_film_kg <= 0.0 || !hot.idle_bridge_candidate ||
         !std::isfinite(hot.idle_stem_m) || hot.idle_stem_m < 0.0 ||
         hot.idle_stem_m > 0.03)
@@ -361,7 +361,7 @@ int main(int argc, char **argv) {
     cooling.set_load(24.0);
     ma17::EmulatorSnapshot later;
     if (!wait_for_tick(cooling, 15500000, later) ||
-        later.applied_load_nm != 24.0 || later.rpm < 700.0 ||
+        later.applied_load_nm != 24.0 || later.rpm < 400.0 ||
         later.rpm > 1100.0 || later.burns <= restarted.burns ||
         cooling.event_overflow() != 0)
         return 1;

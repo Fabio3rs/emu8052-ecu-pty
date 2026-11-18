@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -76,6 +77,22 @@ class RecordingRenderer final : public Renderer {
     int draw_calls() const { return draw_calls_; }
     int scene_draw_calls() const { return scene_draw_calls_; }
     std::size_t triangle_count() const { return triangles_.size(); }
+
+    bool pixel_bounds(float &min_x, float &min_y, float &max_x,
+                      float &max_y) const {
+        if (triangles_.empty())
+            return false;
+        min_x = min_y = std::numeric_limits<float>::max();
+        max_x = max_y = std::numeric_limits<float>::lowest();
+        for (const auto &triangle : triangles_)
+            for (const auto &point : triangle.points) {
+                min_x = std::min(min_x, point.x);
+                min_y = std::min(min_y, point.y);
+                max_x = std::max(max_x, point.x);
+                max_y = std::max(max_y, point.y);
+            }
+        return true;
+    }
 
     template <typename Visitor> void for_each_triangle(Visitor &&visit) const {
         for (const auto &triangle : triangles_)

@@ -19,6 +19,145 @@
 namespace lab {
 namespace {
 
+void append_archive_extrema(
+    const std::vector<ma17::EmulatorSnapshot> &pending,
+    std::deque<ma17::EmulatorSnapshot> &archive) {
+    if (pending.empty())
+        return;
+    std::vector<bool> keep(pending.size(), false);
+    keep.front() = true;
+    keep.back() = true;
+    struct Field {
+        double ma17::EmulatorSnapshot::*value;
+        bool ma17::EmulatorSnapshot::*available;
+        bool requires_exhaust_sample = false;
+    };
+    constexpr std::array<Field, 16> fields{{
+        {&ma17::EmulatorSnapshot::rpm, &ma17::EmulatorSnapshot::crank_available},
+        {&ma17::EmulatorSnapshot::applied_load_nm,
+         &ma17::EmulatorSnapshot::crank_available},
+        {&ma17::EmulatorSnapshot::lambda,
+         &ma17::EmulatorSnapshot::crank_available, true},
+        {&ma17::EmulatorSnapshot::lambda_voltage_v,
+         &ma17::EmulatorSnapshot::crank_available},
+        {&ma17::EmulatorSnapshot::battery_supply_v,
+         &ma17::EmulatorSnapshot::battery_supply_available},
+        {&ma17::EmulatorSnapshot::tps_track1_v, &ma17::EmulatorSnapshot::tps_available},
+        {&ma17::EmulatorSnapshot::tps_track2_v, &ma17::EmulatorSnapshot::tps_available},
+        {&ma17::EmulatorSnapshot::throttle_angle_rad,
+         &ma17::EmulatorSnapshot::throttle_available},
+        {&ma17::EmulatorSnapshot::coolant_c, &ma17::EmulatorSnapshot::thermal_available},
+        {&ma17::EmulatorSnapshot::intake_air_c,
+         &ma17::EmulatorSnapshot::thermal_available},
+        {&ma17::EmulatorSnapshot::thermostat_open_fraction,
+         &ma17::EmulatorSnapshot::thermal_available},
+        {&ma17::EmulatorSnapshot::manifold_pressure_pa,
+         &ma17::EmulatorSnapshot::intake_available},
+        {&ma17::EmulatorSnapshot::air_in_kg_s, &ma17::EmulatorSnapshot::intake_available},
+        {&ma17::EmulatorSnapshot::fuel_film_kg, &ma17::EmulatorSnapshot::intake_available},
+        {&ma17::EmulatorSnapshot::fuel_vapor_kg,
+         &ma17::EmulatorSnapshot::intake_available},
+        {&ma17::EmulatorSnapshot::idle_stem_m,
+         &ma17::EmulatorSnapshot::idle_bridge_candidate}}};
+    constexpr std::array<std::size_t, 6> adc_channels{0, 1, 2, 3, 5, 6};
+    const auto valid_field = [](const ma17::EmulatorSnapshot &sample,
+                                const Field &field) {
+        return sample.*field.available &&
+               (!field.requires_exhaust_sample || sample.exhaust_sample_available) &&
+               std::isfinite(sample.*field.value);
+    };
+    const auto valid_adc = [](const ma17::EmulatorSnapshot &sample,
+                              std::size_t channel) {
+        const auto &adc = sample.adc_last_conversion[channel];
+        return adc.sampled && adc.voltage_available &&
+               adc.tick <= static_cast<std::uint64_t>(sample.tick) &&
+               static_cast<std::uint64_t>(sample.tick) - adc.tick <= 99000 &&
+               std::isfinite(adc.pin_voltage_v);
+    };
+    for (const auto field : fields) {
+        std::size_t minimum = pending.size();
+        std::size_t maximum = pending.size();
+        for (std::size_t index = 0; index < pending.size(); ++index) {
+            const double value = pending[index].*field.value;
+            if (!valid_field(pending[index], field))
+                continue;
+            if (minimum == pending.size() ||
+                value < pending[minimum].*field.value)
+                minimum = index;
+            if (maximum == pending.size() ||
+                value > pending[maximum].*field.value)
+                maximum = index;
+        }
+        if (minimum != pending.size()) {
+            keep[minimum] = true;
+            keep[maximum] = true;
+        }
+    }
+    for (const std::size_t channel : adc_channels) {
+        std::size_t minimum = pending.size();
+        std::size_t maximum = pending.size();
+        for (std::size_t index = 0; index < pending.size(); ++index) {
+            if (!valid_adc(pending[index], channel))
+                continue;
+            const double value = pending[index].adc_last_conversion[channel]
+                                     .pin_voltage_v;
+            if (minimum == pending.size() ||
+                value < pending[minimum].adc_last_conversion[channel]
+                            .pin_voltage_v)
+                minimum = index;
+            if (maximum == pending.size() ||
+                value > pending[maximum].adc_last_conversion[channel]
+                            .pin_voltage_v)
+                maximum = index;
+        }
+        if (minimum != pending.size()) {
+            keep[minimum] = true;
+            keep[maximum] = true;
+        }
+    }
+    for (std::size_t index = 1; index < pending.size(); ++index) {
+        for (const auto field : fields) {
+            const bool before_valid = valid_field(pending[index - 1], field);
+            const bool after_valid = valid_field(pending[index], field);
+            if (before_valid != after_valid) {
+                keep[index - 1] = true;
+                keep[index] = true;
+            }
+        }
+        if (pending[index - 1].exhaust_sample_available !=
+            pending[index].exhaust_sample_available) {
+            keep[index - 1] = true;
+            keep[index] = true;
+        }
+        if (pending[index].idle_contact_closed !=
+                pending[index - 1].idle_contact_closed ||
+            pending[index].radiator_fan_on !=
+                pending[index - 1].radiator_fan_on) {
+            keep[index - 1] = true;
+            keep[index] = true;
+        }
+        for (const std::size_t channel : adc_channels) {
+            const auto &before = pending[index - 1].adc_last_conversion[channel];
+            const auto &after = pending[index].adc_last_conversion[channel];
+            if (valid_adc(pending[index - 1], channel) !=
+                valid_adc(pending[index], channel)) {
+                keep[index - 1] = true;
+                keep[index] = true;
+            }
+            if (valid_adc(pending[index - 1], channel) &&
+                valid_adc(pending[index], channel) &&
+                std::abs(after.pin_voltage_v - before.pin_voltage_v) > 0.25) {
+                keep[index - 1] = true;
+                keep[index] = true;
+            }
+        }
+    }
+    for (std::size_t index = 0; index < pending.size(); ++index) {
+        if (keep[index])
+            archive.push_back(pending[index]);
+    }
+}
+
 const char *control_name(ControlType type) {
     switch (type) {
     case ControlType::Pedal:
@@ -378,6 +517,38 @@ bool SimSession::latest(ma17::EmulatorSnapshot &snapshot) const {
     return true;
 }
 
+std::vector<ma17::EmulatorSnapshot>
+SimSession::snapshot_window(long long first_tick) const {
+    std::lock_guard lock(mutex_);
+    std::vector<ma17::EmulatorSnapshot> result;
+    if (!snapshot_archive_.empty() && !snapshot_history_.empty()) {
+        const auto archive_first = std::lower_bound(
+            snapshot_archive_.begin(), snapshot_archive_.end(), first_tick,
+            [](const auto &sample, long long tick) {
+                return sample.tick < tick;
+            });
+        const auto archive_end = std::lower_bound(
+            archive_first, snapshot_archive_.end(),
+            snapshot_history_.front().tick,
+            [](const auto &sample, long long tick) {
+                return sample.tick < tick;
+            });
+        result.insert(result.end(), archive_first, archive_end);
+    }
+    const auto first = std::lower_bound(
+        snapshot_history_.begin(), snapshot_history_.end(), first_tick,
+        [](const ma17::EmulatorSnapshot &sample, long long tick) {
+            return sample.tick < tick;
+        });
+    result.insert(result.end(), first, snapshot_history_.end());
+    return result;
+}
+
+SimSession::SnapshotRetention SimSession::snapshot_retention() const {
+    std::lock_guard lock(mutex_);
+    return snapshot_retention_;
+}
+
 bool SimSession::capture_snapshot(ma17::EmulatorSnapshot &snapshot) const {
     std::lock_guard lock(mutex_);
     if (!has_capture_snapshot_)
@@ -443,6 +614,37 @@ void SimSession::receive_snapshot(const ma17::EmulatorSnapshot &snapshot,
     std::unique_lock lock(self.mutex_);
     self.snapshot_ = snapshot;
     self.has_snapshot_ = true;
+    if (!self.snapshot_history_.empty() &&
+        snapshot.tick < self.snapshot_history_.back().tick) {
+        self.snapshot_history_.clear();
+        self.snapshot_archive_.clear();
+        self.archive_pending_.clear();
+        self.snapshot_retention_ = {};
+    }
+    if (self.snapshot_history_.empty() ||
+        snapshot.tick > self.snapshot_history_.back().tick) {
+        self.snapshot_history_.push_back(snapshot);
+        constexpr std::size_t max_samples = 16384;
+        if (self.snapshot_history_.size() > max_samples) {
+            self.snapshot_history_.pop_front();
+            ++self.snapshot_retention_.raw_evicted;
+        }
+        constexpr long long archive_step_ticks = 99000; // 100 ms simulated.
+        if (!self.archive_pending_.empty() &&
+            snapshot.tick - self.archive_pending_.front().tick >=
+                archive_step_ticks) {
+            append_archive_extrema(self.archive_pending_, self.snapshot_archive_);
+            self.archive_pending_.clear();
+        }
+        self.archive_pending_.push_back(snapshot);
+        constexpr long long archive_span_ticks = 300LL * 990000;
+        while (!self.snapshot_archive_.empty() &&
+               self.snapshot_archive_.front().tick <
+                   snapshot.tick - archive_span_ticks) {
+            self.snapshot_archive_.pop_front();
+            ++self.snapshot_retention_.archive_evicted;
+        }
+    }
     if (!self.has_capture_snapshot_ && self.capture_tick_ > 0 &&
         snapshot.tick >= self.capture_tick_) {
         self.capture_snapshot_ = snapshot;

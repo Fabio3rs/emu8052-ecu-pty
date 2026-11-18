@@ -45,10 +45,10 @@ on key-off, pause or faster playback, and `short~` for the cumulative,
 approximate S16 sample shortfall reported by SDL stream requests. SDL may
 overestimate each request. `empty` counts producer observations of an empty
 input queue; neither count proves an audible hardware underrun. With audio
-enabled in windows at least 1100×690, `STREAM SHORT~` and `DROP` also appear
-above the volume slider; `DROP` is the same playback-lag count as `lag` in
-the status panel. `PCM PEAK` above them is the peak of the latest successfully
-queued S16 block, shown as a percentage of full scale; it returns to zero
+enabled in windows at least 1100×690, pressing `D` reveals `STREAM SHORT~`,
+`DROP`, and `PCM PEAK` below the volume slider. `DROP` is the same playback-lag
+count as `lag` in the debug status. `PCM PEAK` is the peak of the latest
+successfully queued S16 block, shown as a percentage of full scale; it returns to zero
 when live playback is suspended. The shutdown log also reports the maximum
 queued PCM peak. These measure generated samples, not speaker output.
 If the queued PCM reaches 0.5 s, the worker clears the old data and resumes
@@ -139,6 +139,29 @@ fullscreen, F12 saves the current window, and Esc closes. F12 writes a unique
 is built, or a BMP otherwise; it also works while the simulation is paused.
 With an active GPU preview, F12 also attempts a matching
 `sevel-ma17-lab-<tick>-<number>-gpu.png` scene capture and logs its tick.
+Ctrl+1/2/3 selects and saves 100/150/200% UI scale; Ctrl+0 restores automatic
+scaling. The preference lives in SDL's per-user application directory and is
+separate from ROM, scenario and replay data. `--ui-scale 100|150|200` overrides
+it for a launch; finite-frame capture runs use automatic scaling unless the
+flag is supplied, so scripted screenshots remain reproducible.
+On desktop widths, drag either vertical divider to resize the controls,
+mechanical/scope and instrument columns. Minimum widths keep all three visible;
+drag the horizontal divider between the two engine views and the scope to
+adjust their heights. The divider positions survive a restart. Ctrl+4/5/6
+selects Bench, Analysis or Mechanics. Analysis enlarges the scope; Mechanics
+enlarges both engine views. Ctrl+R restores the default 24%/42%/34% Bench
+layout; plain R still fits the mechanical view. The presentation preference
+uses a versioned file and accepts older scale-only, divider and mode formats.
+The selected analog group, ECU channel visibility and both scope time windows
+also survive an interactive restart; scripted finite-frame captures ignore
+these saved view settings. The shaft and axial cameras retain separate zoom
+and pan. Ctrl+7/8/9 selects and saves 100/105/110% font size independently
+of UI scale; Ctrl+7 restores the default font size. Ctrl+U switches the
+presentation between metric and imperial units (coolant C/F, road speed
+km/h/mph and manifold pressure kPa/inHg), and saves the choice. Scope CSV
+exports keep canonical metric samples and record the selected view units in
+their metadata. Saved mechanical cameras are restored only when the viewport
+size and UI scale remain compatible; other sizes start with an automatic fit.
 At 1280×720 or larger, the F: FULL button beside
 the view selector provides the same fullscreen control. H opens or closes the
 in-window control guide; the upper status panel shows `H: HELP` as a reminder.
@@ -153,12 +176,32 @@ pause, speed and mute available.
 Click or drag across the LOAD button to set 0–60 Nm of resistant torque; its
 bar and label show the requested value. The L key toggles the last nonzero
 load, starting at 24 Nm until adjusted.
-The pedal slider under the right-hand gauges can be clicked or dragged for
-direct 0–25 mm cable pull; it is disabled during control replay.
-The volume slider between the RPM and TPS/LAM gauges can be clicked or dragged
-when audio is available. It retains the selected level while muted.
+The pedal slider above the mechanical views can be clicked or dragged for
+direct 0–25 mm cable pull; during control replay it shows
+`PEDAL LOCKED: REPLAY` and ignores input.
+The volume slider in the left control column can be clicked or dragged when
+audio is available. It retains the selected level while muted and shows
+`AUDIO OFF` or `AUDIO N/D` when playback is disabled or unavailable. With an
+audio stream, it distinguishes `KEY OFF`, `PAUSED` and `SUSP>1X` (playback
+suspended above normal simulation speed) from the selected volume level.
 Click the CC3, P5.0 or P5.1 label in the oscilloscope to hide or restore that
 ECU pin trace. These display selections do not change the saved control trace.
+In analog scope mode, `G` changes the channel group, `X` freezes or resumes
+the chart, and left/right clicks place cursors A/B. Press `C` to export the
+selected source samples as CSV and a cropped panel PNG to
+`.work/gui-review/` relative to the working directory. The PNG embeds the
+CSV metadata (tick ranges, ROM, scenario, channels and sources); builds
+without PNG support export only CSV.
+The wheel zooms the analog time axis around the pointer. Drag with the middle
+button to inspect retained history; `X` resumes live following. Double-click
+the plot to restore the five-second live window. Mechanical camera zoom and
+pan remain confined to the engine viewports.
+The analog trigger is controlled with `T` (off/auto/normal/single), `U`
+(analog channel, ignition pins, injector pin or spark pair), `Y`
+(rising/falling pin or analog edge), `I`/`J` (analog level), and `B`
+(10/25/50% pre-trigger). `WAIT` means no valid complete trigger window has been seen;
+single mode holds one window until `X` or a trigger setting change. Triggering
+only selects stored observations and does not change the motor or ECU.
 The starter releases if the window loses focus.
 The status and candidate-lamp labels shorten in a 900×620 window.
 The window shows modeled TPS1/TPS2 voltages, lambda sensor voltage, recent RPM

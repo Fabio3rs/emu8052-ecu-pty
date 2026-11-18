@@ -15,6 +15,7 @@ class FontRenderer {
     FontRenderer &operator=(const FontRenderer &) = delete;
 
     bool ready() const;
+    void set_size_factor(float factor);
     float measure(const std::string &text) const;
     void draw(SDL_Renderer *renderer, float x, float y, const std::string &text,
               SDL_Color color, float scale = 1.0f);
@@ -22,6 +23,7 @@ class FontRenderer {
   private:
     struct Data;
     std::unique_ptr<Data> data_;
+    float size_factor_ = 1.0f;
 };
 
 } // namespace lab

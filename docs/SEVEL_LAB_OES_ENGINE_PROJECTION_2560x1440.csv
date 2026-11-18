@@ -1,0 +1,5 @@
+program,view,x0_px,y0_px,x1_px,y1_px,pixels_per_metre,piston_width_px,piston_height_px,piston_width_over_viewport,piston_height_over_viewport,source
+OES,single,853.333,0,1706.667,720,1181.102,102.057,81.601,0.119598,0.113335,desktop_application.cpp:193;237-238
+SEVEL,longitudinal,614.400,0,1152.000,852,1333.995,115.268,92.165,0.214412,0.108174,LabLayout.hpp:for_output;DonorScene.cpp:173-175
+SEVEL,profile_cylinder_1,1152.000,0,1689.600,852,1789.200,154.601,123.614,0.287577,0.145087,SdlDisplay.cpp:1730-1749;DonorScene.cpp:368-370
+SEVEL,profile_four_cylinders,614.400,0,1152.000,852,1066.240,92.132,73.666,0.171376,0.086462,SdlDisplay.cpp:1730-1749;DonorScene.cpp:368-370

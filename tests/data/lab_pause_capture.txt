@@ -1,0 +1,6 @@
+sevel-ma17-controls-v1
+0 key 0
+50000 key 1
+50000 starter 1
+400000 starter 0
+1500000 pause 0

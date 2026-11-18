@@ -18,9 +18,14 @@ namespace {
 uint64_t adc_tick = 0;
 AdcVoltageProvider voltage_provider = nullptr;
 void *voltage_context = nullptr;
+std::array<AdcObservation, 8> observations{};
+double last_read_voltage = 0.0;
+bool last_read_voltage_available = false;
 
 uint16_t read_adc_10bit_channel(uint8_t channel) {
     double voltage = 0.0;
+    last_read_voltage = 0.0;
+    last_read_voltage_available = false;
     if (voltage_provider &&
         voltage_provider(channel, voltage_context, voltage)) {
         if (!std::isfinite(voltage)) {
@@ -28,6 +33,8 @@ uint16_t read_adc_10bit_channel(uint8_t channel) {
                     static_cast<unsigned>(channel));
             std::exit(2);
         }
+        last_read_voltage = voltage;
+        last_read_voltage_available = true;
         const double normalized = std::clamp(voltage / 5.0, 0.0, 1.0);
         return static_cast<uint16_t>(std::lround(normalized * 1023.0));
     }
@@ -142,6 +149,12 @@ uint8_t selected_channel(em8051 *cpu) {
 void set_adc_voltage_provider(AdcVoltageProvider provider, void *context) {
     voltage_provider = provider;
     voltage_context = context;
+    observations = {};
+}
+
+AdcObservation adc_observation(uint8_t channel) {
+    return channel < observations.size() ? observations[channel]
+                                         : AdcObservation{};
 }
 
 void set_adc_tick(uint64_t tick) {
@@ -165,7 +178,10 @@ void start_adc_conversion(em8051 *cpu, uint8_t) {
     // starts conversion; the left-justified result remains in both ADDAT
     // registers until the next conversion completes. Latency is modeled
     // as zero here, matching the existing immediate IRCON-ready behavior.
-    const uint16_t result = read_adc_10bit_channel(selected_channel(cpu));
+    const uint8_t channel = selected_channel(cpu);
+    const uint16_t result = read_adc_10bit_channel(channel);
+    observations[channel] = {adc_tick, last_read_voltage, result, true,
+                             last_read_voltage_available};
     cpu->mSFR[0xD9 - 0x80] = static_cast<uint8_t>(result >> 2);
     cpu->mSFR[0xDA - 0x80] = static_cast<uint8_t>((result & 0x03) << 6);
 }

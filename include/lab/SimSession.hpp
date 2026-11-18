@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -86,6 +87,13 @@ class SimSession {
     bool paused() const;
     double speed() const;
     bool latest(ma17::EmulatorSnapshot &snapshot) const;
+    std::vector<ma17::EmulatorSnapshot>
+    snapshot_window(long long first_tick) const;
+    struct SnapshotRetention {
+        std::size_t raw_evicted = 0;
+        std::size_t archive_evicted = 0;
+    };
+    SnapshotRetention snapshot_retention() const;
     bool capture_snapshot(ma17::EmulatorSnapshot &snapshot) const;
     bool finished() const { return finished_.load(); }
     int result() const { return result_.load(); }
@@ -111,6 +119,10 @@ class SimSession {
     std::condition_variable wake_;
     ma17::EmulatorSnapshot snapshot_{};
     ma17::EmulatorSnapshot capture_snapshot_{};
+    std::deque<ma17::EmulatorSnapshot> snapshot_history_;
+    std::deque<ma17::EmulatorSnapshot> snapshot_archive_;
+    std::vector<ma17::EmulatorSnapshot> archive_pending_;
+    SnapshotRetention snapshot_retention_{};
     bool has_snapshot_ = false;
     bool has_capture_snapshot_ = false;
     bool paused_ = false;

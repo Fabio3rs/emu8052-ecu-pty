@@ -1,0 +1,6 @@
+object,vertices,x_min,x_max,y_min,y_max,width,height,width_over_height,source
+Crankshaft,663,-1.439259,1.562665,-1.430705,1.430705,3.001924,2.861411,1.049106,assets/authored_meshes.obj:o Crankshaft
+ConnectingRod,476,-0.737878,0.737878,-0.634707,1.347761,1.475757,1.982468,0.744404,assets/authored_meshes.obj:o ConnectingRod
+Piston,1485,-1.000092,1.000092,0.000000,1.599286,2.000185,1.599286,1.250674,assets/authored_meshes.obj:o Piston
+CylinderHead,4195,-1.406433,1.406433,0.000000,1.490196,2.812866,1.490196,1.887581,assets/authored_meshes.obj:o CylinderHead
+Valve,1625,-0.375150,0.375150,0.000810,1.987960,0.750300,1.987150,0.377576,assets/authored_meshes.obj:o Valve

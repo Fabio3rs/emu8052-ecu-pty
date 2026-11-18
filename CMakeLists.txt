@@ -368,6 +368,20 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 $<TARGET_FILE:sevel-ma17-lab>
                                 ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
                         set_tests_properties(LabCapture.F12Live PROPERTIES TIMEOUT 30)
+                        foreach(SEVEL_PAUSE_SIZE IN ITEMS "1280;720" "1920;1080")
+                            list(GET SEVEL_PAUSE_SIZE 0 SEVEL_PAUSE_WIDTH)
+                            list(GET SEVEL_PAUSE_SIZE 1 SEVEL_PAUSE_HEIGHT)
+                            add_test(NAME LabCapture.PausedReplay${SEVEL_PAUSE_WIDTH}x${SEVEL_PAUSE_HEIGHT}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_f12_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-paused-replay-${SEVEL_PAUSE_WIDTH}x${SEVEL_PAUSE_HEIGHT}.png
+                                    ${SEVEL_PAUSE_WIDTH} ${SEVEL_PAUSE_HEIGHT}
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/lab_pause_capture.txt)
+                            set_tests_properties(LabCapture.PausedReplay${SEVEL_PAUSE_WIDTH}x${SEVEL_PAUSE_HEIGHT}
+                                PROPERTIES TIMEOUT 30)
+                        endforeach()
                         add_test(NAME LabControls.ManualBenchStart
                             COMMAND ${SEVEL_XVFB_RUN} -a python3
                                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_manual_bench_start.py
@@ -383,7 +397,7 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
                                 ${CMAKE_CURRENT_BINARY_DIR}/sevel-mouse-controls.txt)
                         set_tests_properties(LabControls.MouseButtonBar
-                            PROPERTIES TIMEOUT 30)
+                            PROPERTIES TIMEOUT 60)
                         add_test(NAME LabControls.ReplayLocksMouse
                             COMMAND ${SEVEL_XVFB_RUN} -a python3
                                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_replay_mouse_lock.py
@@ -401,6 +415,15 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 ${CMAKE_CURRENT_BINARY_DIR}/sevel-resized-window.png)
                         set_tests_properties(LabCapture.ResizedButtonBar
                             PROPERTIES TIMEOUT 30)
+                        add_test(NAME LabCapture.StoppedCompact900x620
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 900x620x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-stopped-900x620.png
+                                900 620 stopped)
+                        set_tests_properties(LabCapture.StoppedCompact900x620
+                            PROPERTIES TIMEOUT 90)
                         foreach(SEVEL_LAYOUT_SIZE IN ITEMS "1920;1080" "3440;1440")
                             list(GET SEVEL_LAYOUT_SIZE 0 SEVEL_LAYOUT_WIDTH)
                             list(GET SEVEL_LAYOUT_SIZE 1 SEVEL_LAYOUT_HEIGHT)
@@ -414,6 +437,458 @@ if(ENABLE_SEVEL_MA17_LAB)
                             set_tests_properties(LabCapture.Layout${SEVEL_LAYOUT_WIDTH}x${SEVEL_LAYOUT_HEIGHT}
                                 PROPERTIES TIMEOUT 90)
                         endforeach()
+                        add_test(NAME LabCapture.HighLoad3440x1440
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-high-load-3440x1440.png
+                                3440 1440 matrix-high-load)
+                        set_tests_properties(LabCapture.HighLoad3440x1440
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_UI_SIZE IN ITEMS "1280;720" "1920;1080" "3440;1440")
+                            list(GET SEVEL_UI_SIZE 0 SEVEL_UI_WIDTH)
+                            list(GET SEVEL_UI_SIZE 1 SEVEL_UI_HEIGHT)
+                            foreach(SEVEL_UI_SCALE IN ITEMS 100 150 200)
+                            add_test(NAME LabCapture.UiScale${SEVEL_UI_SCALE}${SEVEL_UI_WIDTH}x${SEVEL_UI_HEIGHT}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-ui-scale-${SEVEL_UI_SCALE}-${SEVEL_UI_WIDTH}x${SEVEL_UI_HEIGHT}.png
+                                    ${SEVEL_UI_WIDTH} ${SEVEL_UI_HEIGHT} ui-scale-${SEVEL_UI_SCALE})
+                            set_tests_properties(LabCapture.UiScale${SEVEL_UI_SCALE}${SEVEL_UI_WIDTH}x${SEVEL_UI_HEIGHT}
+                                PROPERTIES TIMEOUT 90)
+                            endforeach()
+                        endforeach()
+                        add_test(NAME LabControls.UiScale200View1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-ui-scale-200-view-1280x720.png
+                                1280 720 ui-scale-200-view)
+                        set_tests_properties(LabControls.UiScale200View1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.UiScale200Details1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-ui-scale-200-details-1280x720.png
+                                1280 720 ui-scale-200-details)
+                        set_tests_properties(LabControls.UiScale200Details1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.UiScale200Ignition1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-ui-scale-200-ignition-1280x720.png
+                                1280 720 ui-scale-200-ignition)
+                        set_tests_properties(LabControls.UiScale200Ignition1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.UiPreferences
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_ui_preferences.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                        set_tests_properties(LabControls.UiPreferences
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_FIT_SIZE IN ITEMS "900;620" "1920;1080")
+                            list(GET SEVEL_FIT_SIZE 0 SEVEL_FIT_WIDTH)
+                            list(GET SEVEL_FIT_SIZE 1 SEVEL_FIT_HEIGHT)
+                            add_test(NAME LabControls.FitButton${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-fit-${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}.png
+                                    ${SEVEL_FIT_WIDTH} ${SEVEL_FIT_HEIGHT} fit-click)
+                            set_tests_properties(LabControls.FitButton${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabCapture.FuelTooltip1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-fuel-tooltip-1920x1080.png
+                                1920 1080 fuel-tooltip)
+                        set_tests_properties(LabCapture.FuelTooltip1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.ThrottleTooltip1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-throttle-tooltip-1920x1080.png
+                                1920 1080 throttle-tooltip)
+                        set_tests_properties(LabCapture.ThrottleTooltip1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.AudioFast1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-audio-fast-1920x1080.png
+                                1920 1080 audio-fast)
+                        set_tests_properties(LabCapture.AudioFast1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.TpsScope1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-tps-scope-1920x1080.png
+                                1920 1080 scope-tps)
+                        set_tests_properties(LabCapture.TpsScope1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.IdleScope1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-idle-scope-1920x1080.png
+                                1920 1080 scope-idle)
+                        set_tests_properties(LabCapture.IdleScope1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.IdleScopeFit1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-idle-scope-fit-1920x1080.png
+                                1920 1080 scope-fit-idle)
+                        set_tests_properties(LabCapture.IdleScopeFit1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_FIT_SIZE IN ITEMS "1280;720" "900;620")
+                            list(GET SEVEL_FIT_SIZE 0 SEVEL_FIT_WIDTH)
+                            list(GET SEVEL_FIT_SIZE 1 SEVEL_FIT_HEIGHT)
+                            add_test(NAME LabCapture.IdleScopeFit${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-idle-scope-fit-${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}.png
+                                    ${SEVEL_FIT_WIDTH} ${SEVEL_FIT_HEIGHT} scope-fit-idle)
+                            set_tests_properties(LabCapture.IdleScopeFit${SEVEL_FIT_WIDTH}x${SEVEL_FIT_HEIGHT}
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabCapture.DigitalZoom1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-zoom-1920x1080.png
+                                1920 1080 digital-zoom)
+                        set_tests_properties(LabCapture.DigitalZoom1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.DigitalEvents1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-events-1920x1080.png
+                                1920 1080 digital-events)
+                        set_tests_properties(LabCapture.DigitalEvents1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.DigitalCursors1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-cursors-1920x1080.png
+                                1920 1080 digital-cursors)
+                        set_tests_properties(LabCapture.DigitalCursors1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.DigitalIdleCursors1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-idle-cursors-1920x1080.png
+                                1920 1080 digital-idle-cursors)
+                        set_tests_properties(LabCapture.DigitalIdleCursors1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.DigitalNavigation1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-navigation-1920x1080.png
+                                1920 1080 digital-navigation)
+                        set_tests_properties(LabCapture.DigitalNavigation1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.DigitalNavigation1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-digital-navigation-1280x720.png
+                                1280 720 digital-navigation)
+                        set_tests_properties(LabCapture.DigitalNavigation1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.ThermalScope1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-thermal-scope-1920x1080.png
+                                1920 1080 scope-thermal)
+                        set_tests_properties(LabCapture.ThermalScope1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.AdcTpsFault1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-adc-tps-fault-1920x1080.png
+                                1920 1080 scope-adc-fault)
+                        set_tests_properties(LabCapture.AdcTpsFault1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_ADC_SCOPE IN ITEMS bat-lambda therm)
+                            add_test(NAME LabCapture.Adc${SEVEL_ADC_SCOPE}1920x1080
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-adc-${SEVEL_ADC_SCOPE}-1920x1080.png
+                                    1920 1080 scope-adc-${SEVEL_ADC_SCOPE})
+                            set_tests_properties(LabCapture.Adc${SEVEL_ADC_SCOPE}1920x1080
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabControls.ScopeCardTps1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-card-tps-1920x1080.png
+                                1920 1080 scope-card-tps)
+                        set_tests_properties(LabControls.ScopeCardTps1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.ScopeCardFuel1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-card-fuel-1920x1080.png
+                                1920 1080 scope-card-fuel)
+                        set_tests_properties(LabControls.ScopeCardFuel1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.ScopeMaximize1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-maximized-1920x1080.png
+                                1920 1080 scope-maximize)
+                        set_tests_properties(LabControls.ScopeMaximize1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.GearWidget1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-widget-1920x1080.png
+                                1920 1080 gear-shift)
+                        add_test(NAME LabCapture.GearTooltip1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-tooltip-1920x1080.png
+                                1920 1080 gear-tooltip)
+                        set_tests_properties(LabCapture.GearTooltip1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.LayoutDrag1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-layout-drag-1920x1080.png
+                                1920 1080 layout-drag)
+                        set_tests_properties(LabControls.LayoutDrag1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.ScopeDivider1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-divider-1920x1080.png
+                                1920 1080 scope-divider)
+                        set_tests_properties(LabControls.ScopeDivider1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_LAYOUT_MODE IN ITEMS analysis mechanics)
+                            add_test(NAME LabControls.Layout${SEVEL_LAYOUT_MODE}1920x1080
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-layout-${SEVEL_LAYOUT_MODE}-1920x1080.png
+                                    1920 1080 layout-${SEVEL_LAYOUT_MODE})
+                            set_tests_properties(LabControls.Layout${SEVEL_LAYOUT_MODE}1920x1080
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        set_tests_properties(LabControls.GearWidget1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.GearWidget1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-widget-1280x720.png
+                                1280 720 gear-shift)
+                        set_tests_properties(LabControls.GearWidget1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.GearWidgetCompact900x620
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-widget-900x620.png
+                                900 620 gear-compact-900)
+                        set_tests_properties(LabControls.GearWidgetCompact900x620
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.GearWidgetCompact1000x600
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-widget-1000x600.png
+                                1000 600 gear-compact-1000)
+                        set_tests_properties(LabControls.GearWidgetCompact1000x600
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.CoolantUnderrange1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-coolant-underrange-1920x1080.png
+                                1920 1080 coolant-underrange)
+                        set_tests_properties(LabCapture.CoolantUnderrange1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.CoolantUnderrange900x620
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-coolant-underrange-900x620.png
+                                900 620 coolant-underrange)
+                        set_tests_properties(LabCapture.CoolantUnderrange900x620
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_GEAR_SCALE IN ITEMS 150 200)
+                            add_test(NAME LabControls.GearWidget${SEVEL_GEAR_SCALE}Percent1280x720
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-gear-widget-${SEVEL_GEAR_SCALE}-1280x720.png
+                                    1280 720 ui-scale-${SEVEL_GEAR_SCALE}-gear-shift)
+                            set_tests_properties(LabControls.GearWidget${SEVEL_GEAR_SCALE}Percent1280x720
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabCapture.FrozenScope1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-frozen-scope-1920x1080.png
+                                1920 1080 scope-freeze)
+                        set_tests_properties(LabCapture.FrozenScope1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.FrozenTpsScope1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-frozen-tps-scope-1920x1080.png
+                                1920 1080 scope-freeze-tps)
+                        set_tests_properties(LabCapture.FrozenTpsScope1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.ScopeCsvTps1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-csv-tps-scope-1920x1080.png
+                                1920 1080 scope-export-tps)
+                        set_tests_properties(LabCapture.ScopeCsvTps1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.TriggerWaitTps1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-trigger-wait-tps-1920x1080.png
+                                1920 1080 scope-trigger-wait-tps)
+                        set_tests_properties(LabCapture.TriggerWaitTps1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.TriggerSingleTps1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-trigger-single-tps-1920x1080.png
+                                1920 1080 scope-trigger-single-tps)
+                        set_tests_properties(LabCapture.TriggerSingleTps1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.TriggerSpark14x1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-trigger-spark14-1920x1080.png
+                                1920 1080 scope-trigger-spark14)
+                        set_tests_properties(LabCapture.TriggerSpark14x1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.ScopeNavigation1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-navigation-1920x1080.png
+                                1920 1080 scope-navigation)
+                        set_tests_properties(LabCapture.ScopeNavigation1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.ScopeNavigation1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-scope-navigation-1280x720.png
+                                1280 720 scope-navigation)
+                        set_tests_properties(LabCapture.ScopeNavigation1280x720
+                            PROPERTIES TIMEOUT 90)
+                        foreach(SEVEL_SCOPE_MODE IN ITEMS thermal battery intake engine fuel)
+                            add_test(NAME LabCapture.${SEVEL_SCOPE_MODE}Scope1920x1080
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-${SEVEL_SCOPE_MODE}-scope-1920x1080.png
+                                    1920 1080 scope-${SEVEL_SCOPE_MODE})
+                            set_tests_properties(LabCapture.${SEVEL_SCOPE_MODE}Scope1920x1080
+                                PROPERTIES TIMEOUT 90)
+                        endforeach()
+                        add_test(NAME LabCapture.BatteryDebug1280x720
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-battery-debug-1280x720.png
+                                1280 720 scope-battery)
+                        set_tests_properties(LabCapture.BatteryDebug1280x720
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.BatteryDebugCompact900x620
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-battery-debug-900x620.png
+                                900 620 scope-battery)
+                        set_tests_properties(LabCapture.BatteryDebugCompact900x620
+                            PROPERTIES TIMEOUT 90)
                         add_test(NAME LabCapture.Radial1920x1080
                             COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
                                 python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
@@ -472,6 +947,44 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 1280 720 radial-click)
                         set_tests_properties(LabControls.RadialViewMouseDefault
                             PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabControls.RadialViewMouseUltrawide
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 3600x1600x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-radial-mouse-3440x1440.png
+                                3440 1440 radial-click)
+                        set_tests_properties(LabControls.RadialViewMouseUltrawide
+                            PROPERTIES TIMEOUT 90)
+                        find_program(SEVEL_XFWM4 xfwm4)
+                        find_program(SEVEL_WMCTRL wmctrl)
+                        if(SEVEL_XFWM4 AND SEVEL_WMCTRL)
+                            add_test(NAME LabControls.FullscreenCycle1280x720
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_fullscreen_cycle.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-fullscreen-return-1280x720.png)
+                            set_tests_properties(LabControls.FullscreenCycle1280x720
+                                PROPERTIES TIMEOUT 90)
+                            add_test(NAME LabControls.FullscreenCycleUiScale200
+                                COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_fullscreen_cycle.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-fullscreen-scale200-return.png
+                                    200)
+                            set_tests_properties(LabControls.FullscreenCycleUiScale200
+                                PROPERTIES TIMEOUT 90)
+                        endif()
+                        add_test(NAME LabControls.ResizeSweep
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resize_sweep.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/resize-sweep)
+                        set_tests_properties(LabControls.ResizeSweep
+                            PROPERTIES TIMEOUT 120)
                         add_test(NAME LabControls.RadialViewMouseCompact
                             COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1024x768x24"
                                 python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
@@ -485,6 +998,12 @@ if(ENABLE_SEVEL_MA17_LAB)
                 endif()
             endif()
         endif()
+        get_property(SEVEL_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+        foreach(SEVEL_TEST IN LISTS SEVEL_REGISTERED_TESTS)
+            if(SEVEL_TEST MATCHES "^Lab(Capture|Controls)\\.")
+                set_tests_properties(${SEVEL_TEST} PROPERTIES RESOURCE_LOCK lab_graphics)
+            endif()
+        endforeach()
         if(ENABLE_TESTS)
             add_executable(lab_live_audio_smoke
                 tests/lab_live_audio_smoke.cpp src/lab/LiveAudio.cpp

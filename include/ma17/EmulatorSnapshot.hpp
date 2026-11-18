@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ma17/AdcSimulator.hpp"
+
 #include <array>
 #include <cstdint>
 
@@ -12,22 +14,39 @@ struct EmulatorSnapshot {
     double crank_angle_rad = 0.0;
     double tdc_phase_rad = 0.0; // Candidate physical 1/4 firing TDC reference.
     double rpm = 0.0;
+    bool crank_available = false;
     double throttle_angle_rad = 0.0;
     double pedal_pull_m = 0.0;
+    bool throttle_available = false;
+    bool tps_available = false;
     double applied_load_nm = 0.0;
+    double manifold_pressure_pa = 0.0;
+    double air_in_kg_s = 0.0;
+    double injected_fuel_total_kg = 0.0;
+    bool intake_available = false;
     double fuel_film_kg = 0.0;
     double fuel_vapor_kg = 0.0;
     double tps_track1_v = 0.0;
     double tps_track2_v = 0.0;
     double lambda = 0.0;
+    bool exhaust_sample_available = false;
     double lambda_voltage_v = 0.0;
+    double battery_supply_v = 0.0;
+    bool battery_supply_available = false;
+    // Last completed conversion per channel, including the driven pin voltage.
+    // Its tick may precede this snapshot; consumers must show that age.
+    std::array<AdcObservation, 8> adc_last_conversion{};
     double coolant_c = 0.0;
+    double intake_air_c = 0.0;
+    bool thermal_available = false;
     double vehicle_speed_kmh = 0.0;
+    bool vehicle_speed_available = false;
     double thermostat_open_fraction = 0.0;
     bool radiator_fan_on = false;
     double idle_stem_m = 0.0;
     uint16_t pc = 0;
     uint8_t ram47 = 0;
+    std::array<uint8_t, 8> rom_iram_60_67{};
     uint8_t ram27_faults = 0;
     uint8_t ram28_faults = 0;
     std::array<uint8_t, 3> rom_current_fault_banks{};
@@ -43,6 +62,7 @@ struct EmulatorSnapshot {
     bool p16_high = false;
     bool key_on = true;
     unsigned long long injector_pulses = 0;
+    bool injector_available = false;
     unsigned long long burns = 0;
     unsigned long long missed_sparks = 0;
     std::array<unsigned long long, 4> burns_by_cylinder{};

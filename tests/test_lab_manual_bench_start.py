@@ -38,15 +38,19 @@ with tempfile.TemporaryFile(mode="w+") as log:
         assert window, "Lab window did not appear"
 
         def current_tick():
-            title = xdotool("getwindowname", window)
-            match = re.search(r"tick (\d+)", title)
-            assert match, title
-            return int(match[1])
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and process.poll() is None:
+                title = xdotool("getwindowname", window)
+                match = re.search(r"tick (\d+)", title)
+                if match:
+                    return int(match[1])
+                time.sleep(0.05)
+            raise AssertionError(f"Lab tick missing from title: {title}")
 
-        xdotool("mousemove", "--window", window, "65", "522")
+        xdotool("mousemove", "--window", window, "65", "470")
         xdotool("click", "1")  # key on
         start_tick = current_tick()
-        xdotool("mousemove", "--window", window, "170", "522")
+        xdotool("mousemove", "--window", window, "170", "470")
         xdotool("mousedown", "1")
         deadline = time.monotonic() + 12.0
         while current_tick() < start_tick + 650000:

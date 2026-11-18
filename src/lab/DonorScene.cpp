@@ -22,6 +22,15 @@ struct DrawCall {
     ysVector color;
 };
 
+// The authored Piston has ring marks at local Y=0 and a curved skirt at
+// Y=1.599286. Flip local Y so the flat, ringed crown faces the head.
+constexpr float piston_mesh_scale_m = 0.0864f / 2.0f;
+constexpr float piston_crown_above_pin_m = 0.023f;
+
+float piston_mesh_origin_y(float pin_y) {
+    return pin_y + piston_crown_above_pin_m;
+}
+
 } // namespace
 
 void render_sevel_scene_donor(Renderer &renderer,
@@ -159,11 +168,9 @@ void render_sevel_scene_donor(Renderer &renderer,
         generator.getVertexData(), generator.getCurrentVertexCount(),
         generator.getIndexData(), generator.getCurrentIndexCount());
     const ysMatrix identity = ysMath::LoadIdentity();
-    ysMatrix projection = identity;
-    projection.m[0][0] = 4.0f * camera.zoom;
-    projection.m[1][1] = 4.0f * camera.zoom;
-    projection.m[0][3] = 2.0f * camera.pan_x / viewport_width;
-    projection.m[1][3] = -0.4f - 2.0f * camera.pan_y / viewport_height;
+    const ysMatrix projection = scene_fit_projection(
+        camera, viewport_width, viewport_height,
+        3.4f * pitch + 0.08f, 0.34f);
     Shaders shaders;
     const auto submit_shape =
         [&](const GeometryGenerator::GeometryIndices &shape,
@@ -214,12 +221,14 @@ void render_sevel_scene_donor(Renderer &renderer,
             const auto &pose = poses[cylinder];
             const ysMatrix piston = ysMath::MatMult(
                 ysMath::TranslationTransform(
-                    {center, static_cast<float>(pose.piston_pin_y_m), 0.0f,
-                     0.0f}),
-                ysMath::ScaleTransform({0.033f, 0.012f, 1.0f, 1.0f}));
+                    {center, piston_mesh_origin_y(
+                                 static_cast<float>(pose.piston_pin_y_m)),
+                     0.0f, 0.0f}),
+                ysMath::ScaleTransform({piston_mesh_scale_m,
+                                        -piston_mesh_scale_m, 1.0f, 1.0f}));
             // The donor rod-end and crank meshes are radial silhouettes;
             // only the piston section belongs in this shaft-longitudinal view.
-            submit_shape(mesh_indices[0], piston, {0.93f, 0.72f, 0.43f, 1.0f});
+            submit_shape(mesh_indices[0], piston, {0.94f, 0.94f, 0.94f, 1.0f});
         }
     }
     for (const auto &call : pulse_calls)
@@ -354,15 +363,9 @@ void render_sevel_radial_donor(Renderer &renderer,
         generator.getVertexData(), generator.getCurrentVertexCount(),
         generator.getIndexData(), generator.getCurrentIndexCount());
     const ysMatrix identity = ysMath::LoadIdentity();
-    ysMatrix projection = identity;
-    projection.m[0][0] = 4.0f * camera.zoom;
-    projection.m[1][1] = 4.0f * camera.zoom;
-    projection.m[0][3] = 2.0f * camera.pan_x / viewport_width;
-    float vertical_origin = -0.62f;
-    if (focus_cylinder != 0)
-        vertical_origin = viewport_height < 690.0f ? -0.40f : -0.55f;
-    projection.m[1][3] =
-        vertical_origin - 2.0f * camera.pan_y / viewport_height;
+    const ysMatrix projection = scene_fit_projection(
+        camera, viewport_width, viewport_height,
+        focus_cylinder != 0 ? 0.14f : 3.0f * pitch + 0.14f, 0.34f);
     const auto draw = [&](const GeometryGenerator::GeometryIndices &shape,
                           const ysMatrix &transform, const ysVector &color) {
         renderer.submitGeometry(
@@ -425,9 +428,12 @@ void render_sevel_radial_donor(Renderer &renderer,
                        radial_scale),
              {0.70f, 0.77f, 0.78f, 1.0f});
         draw(shapes[2],
-             transform(center, static_cast<float>(pose.piston_pin_y_m), 0.0f,
-                       {0.033f, 0.012f, 1.0f, 1.0f}),
-             {0.93f, 0.72f, 0.43f, 1.0f});
+             transform(center,
+                       piston_mesh_origin_y(
+                           static_cast<float>(pose.piston_pin_y_m)),
+                       0.0f,
+                       {piston_mesh_scale_m, -piston_mesh_scale_m, 1.0f, 1.0f}),
+             {0.94f, 0.94f, 0.94f, 1.0f});
     }
     for (const auto &call : pulse_calls)
         draw(call.indices, identity, call.color);

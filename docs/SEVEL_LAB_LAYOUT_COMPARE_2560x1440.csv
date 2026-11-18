@@ -1,0 +1,14 @@
+program,element,x0_px,y0_px,x1_px,y1_px,dial_radius_px,source
+OES,left_zone,0,0,853.3,1440,,desktop_application.cpp:189-200
+OES,engine,853.3,0,1706.7,720,,desktop_application.cpp:193
+OES,scope,853.3,720,1706.7,1440,,desktop_application.cpp:195
+OES,right_zone,1706.7,0,2560,1440,,desktop_application.cpp:194
+OES,tachometer,1706.7,0,2133.3,360,153.0,right_gauge_cluster.cpp:216-222
+OES,ignition,2133.3,0,2560,720,,right_gauge_cluster.cpp:246
+SEVEL,left_zone,0,0,614.4,1440,,LabLayout.hpp:for_output
+SEVEL,mechanical,614.4,0,1689.6,852,,LabLayout.hpp:for_output
+SEVEL,scope,614.4,852,1689.6,1428,,LabLayout.hpp:for_output
+SEVEL,right_zone,1689.6,0,2560,1440,,LabLayout.hpp:for_output
+SEVEL,right_cluster,1689.6,16,2544,1424,,SdlDisplay.cpp:cluster_bounds
+SEVEL,tachometer,1689.6,16,2304.8,368,149.4,LabInstruments.cpp:draw_oes_right_cluster
+SEVEL,ignition,2304.8,16,2544,720,,LabInstruments.cpp:draw_oes_right_cluster

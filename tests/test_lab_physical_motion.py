@@ -10,11 +10,15 @@ import tempfile
 
 
 binary, rom = sys.argv[1:3]
-ticks = (1_500_000, 1_550_000)
-crop = (120, 120, 850, 455)
+ticks = (1_500_000, 1_550_000, 1_650_000, 1_750_000,
+         1_850_000, 1_950_000, 2_050_000, 2_150_000)
+view_crops = {"longitudinal": (335, 110, 550, 360),
+              "profile": (650, 110, 775, 360)}
+viewport_crops = {"longitudinal": (307, 110, 576, 420),
+                  "profile": (576, 110, 845, 420)}
 
 
-def mechanical_pixels(path: Path) -> list[bytes]:
+def mechanical_pixels(path: Path, crop) -> list[bytes]:
     data = path.read_bytes()
     assert data[:2] == b"BM"
     offset = struct.unpack_from("<I", data, 10)[0]
@@ -36,10 +40,27 @@ def mechanical_pixels(path: Path) -> list[bytes]:
     return pixels
 
 
+def assert_geometry_clear_of_viewport_edges(path: Path, crop) -> None:
+    pixels = mechanical_pixels(path, crop)
+    width = crop[2] - crop[0]
+    height = crop[3] - crop[1]
+    bright = 0
+    edge = 0
+    for index, pixel in enumerate(pixels):
+        if max(pixel) < 120:
+            continue
+        bright += 1
+        x, y = index % width, index // width
+        if x < 5 or x >= width - 5 or y < 5 or y >= height - 5:
+            edge += 1
+    assert bright > 500, (path, crop, bright)
+    assert edge == 0, (path, crop, edge)
+
+
 with tempfile.TemporaryDirectory() as directory:
     environment = os.environ.copy()
     environment["SDL_AUDIODRIVER"] = "dummy"
-    captures = []
+    captures = {view: [] for view in view_crops}
     counts = []
     for tick in ticks:
         image = Path(directory) / f"sevel-{tick}.bmp"
@@ -53,11 +74,18 @@ with tempfile.TemporaryDirectory() as directory:
                           result.stdout)
         assert state and int(state[1]) == tick, result.stdout[-3000:]
         counts.append((int(state[2]), int(state[3])))
-        captures.append(mechanical_pixels(image))
+        for view, crop in view_crops.items():
+            captures[view].append(mechanical_pixels(image, crop))
+            assert_geometry_clear_of_viewport_edges(
+                image, viewport_crops[view])
     assert counts[1][0] > counts[0][0], counts
     assert counts[1][1] > counts[0][1], counts
-    changed = sum(first != second for first, second in zip(*captures))
-    fraction = changed / len(captures[0])
-    assert fraction > 0.05, (changed, fraction)
+    motion = {}
+    for view, frames in captures.items():
+        changed = sum(first != second for first, second in
+                      zip(frames[0], frames[1]))
+        fraction = changed / len(frames[0])
+        assert fraction > 0.05, (view, changed, fraction)
+        motion[view] = f"{changed}/{len(frames[0])} ({fraction:.1%})"
     print(f"[LAB-MOTION] ticks={ticks} cc3/burns={counts} "
-          f"mechanical_changed={changed}/{len(captures[0])} ({fraction:.1%})")
+          f"mechanical_changed={motion}")

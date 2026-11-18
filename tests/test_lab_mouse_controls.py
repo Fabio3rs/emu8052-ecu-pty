@@ -85,34 +85,34 @@ with tempfile.TemporaryFile(mode="w+") as log:
             time.sleep(0.05)
         assert window, "Lab window did not appear"
 
-        def click(x):
-            xdotool("mousemove", "--window", window, str(x), "522")
+        def click(x, y):
+            xdotool("mousemove", "--window", window, str(x), str(y))
             xdotool("click", "1")
             time.sleep(0.12)
 
-        xdotool("mousemove", "--window", window, "1062", "337")
+        xdotool("mousemove", "--window", window, "85", "606")
         xdotool("click", "1")  # Set volume to about 25%.
         time.sleep(0.12)
-        click(65)   # Key on
-        xdotool("mousemove", "--window", window, "170", "522")
+        click(60, 470)   # Key on
+        xdotool("mousemove", "--window", window, "154", "470")
         xdotool("mousedown", "1")
         time.sleep(0.25)
         xdotool("mouseup", "1")
         time.sleep(0.12)
-        click(380)  # Pedal up
-        xdotool("mousemove", "--window", window, "1000", "458")
+        click(60, 516)  # Pedal up
+        xdotool("mousemove", "--window", window, "20", "76")
         xdotool("mousedown", "1")
         time.sleep(0.12)
-        xdotool("mousemove", "--window", window, "1126", "458")
+        xdotool("mousemove", "--window", window, "153", "76")
         time.sleep(0.15)
         xdotool("mouseup", "1")
-        xdotool("mousemove", "--window", window, "450", "522")
+        xdotool("mousemove", "--window", window, "118", "516")
         xdotool("mousedown", "1")
         time.sleep(0.12)
-        xdotool("mousemove", "--window", window, "520", "522")
+        xdotool("mousemove", "--window", window, "183", "516")
         time.sleep(0.15)
         xdotool("mouseup", "1")  # Set about 50 Nm on the load control.
-        click(590)  # Pause
+        click(247, 516)  # Pause
         before = int(re.search(r"tick (\d+)", xdotool("getwindowname", window))[1])
         xdotool("key", "--window", window, "period")
         deadline = time.monotonic() + 2.0
@@ -138,9 +138,9 @@ with tempfile.TemporaryFile(mode="w+") as log:
                 break
             time.sleep(0.02)
         assert stepped < edge_tick <= stepped + 990000, (stepped, edge_tick)
-        click(590)  # Resume
-        click(800)  # Faster
-        click(910)  # Mute
+        click(247, 516)  # Resume
+        click(154, 562)  # Faster
+        click(247, 562)  # Mute
         assert process.wait(timeout=20) == 0
         log.seek(0)
         output = log.read()
@@ -169,9 +169,9 @@ with tempfile.TemporaryFile(mode="w+") as log:
         for expected in {("pause", 0.0), ("step_ticks", 9900.0),
                          ("step_ignition", 990000.0), ("resume", 0.0)}:
             assert expected in values, (expected, rows)
-        assert png_pixel(image, 1050, 348)[:3] == (99, 211, 220)
-        assert png_pixel(image, 1120, 348)[:3] == (29, 43, 55)
-        assert png_pixel(image, 490, 538)[:3] == (99, 211, 220)
+        assert png_pixel(image, 65, 617)[:3] == (99, 211, 220)
+        assert png_pixel(image, 150, 617)[:3] == (29, 43, 55)
+        assert png_pixel(image, 150, 532)[:3] == (99, 211, 220)
         state = re.search(r"\[LAB-STATE\] tick=(\d+).*state=([0-9a-f]+) "
                           r"events=\d+ event_hash=([0-9a-f]+)", output)
         assert state, "live final state missing"

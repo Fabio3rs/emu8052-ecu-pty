@@ -1,0 +1,14 @@
+metric,value,unit,source
+panel_inset,10,px,labeled_gauge.h:28
+title_height_in_inset,0.1,fraction,labeled_gauge.cpp:39
+value_height_in_gauge,0.25,fraction,labeled_gauge.cpp:51
+value_font_height_in_gauge,0.125,fraction,labeled_gauge.cpp:52
+dial_center_below_gauge_center,20,px,labeled_gauge.cpp:24
+dial_radius_of_shorter_gauge_dimension,0.5,fraction,labeled_gauge.cpp:58
+needle_inner_radius,-0.1,dial_radius,labeled_gauge.cpp:59-60
+needle_outer_radius,0.7,dial_radius,labeled_gauge.cpp:59-60
+main_needle_width,4,px,right_gauge_cluster.cpp:63-155
+minor_tick_length,5,px,gauge.cpp:21
+major_tick_length,10,px,gauge.cpp:22
+minor_tick_width,1,px,gauge.cpp:18
+major_tick_width,2,px,gauge.cpp:19

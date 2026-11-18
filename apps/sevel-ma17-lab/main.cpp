@@ -154,6 +154,7 @@ void usage(const char *program) {
                  "[--window-frames N] [--live] [--auto-start] [--gpu-preview] "
                  "[--bench-preset] "
                  "[--no-audio] [--frame-delay-ms N] "
+                 "[--ui-scale 100|150|200] "
                  "[--save-controls PATH] [--replay-controls PATH] "
                  "[MA1.7 physical scenario options]\n",
                  program);
@@ -180,6 +181,7 @@ int main(int argc, char **argv) {
     bool enable_audio = true;
     int window_frames = 0;
     int frame_delay_ms = 16;
+    int ui_scale_percent = 0;
     std::vector<std::string> harness_args{argv[0], argv[1], "--physical-crank"};
     for (int index = 2; index < argc; ++index) {
         const std::string option = argv[index];
@@ -202,6 +204,14 @@ int main(int argc, char **argv) {
                 return 2;
             }
             frame_delay_ms = static_cast<int>(parsed);
+        } else if (option == "--ui-scale" && index + 1 < argc) {
+            long long parsed = 0;
+            if (!parse_tick(argv[++index], parsed) ||
+                (parsed != 100 && parsed != 150 && parsed != 200)) {
+                usage(argv[0]);
+                return 2;
+            }
+            ui_scale_percent = static_cast<int>(parsed);
         } else if (option == "--save-controls" && index + 1 < argc) {
             save_controls_path = argv[++index];
         } else if (option == "--replay-controls" && index + 1 < argc) {
@@ -307,7 +317,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     lab::ControlTraceMetadata current_metadata;
-    if ((!save_controls_path.empty() || recorded_metadata.present) &&
+    if ((live || !save_controls_path.empty() || recorded_metadata.present) &&
         !trace_metadata(harness_args, current_metadata)) {
         std::fprintf(stderr, "Could not read ROM for control trace metadata\n");
         return 1;
@@ -340,7 +350,8 @@ int main(int argc, char **argv) {
         const bool shown = lab::show_sdl_display(
             initial, window_frames, screenshot_path, &session,
             capture.target_tick, nullptr, !replay_controls_path.empty(),
-            gpu_preview, enable_audio, frame_delay_ms, bench_preset);
+            gpu_preview, enable_audio, frame_delay_ms, bench_preset,
+            &current_metadata, ui_scale_percent);
         session.stop();
         ma17::EmulatorSnapshot final_snapshot;
         if (!session.latest(final_snapshot))
@@ -453,7 +464,7 @@ int main(int argc, char **argv) {
     if (!headless &&
         !lab::show_sdl_display(capture.snapshot, window_frames, screenshot_path,
                                nullptr, 0, &capture.events, false, false, true,
-                               16, bench_preset))
+                               16, bench_preset, nullptr, ui_scale_percent))
         return 1;
 #endif
     std::printf("[LAB-CAPTURE] tick=%lld rpm=%.3f ram47=%u "
