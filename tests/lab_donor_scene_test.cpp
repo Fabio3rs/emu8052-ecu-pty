@@ -2,14 +2,14 @@
 #ifdef SEVEL_LAB_MESH_ASSET
 #include "lab/MeshAsset.hpp"
 #endif
+#include "ecu_hw/Ma17Tachometer.hpp"
 #include "gauge.h"
 #include "geometry_generator.h"
-#include "labeled_gauge_layout.h"
-#include "ecu_hw/Ma17Tachometer.hpp"
 #include "lab/RecordingRenderer.hpp"
-#include "lab/ScopeDecimation.hpp"
 #include "lab/SceneCameraFit.hpp"
+#include "lab/ScopeDecimation.hpp"
 #include "lab/SevelScene.hpp"
+#include "labeled_gauge_layout.h"
 #include "oscilloscope.h"
 #include "oscilloscope_path.h"
 
@@ -39,7 +39,8 @@ TEST(DonorScope, PathWidthPreservesDonorTaperAndTip) {
     EXPECT_NEAR(oes::oscilloscope_path_width(0.99f, 2.0f), 3.58f, 0.00001f);
     float previous = 0.0f;
     for (int i = 0; i < 100; ++i) {
-        const float width = oes::oscilloscope_path_width(static_cast<float>(i) / 100.0f);
+        const float width =
+            oes::oscilloscope_path_width(static_cast<float>(i) / 100.0f);
         EXPECT_GE(width, previous);
         EXPECT_GE(width, 0.5f);
         EXPECT_LT(width, 3.0f);
@@ -52,8 +53,8 @@ TEST(DonorGauge, LabelLayoutPreservesDonorCoordinatesAndUniformScale) {
     // A 340x204 cell gives a 320x165.6 dial, radius 82.8 and center (170,72.8).
     for (const float scale : {1.0f, 1.5f, 2.0f}) {
         const auto layout = labeled_gauge_layout(
-            ::Bounds(0.0f, 340.0f * scale, 0.0f, 204.0f * scale),
-            10.0f * scale, -20.0f * scale);
+            ::Bounds(0.0f, 340.0f * scale, 0.0f, 204.0f * scale), 10.0f * scale,
+            -20.0f * scale);
         EXPECT_NEAR(layout.title.bottom(), 175.6f * scale, 0.0001f);
         EXPECT_NEAR(layout.title.top(), 194.0f * scale, 0.0001f);
         EXPECT_NEAR(layout.gauge.width(), 320.0f * scale, 0.0001f);
@@ -95,9 +96,34 @@ TEST(DonorScene, FittedProjectionPreservesPhysicalAspectRatio) {
           std::pair{720.0f, 1152.0f}}) {
         const auto projection = lab::scene_fit_projection(
             {0.78f, 0.0f, 0.0f}, width, height, 0.403f, 0.34f);
-        EXPECT_NEAR(projection.m[0][0] * width,
-                    projection.m[1][1] * height, 0.001f);
+        EXPECT_NEAR(projection.m[0][0] * width, projection.m[1][1] * height,
+                    0.001f);
     }
+}
+
+TEST(DonorGauge, NeedlePositionAlreadyIncludesGammaAndIsNotAppliedTwice) {
+    Gauge gauge;
+    gauge.m_min = 0.0f;
+    gauge.m_max = 100.0f;
+    gauge.m_gamma = 2.0f;
+    gauge.m_thetaMin = 1.2f * 3.14159265f;
+    gauge.m_thetaMax = -0.2f * 3.14159265f;
+    gauge.reset(50.0f);
+    // The tick for value 50 sits at fraction 0.5; gamma maps it to s = 0.25.
+    EXPECT_NEAR(gauge.needlePosition(), 0.25f, 1e-6f);
+    const float tick_angle = gauge.angleForFraction(0.5f);
+    EXPECT_NEAR(gauge.angleForPosition(gauge.needlePosition()), tick_angle,
+                1e-5f);
+    // Feeding the post-gamma position back through angleForFraction applies
+    // gamma twice (s = 0.0625) and misplaces the needle by about 0.7 rad.
+    EXPECT_GT(
+        std::fabs(gauge.angleForFraction(gauge.needlePosition()) - tick_angle),
+        0.5f);
+    // gamma = 1 keeps both conversions identical.
+    gauge.m_gamma = 1.0f;
+    gauge.reset(50.0f);
+    EXPECT_NEAR(gauge.angleForPosition(gauge.needlePosition()),
+                gauge.angleForFraction(0.5f), 1e-6f);
 }
 
 TEST(DonorGauge, TracksValueWithoutEscapingDial) {
@@ -140,8 +166,8 @@ TEST(DonorGauge, GeneratedNeedleKeepsWidthAtEveryAngleAndDpi) {
             ASSERT_EQ(generator.getCurrentIndexCount(), 6);
             for (int i = 0; i < 4; ++i) {
                 const auto &p = generator.getVertexData()[i].Pos;
-                EXPECT_NEAR(std::abs(-y * p.x + x * p.y),
-                            2.0f * scale, 0.0001f);
+                EXPECT_NEAR(std::abs(-y * p.x + x * p.y), 2.0f * scale,
+                            0.0001f);
                 EXPECT_NEAR(x * p.x + y * p.y,
                             (i < 2 ? -8.28f : 57.96f) * scale, 0.0001f);
             }
@@ -201,12 +227,10 @@ TEST(DonorGauge, LowPassIsMonotonicAndFrameRateIndependent) {
             previous = gauge.needlePosition();
         }
         EXPECT_NEAR(gauge.needlePosition(),
-                    (4000.0f - 3000.0f * std::exp(-5.0f)) / 7000.0f,
-                    1e-6f);
+                    (4000.0f - 3000.0f * std::exp(-5.0f)) / 7000.0f, 1e-6f);
         gauge.m_value = 0.0f;
         gauge.update(0.2f);
-        EXPECT_NEAR(gauge.needlePosition(), previous * std::exp(-1.0f),
-                    1e-6f);
+        EXPECT_NEAR(gauge.needlePosition(), previous * std::exp(-1.0f), 1e-6f);
         previous = gauge.needlePosition();
         gauge.m_value = std::numeric_limits<float>::quiet_NaN();
         gauge.update(0.1f);
@@ -253,14 +277,9 @@ TEST(LabScope, DecimationKeepsPeakAndGap) {
         double value;
         bool valid;
     };
-    const std::vector<Sample> samples{{0, 1.0, true},
-                                      {1, 1.1, true},
-                                      {2, 8.0, true},
-                                      {3, -2.0, true},
-                                      {4, 1.2, true},
-                                      {5, 0.0, false},
-                                      {6, 3.0, true},
-                                      {20, 4.0, true}};
+    const std::vector<Sample> samples{
+        {0, 1.0, true}, {1, 1.1, true},  {2, 8.0, true}, {3, -2.0, true},
+        {4, 1.2, true}, {5, 0.0, false}, {6, 3.0, true}, {20, 4.0, true}};
     const auto indices = lab::decimate_scope_samples(
         samples, 0, 20, 2, 8,
         [](const Sample &sample) -> std::optional<double> {
@@ -278,10 +297,11 @@ TEST(LabScope, DecimationKeepsNonfiniteAndResetBoundaries) {
         double value;
     };
     const std::vector<Sample> samples{
-        {0, 1.0}, {1, 1.0}, {2, 9.0}, {3, 1.0}, {4, 1.0},
-        {5, std::numeric_limits<double>::quiet_NaN()},
-        {6, 2.0}, {7, 2.0}, {8, 2.0}, {30, 3.0},
-        {31, 3.0}, {9, -4.0}, {10, 2.0}};
+        {0, 1.0},  {1, 1.0},  {2, 9.0},
+        {3, 1.0},  {4, 1.0},  {5, std::numeric_limits<double>::quiet_NaN()},
+        {6, 2.0},  {7, 2.0},  {8, 2.0},
+        {30, 3.0}, {31, 3.0}, {9, -4.0},
+        {10, 2.0}};
     const auto indices = lab::decimate_scope_samples(
         samples, 0, 31, 1, 10,
         [](const Sample &sample) -> std::optional<double> {
@@ -289,7 +309,8 @@ TEST(LabScope, DecimationKeepsNonfiniteAndResetBoundaries) {
         });
     EXPECT_TRUE(std::is_sorted(indices.begin(), indices.end()));
     for (const std::size_t boundary : {2U, 5U, 6U, 8U, 9U, 10U, 11U, 12U})
-        EXPECT_TRUE(std::binary_search(indices.begin(), indices.end(), boundary))
+        EXPECT_TRUE(
+            std::binary_search(indices.begin(), indices.end(), boundary))
             << boundary;
 }
 
@@ -314,8 +335,8 @@ std::vector<Bounds> segment_bounds(const lab::RecordingRenderer &renderer) {
 }
 
 TEST(DonorScene, MatchesPhysicalSceneAtCrankAndValvePhases) {
-    const auto fitted = lab::scene_fit_projection(
-        {}, 1280.0f, 720.0f, 3.4f * 0.095f + 0.08f, 0.34f);
+    const auto fitted = lab::scene_fit_projection({}, 1280.0f, 720.0f,
+                                                  3.4f * 0.095f + 0.08f, 0.34f);
     for (double angle : {0.0, 1.2, 4.36, 7.85}) {
         ma17::EmulatorSnapshot snapshot;
         snapshot.crank_angle_rad = angle;
@@ -332,10 +353,13 @@ TEST(DonorScene, MatchesPhysicalSceneAtCrankAndValvePhases) {
         for (std::size_t segment = 0; segment < expected.size(); ++segment)
             for (std::size_t edge = 0; edge < 4; ++edge) {
                 const float old = expected[segment][edge];
-                const float mapped = edge % 2 == 0
-                    ? (1.0f + fitted.m[0][0] * (old - 640.0f) / 2560.0f) * 640.0f
-                    : (1.0f - fitted.m[1][1] * (504.0f - old) / 1440.0f -
-                       fitted.m[1][3]) * 360.0f;
+                const float mapped =
+                    edge % 2 == 0
+                        ? (1.0f + fitted.m[0][0] * (old - 640.0f) / 2560.0f) *
+                              640.0f
+                        : (1.0f - fitted.m[1][1] * (504.0f - old) / 1440.0f -
+                           fitted.m[1][3]) *
+                              360.0f;
                 EXPECT_NEAR(actual[segment][edge], mapped, 0.001f)
                     << "segment " << segment << ", edge " << edge;
             }
@@ -427,7 +451,9 @@ TEST(DonorScene, ShowsBothSparkGapsWithoutDuplicatingCombustion) {
 TEST(DonorScene, AutomaticFitContainsFullCycleWithMarkers) {
     AuthoredMeshLibrary library;
     ASSERT_TRUE(lab::load_packaged_meshes(library, LAB_MESH_ASSET_PATH));
-    struct Rect { float x, y, w, h; };
+    struct Rect {
+        float x, y, w, h;
+    };
     for (const auto &[width, height] :
          {std::pair{269.0f, 576.0f}, std::pair{720.0f, 350.0f}}) {
         const Rect target{width * 0.1f, 108.0f, width * 0.8f, height - 124.0f};
@@ -439,13 +465,16 @@ TEST(DonorScene, AutomaticFitContainsFullCycleWithMarkers) {
                                     lab::SceneCamera candidate,
                                     std::array<lab::ScenePulse, 4> pulses) {
                 if (view == -1)
-                    lab::render_sevel_scene_donor(frame, sample, width,
-                        height, {}, {}, candidate, &library, pulses);
+                    lab::render_sevel_scene_donor(frame, sample, width, height,
+                                                  {}, {}, candidate, &library,
+                                                  pulses);
                 else
-                    lab::render_sevel_radial_donor(frame, sample, width,
-                        height, library, {}, {}, candidate, pulses, view);
+                    lab::render_sevel_radial_donor(frame, sample, width, height,
+                                                   library, {}, {}, candidate,
+                                                   pulses, view);
             };
-            lab::fit_scene_camera(camera, snapshot, width, height, target,
+            lab::fit_scene_camera(
+                camera, snapshot, width, height, target,
                 [&](auto &frame, const auto &sample, auto candidate) {
                     render(frame, sample, candidate, {});
                 });
@@ -453,9 +482,11 @@ TEST(DonorScene, AutomaticFitContainsFullCycleWithMarkers) {
             for (auto &pulse : pulses)
                 pulse = {1.0f, false, 1.0f, 1.0f};
             for (int degrees = 0; degrees <= 720; degrees += 5) {
-                SCOPED_TRACE(::testing::Message() << width << 'x' << height
-                             << " view=" << view << " degrees=" << degrees);
-                snapshot.crank_angle_rad = degrees * 3.14159265358979323846 / 180.0;
+                SCOPED_TRACE(::testing::Message()
+                             << width << 'x' << height << " view=" << view
+                             << " degrees=" << degrees);
+                snapshot.crank_angle_rad =
+                    degrees * 3.14159265358979323846 / 180.0;
                 lab::RecordingRenderer frame;
                 render(frame, snapshot, camera, pulses);
                 float left, top, right, bottom;
@@ -487,22 +518,26 @@ TEST(DonorScene, FullCycleMeshesStayInsideDefaultViewports) {
                 pulse = {1.0f, false, 1.0f, 1.0f};
             for (int view = -1; view <= 4; ++view) {
                 SCOPED_TRACE(::testing::Message()
-                             << width << 'x' << height << " degrees="
-                             << degrees << " view=" << view);
+                             << width << 'x' << height << " degrees=" << degrees
+                             << " view=" << view);
                 lab::RecordingRenderer frame;
                 const lab::SceneCamera camera{0.78f, 0.0f, 0.0f};
                 if (view == -1)
                     lab::render_sevel_scene_donor(frame, snapshot, width,
-                        height, {}, {}, camera, &library, pulses);
+                                                  height, {}, {}, camera,
+                                                  &library, pulses);
                 else
                     lab::render_sevel_radial_donor(frame, snapshot, width,
-                        height, library, {}, {}, camera, pulses, view);
+                                                   height, library, {}, {},
+                                                   camera, pulses, view);
                 float left, top, right, bottom;
                 ASSERT_TRUE(frame.pixel_bounds(left, top, right, bottom));
                 minimum_margins[0] = std::min(minimum_margins[0], left / width);
                 minimum_margins[1] = std::min(minimum_margins[1], top / height);
-                minimum_margins[2] = std::min(minimum_margins[2], 1.0f - right / width);
-                minimum_margins[3] = std::min(minimum_margins[3], 1.0f - bottom / height);
+                minimum_margins[2] =
+                    std::min(minimum_margins[2], 1.0f - right / width);
+                minimum_margins[3] =
+                    std::min(minimum_margins[3], 1.0f - bottom / height);
                 ASSERT_GE(left, width * 0.10f);
                 ASSERT_GE(top, height * 0.10f);
                 ASSERT_LE(right, width * 0.90f);
@@ -542,8 +577,8 @@ TEST(DonorScene, ImportedPistonKeepsDonorCrownAndSevelBore) {
     ASSERT_TRUE(lab::load_packaged_meshes(library, LAB_MESH_ASSET_PATH));
     ma17::EmulatorSnapshot snapshot;
     lab::RecordingRenderer renderer;
-    lab::render_sevel_radial_donor(renderer, snapshot, 1280.0f, 720.0f,
-                                    library, {}, {}, {}, {}, 1);
+    lab::render_sevel_radial_donor(renderer, snapshot, 1280.0f, 720.0f, library,
+                                   {}, {}, {}, {}, 1);
     Bounds box{std::numeric_limits<float>::max(),
                std::numeric_limits<float>::max(),
                std::numeric_limits<float>::lowest(),
@@ -559,28 +594,28 @@ TEST(DonorScene, ImportedPistonKeepsDonorCrownAndSevelBore) {
             box[3] = std::max(box[3], point.y);
         }
     });
-    const auto projection = lab::scene_fit_projection(
-        {}, 1280.0f, 720.0f, 0.14f, 0.34f);
+    const auto projection =
+        lab::scene_fit_projection({}, 1280.0f, 720.0f, 0.14f, 0.34f);
     const float pixels_per_metre = projection.m[0][0] * 640.0f;
-    const float crown_y = static_cast<float>(
-        lab::cylinder_pose(0.0, 1).piston_pin_y_m) + 0.023f;
+    const float crown_y =
+        static_cast<float>(lab::cylinder_pose(0.0, 1).piston_pin_y_m) + 0.023f;
     const float expected_top =
         (1.0f - projection.m[1][1] * crown_y - projection.m[1][3]) * 360.0f;
     EXPECT_NEAR(box[2] - box[0], 0.0864f * pixels_per_metre, 0.1f);
     EXPECT_NEAR(box[1], expected_top, 0.1f);
     const auto *piston = library.find("Piston");
     ASSERT_NE(piston, nullptr);
-    const auto vertex = std::find_if(
-        piston->indices.begin(), piston->indices.end(),
-        [&](unsigned short index) {
-            return piston->vertices[index].Pos.y > 0.5f;
-        });
+    const auto vertex =
+        std::find_if(piston->indices.begin(), piston->indices.end(),
+                     [&](unsigned short index) {
+                         return piston->vertices[index].Pos.y > 0.5f;
+                     });
     ASSERT_NE(vertex, piston->indices.end());
     const auto &local = piston->vertices[*vertex].Pos;
-    const float expected_vertex_x = 640.0f +
-        local.x * 0.0432f * pixels_per_metre;
-    const float expected_vertex_y = expected_top +
-        local.y * 0.0432f * pixels_per_metre;
+    const float expected_vertex_x =
+        640.0f + local.x * 0.0432f * pixels_per_metre;
+    const float expected_vertex_y =
+        expected_top + local.y * 0.0432f * pixels_per_metre;
     bool found_vertex = false;
     renderer.for_each_triangle([&](const auto &points, const ysVector &color) {
         if (std::abs(color.x - 0.94f) > 0.001f ||
@@ -635,21 +670,19 @@ TEST(DonorScene, AxialCrankPairsAreOpposed) {
     std::array<float, 2> shifted_point{};
     std::array<float, 2> reference_point{};
     bool first_shifted = true;
-    shifted_to_tdc.for_each_triangle(
-        [&](const auto &points, const auto &) {
-            if (first_shifted) {
-                shifted_point = {points[0].x, points[0].y};
-                first_shifted = false;
-            }
-        });
+    shifted_to_tdc.for_each_triangle([&](const auto &points, const auto &) {
+        if (first_shifted) {
+            shifted_point = {points[0].x, points[0].y};
+            first_shifted = false;
+        }
+    });
     bool first_reference = true;
-    reference_tdc.for_each_triangle(
-        [&](const auto &points, const auto &) {
-            if (first_reference) {
-                reference_point = {points[0].x, points[0].y};
-                first_reference = false;
-            }
-        });
+    reference_tdc.for_each_triangle([&](const auto &points, const auto &) {
+        if (first_reference) {
+            reference_point = {points[0].x, points[0].y};
+            first_reference = false;
+        }
+    });
     EXPECT_FALSE(first_shifted);
     EXPECT_FALSE(first_reference);
     EXPECT_NEAR(shifted_point[0], reference_point[0], 0.001f);
@@ -709,8 +742,8 @@ TEST(DonorScene, RadialRodFollowsCrankAndOpposedPairs) {
     const auto screen_y = [&](float y) {
         return (1.0f - projection.m[1][1] * y - projection.m[1][3]) * 360.0f;
     };
-    EXPECT_NEAR(crank_point[0],
-                screen_x(center - radius * crank_local.y), 0.02f);
+    EXPECT_NEAR(crank_point[0], screen_x(center - radius * crank_local.y),
+                0.02f);
     EXPECT_NEAR(crank_point[1], screen_y(radius * crank_local.x), 0.02f);
 
     const auto first_intake_top = [](const lab::RecordingRenderer &frame) {
@@ -759,16 +792,16 @@ TEST(DonorScene, RadialRodFollowsCrankAndOpposedPairs) {
     const auto &rod_local = rod_mesh.vertices[rod_mesh.indices[0]].Pos;
     const auto pose = lab::cylinder_pose(3.14159265358979323846 / 2.0, 1);
     const float dx = static_cast<float>(pose.crank_pin_x_m);
-    const float dy = static_cast<float>(pose.piston_pin_y_m - pose.crank_pin_y_m);
+    const float dy =
+        static_cast<float>(pose.piston_pin_y_m - pose.crank_pin_y_m);
     const float rod_rotation = std::atan2(dx, dy);
-    const float world_x =
-        center + dx + radius * (std::cos(rod_rotation) * rod_local.x -
-                                std::sin(rod_rotation) * rod_local.y);
-    const float world_y =
-        radius * (std::sin(rod_rotation) * rod_local.x +
-                  std::cos(rod_rotation) * rod_local.y);
-    const std::size_t rod_triangle = 34U + head_faces + 2 * valve_faces +
-                                     crank_mesh.indices.size() / 3;
+    const float world_x = center + dx +
+                          radius * (std::cos(rod_rotation) * rod_local.x -
+                                    std::sin(rod_rotation) * rod_local.y);
+    const float world_y = radius * (std::sin(rod_rotation) * rod_local.x +
+                                    std::cos(rod_rotation) * rod_local.y);
+    const std::size_t rod_triangle =
+        34U + head_faces + 2 * valve_faces + crank_mesh.indices.size() / 3;
     std::array<float, 2> rod_point{};
     triangle = 0;
     quarter_turn.for_each_triangle([&](const auto &points, const auto &) {
@@ -843,18 +876,18 @@ TEST(DonorScene, FocusedAxialSectionKeepsPhysicalPairPhases) {
     const auto four = crank_point(4);
     const float radius =
         static_cast<float>(lab::SevelVisualGeometry::crank_radius_m);
-    const auto projection = lab::scene_fit_projection(
-        {}, 1280.0f, 720.0f, 0.14f, 0.34f);
-    EXPECT_NEAR(one[0], (1.0f - projection.m[0][0] * radius * local.y) *
-                            640.0f, 0.02f);
-    EXPECT_NEAR(two[0], (1.0f + projection.m[0][0] * radius * local.y) *
-                            640.0f, 0.02f);
+    const auto projection =
+        lab::scene_fit_projection({}, 1280.0f, 720.0f, 0.14f, 0.34f);
+    EXPECT_NEAR(one[0], (1.0f - projection.m[0][0] * radius * local.y) * 640.0f,
+                0.02f);
+    EXPECT_NEAR(two[0], (1.0f + projection.m[0][0] * radius * local.y) * 640.0f,
+                0.02f);
     EXPECT_NEAR(one[0], four[0], 0.02f);
     EXPECT_NEAR(one[1], four[1], 0.02f);
     lab::RecordingRenderer invalid;
-    EXPECT_THROW(lab::render_sevel_radial_donor(
-                     invalid, snapshot, 1280.0f, 720.0f, library, {}, {}, {},
-                     {}, 5),
+    EXPECT_THROW(lab::render_sevel_radial_donor(invalid, snapshot, 1280.0f,
+                                                720.0f, library, {}, {}, {}, {},
+                                                5),
                  std::invalid_argument);
 }
 #endif

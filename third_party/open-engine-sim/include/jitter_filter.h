@@ -30,7 +30,7 @@ public:
         std::uniform_real_distribution<float> dist(
             0.0f,
             static_cast<float>(m_maxJitter - 1));
-        
+
         const float s = m_noiseFilter.fast_f(dist(m_generator) * m_jitterScale * jitterScale);
         const float s_i_0 = clamp(std::floor(s), 0.0f, static_cast<float>(m_maxJitter - 1));
         const float s_i_1 = clamp(std::ceil(s), 0.0f, static_cast<float>(m_maxJitter - 1));

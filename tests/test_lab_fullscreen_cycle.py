@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 
 
 binary, rom, output = sys.argv[1:4]
@@ -43,9 +44,33 @@ def png_size(path):
 
 
 def complete_png(path):
+    """A PNG is complete when every chunk CRC matches, the IDAT stream inflates
+    fully and IEND is the last chunk. (A size threshold is not a completeness
+    test: pixel-font captures are legitimately small.)"""
     data = path.read_bytes()
-    return len(data) > 20000 and data.endswith(
-        b"\x00\x00\x00\x00IEND\xaeB`\x82")
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return False
+    cursor = 8
+    compressed = bytearray()
+    while cursor + 12 <= len(data):
+        size = struct.unpack(">I", data[cursor:cursor + 4])[0]
+        end = cursor + 12 + size
+        if end > len(data):
+            return False
+        kind = data[cursor + 4:cursor + 8]
+        crc = struct.unpack(">I", data[end - 4:end])[0]
+        if zlib.crc32(data[cursor + 4:end - 4]) != crc:
+            return False
+        if kind == b"IDAT":
+            compressed.extend(data[cursor + 8:end - 4])
+        if kind == b"IEND":
+            try:
+                zlib.decompress(bytes(compressed))
+            except zlib.error:
+                return False
+            return end == len(data) and len(compressed) > 0
+        cursor = end
+    return False
 
 
 with tempfile.TemporaryDirectory(prefix="sevel-fullscreen-") as directory:

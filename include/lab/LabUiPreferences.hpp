@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -36,16 +37,29 @@ struct LabUiPreferences {
     int display_units = 0;
     float camera_pane_width = 0.0f;
     float camera_scene_height = 0.0f;
+    // FontSpec token (see font_spec_to_token): "embedded" is the default;
+    // an external face is only used when the user selects it explicitly.
+    std::string font = "embedded";
 };
+
+inline bool valid_font_token(const std::string &token) {
+    if (token == "embedded" || token == "bundled" || token == "system")
+        return true;
+    if (token.size() <= 5 || token.compare(0, 5, "file:") != 0)
+        return false;
+    for (const char c : token)
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+            return false; // the file is whitespace-separated
+    return true;
+}
 
 inline bool valid_ui_preferences(const LabUiPreferences &value) {
     return valid_ui_scale(value.scale_percent) &&
            std::isfinite(value.left_fraction) &&
-           std::isfinite(value.right_fraction) &&
-           value.left_fraction > 0.0f && value.left_fraction < 1.0f &&
+           std::isfinite(value.right_fraction) && value.left_fraction > 0.0f &&
+           value.left_fraction < 1.0f &&
            value.right_fraction > value.left_fraction &&
-           value.right_fraction < 1.0f &&
-           value.mode >= 0 && value.mode <= 2 &&
+           value.right_fraction < 1.0f && value.mode >= 0 && value.mode <= 2 &&
            std::isfinite(value.scope_fraction) &&
            (value.scope_fraction == -1.0f ||
             (value.scope_fraction > 0.0f && value.scope_fraction < 1.0f)) &&
@@ -55,14 +69,12 @@ inline bool valid_ui_preferences(const LabUiPreferences &value) {
            value.analog_span_ticks <= 300LL * 990000LL &&
            value.digital_span_ticks >= 9900LL &&
            value.digital_span_ticks <= 4950000LL &&
-           value.digital_channel_mask <= 15 &&
-           value.camera_saved >= 0 && value.camera_saved <= 1 &&
-           value.view_mode >= 0 && value.view_mode <= 3 &&
-           std::isfinite(value.shaft_zoom) &&
-           std::isfinite(value.axial_zoom) &&
-           value.shaft_zoom >= 0.5f && value.shaft_zoom <= 3.0f &&
-           value.axial_zoom >= 0.5f && value.axial_zoom <= 3.0f &&
-           std::isfinite(value.shaft_pan_x) &&
+           value.digital_channel_mask <= 15 && value.camera_saved >= 0 &&
+           value.camera_saved <= 1 && value.view_mode >= 0 &&
+           value.view_mode <= 3 && std::isfinite(value.shaft_zoom) &&
+           std::isfinite(value.axial_zoom) && value.shaft_zoom >= 0.5f &&
+           value.shaft_zoom <= 3.0f && value.axial_zoom >= 0.5f &&
+           value.axial_zoom <= 3.0f && std::isfinite(value.shaft_pan_x) &&
            std::isfinite(value.shaft_pan_y) &&
            std::isfinite(value.axial_pan_x) &&
            std::isfinite(value.axial_pan_y) &&
@@ -78,7 +90,7 @@ inline bool valid_ui_preferences(const LabUiPreferences &value) {
            value.camera_pane_width >= 0.0f &&
            value.camera_pane_width <= 4096.0f &&
            value.camera_scene_height >= 0.0f &&
-           value.camera_scene_height <= 4096.0f;
+           value.camera_scene_height <= 4096.0f && valid_font_token(value.font);
 }
 
 inline std::filesystem::path ui_preferences_path() {
@@ -101,41 +113,42 @@ inline LabUiPreferences load_ui_preferences() {
     std::string extra;
     if (!(input >> version >> value.scale_percent))
         return {};
-    if (version == "v9" || version == "v8" || version == "v7" || version == "v6" || version == "v5" || version == "v4" || version == "v3" ||
-        version == "v2") {
+    const int v =
+        version.size() >= 2 && version[0] == 'v' &&
+                version.find_first_not_of("0123456789", 1) == std::string::npos
+            ? std::atoi(version.c_str() + 1)
+            : 0;
+    if (v < 1 || v > 10)
+        return {};
+    if (v >= 2) {
         if (!(input >> value.left_fraction >> value.right_fraction))
             return {};
-        if ((version == "v9" || version == "v8" || version == "v7" || version == "v6" || version == "v5" || version == "v4" ||
-             version == "v3") &&
-            !(input >> value.mode))
+        if (v >= 3 && !(input >> value.mode))
             return {};
-        if ((version == "v9" || version == "v8" || version == "v7" || version == "v6" || version == "v5" || version == "v4") &&
-            !(input >> value.scope_fraction))
+        if (v >= 4 && !(input >> value.scope_fraction))
             return {};
-        if ((version == "v9" || version == "v8" || version == "v7" || version == "v6" || version == "v5") &&
-            !(input >> value.scope_mode >> value.analog_group >>
-              value.analog_span_ticks >> value.digital_span_ticks >>
-              value.digital_channel_mask))
+        if (v >= 5 && !(input >> value.scope_mode >> value.analog_group >>
+                        value.analog_span_ticks >> value.digital_span_ticks >>
+                        value.digital_channel_mask))
             return {};
-        if ((version == "v9" || version == "v8" || version == "v7" || version == "v6") &&
+        if (v >= 6 &&
             !(input >> value.camera_saved >> value.view_mode >>
               value.shaft_zoom >> value.shaft_pan_x >> value.shaft_pan_y >>
               value.axial_zoom >> value.axial_pan_x >> value.axial_pan_y))
             return {};
-        if ((version == "v9" || version == "v8" || version == "v7") &&
-            !(input >> value.font_percent))
+        if (v >= 7 && !(input >> value.font_percent))
             return {};
-        if ((version == "v9" || version == "v8") &&
-            !(input >> value.display_units))
+        if (v >= 8 && !(input >> value.display_units))
             return {};
-        if (version == "v9" &&
+        if (v >= 9 &&
             !(input >> value.camera_pane_width >> value.camera_scene_height))
             return {};
-    } else if (version != "v1") {
-        return {};
+        if (v >= 10 && !(input >> value.font))
+            return {};
     }
-    return valid_ui_preferences(value) && !(input >> extra) ? value
-                                                             : LabUiPreferences{};
+    return valid_ui_preferences(value) && !(input >> extra)
+               ? value
+               : LabUiPreferences{};
 }
 
 inline bool save_ui_preferences(const LabUiPreferences &value) {
@@ -145,19 +158,18 @@ inline bool save_ui_preferences(const LabUiPreferences &value) {
     if (path.empty())
         return false;
     std::ofstream output(path, std::ios::trunc);
-    output << "v9 " << value.scale_percent << ' '
-           << value.left_fraction << ' ' << value.right_fraction << ' '
-           << value.mode << ' ' << value.scope_fraction << ' '
-           << value.scope_mode << ' ' << value.analog_group << ' '
-           << value.analog_span_ticks << ' ' << value.digital_span_ticks << ' '
-           << value.digital_channel_mask << ' '
-           << value.camera_saved << ' ' << value.view_mode << ' '
+    output << "v10 " << value.scale_percent << ' ' << value.left_fraction << ' '
+           << value.right_fraction << ' ' << value.mode << ' '
+           << value.scope_fraction << ' ' << value.scope_mode << ' '
+           << value.analog_group << ' ' << value.analog_span_ticks << ' '
+           << value.digital_span_ticks << ' ' << value.digital_channel_mask
+           << ' ' << value.camera_saved << ' ' << value.view_mode << ' '
            << value.shaft_zoom << ' ' << value.shaft_pan_x << ' '
            << value.shaft_pan_y << ' ' << value.axial_zoom << ' '
            << value.axial_pan_x << ' ' << value.axial_pan_y << ' '
            << value.font_percent << ' ' << value.display_units << ' '
-           << value.camera_pane_width << ' '
-           << value.camera_scene_height << '\n';
+           << value.camera_pane_width << ' ' << value.camera_scene_height << ' '
+           << value.font << '\n';
     output.flush();
     return output.good();
 }

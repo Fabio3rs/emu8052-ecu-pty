@@ -83,7 +83,7 @@ This is backup code from a personal electronics project. The implementation is:
 | Output Enable (OE) | 22 (G) | 18 | LOW = enabled |
 | Chip Enable (CE) | 20 (E) | GND | Tied LOW (always enabled) |
 
-### Data Bus (DQ0–DQ7) 
+### Data Bus (DQ0–DQ7)
 
 Connected to **PORTF (A0–A7)** for atomic byte reads:
 

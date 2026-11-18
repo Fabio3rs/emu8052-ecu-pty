@@ -245,6 +245,14 @@ if(ENABLE_SEVEL_MA17_LAB)
             ${CMAKE_CURRENT_BINARY_DIR}/assets/slkscr.ttf.zlib.b64
             COPYONLY)
         configure_file(
+            third_party/dejavu/DejaVuSansMono-Bold.ttf.zlib.b64
+            ${CMAKE_CURRENT_BINARY_DIR}/assets/DejaVuSansMono-Bold.ttf.zlib.b64
+            COPYONLY)
+        configure_file(
+            third_party/dejavu/LICENSE.txt
+            ${CMAKE_CURRENT_BINARY_DIR}/assets/DejaVu_LICENSE.txt
+            COPYONLY)
+        configure_file(
             "third_party/open-engine-sim/assets/fonts/Kottke Silkscreen License.txt"
             "${CMAKE_CURRENT_BINARY_DIR}/assets/Kottke Silkscreen License.txt"
             COPYONLY)
@@ -284,13 +292,24 @@ if(ENABLE_SEVEL_MA17_LAB)
         if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_compile_options(open-engine-sim-gpu PRIVATE -Wno-error)
         endif()
+        # Glyph rasterization and atlas packing run on the first frame of every
+        # new text size; keep that code optimized even in unoptimized builds,
+        # or UI startup (and early input) is measurably slower.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            # LabInstruments.cpp is the per-frame drawing path (dials, numerals,
+            # scope traces): unoptimized it costs ~6% of a frame and shifts
+            # the timing of input-driven GUI tests.
+            set_source_files_properties(src/lab/FontRenderer.cpp
+                src/lab/LabInstruments.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+        endif()
         target_sources(sevel-ma17-lab PRIVATE
             apps/sevel-ma17-lab/SdlDisplay.cpp
             src/lab/DonorScene.cpp
             src/lab/FontRenderer.cpp
             src/lab/LabInstruments.cpp
             src/lab/LiveAudio.cpp
-            src/lab/MeshAsset.cpp)
+            src/lab/MeshAsset.cpp
+            src/lab/TraceGeometry.cpp)
         target_link_libraries(sevel-ma17-lab PRIVATE open-engine-sim-gpu
             SDL3::SDL3 ZLIB::ZLIB
             Freetype::Freetype)
@@ -312,6 +331,23 @@ if(ENABLE_SEVEL_MA17_LAB)
             target_link_libraries(sevel-ma17-lab PRIVATE PNG::PNG)
             target_compile_definitions(sevel-ma17-lab PRIVATE SEVEL_LAB_PNG=1)
             if(ENABLE_TESTS)
+                # Hardware rendering through SDL's offscreen driver and a DRI
+                # render node; exit 77 (skip) when no GPU node is reachable.
+                add_test(NAME LabCapture.HardwareGpu
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_hardware_gpu.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                        ${CMAKE_CURRENT_BINARY_DIR})
+                set_tests_properties(LabCapture.HardwareGpu PROPERTIES
+                    TIMEOUT 120 SKIP_RETURN_CODE 77 RESOURCE_LOCK sevel_gpu)
+                add_test(NAME LabCapture.SvgExport
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_svg_export.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                        ${CMAKE_CURRENT_BINARY_DIR})
+                set_tests_properties(LabCapture.SvgExport PROPERTIES TIMEOUT 90)
                 find_program(SEVEL_XVFB_RUN xvfb-run)
                 if(SEVEL_XVFB_RUN)
                     add_test(NAME LabSession.GuiAudioFrameDeterminism
@@ -353,6 +389,14 @@ if(ENABLE_SEVEL_MA17_LAB)
                             ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
                     set_tests_properties(LabCapture.GpuOffscreen
                         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+                    add_test(NAME LabCapture.BackendEquivalence
+                        COMMAND ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_backend_equivalence.py
+                            $<TARGET_FILE:sevel-ma17-lab>
+                            ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                    set_tests_properties(LabCapture.BackendEquivalence
+                        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
+                                   RESOURCE_LOCK sevel_gpu)
                     add_test(NAME LabKline.LivePtyFaultQuery
                         COMMAND ${Python3_EXECUTABLE}
                             ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_kline_live.py
@@ -1057,6 +1101,14 @@ if(ENABLE_SEVEL_MA17_LAB)
         add_test(NAME LabSession.PauseAndControls
             COMMAND lab_session_smoke
                 ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        add_executable(lab_session_fault tests/lab_session_fault_test.cpp
+            src/lab/SimSession.cpp)
+        target_link_libraries(lab_session_fault PRIVATE emu8051-tty_lib)
+        add_test(NAME LabSession.ModelExceptionStopsSessionWithoutTerminate
+            COMMAND lab_session_fault
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        set_tests_properties(LabSession.ModelExceptionStopsSessionWithoutTerminate
+            PROPERTIES TIMEOUT 120)
         add_executable(lab_live_determinism
             tests/lab_live_determinism.cpp src/lab/SimSession.cpp)
         target_link_libraries(lab_live_determinism PRIVATE emu8051-tty_lib)

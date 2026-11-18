@@ -1,4 +1,4 @@
-add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp sevel_geometry_test.cpp sevel_scene_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp)
+add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp sevel_geometry_test.cpp sevel_scene_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp ma17_tachometer_test.cpp)
 target_include_directories(emu8051-tty_tests SYSTEM PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
 target_compile_definitions(emu8051-tty_tests PRIVATE
@@ -38,6 +38,41 @@ if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
     target_link_libraries(lab_mesh_asset_test PRIVATE GTest::GTest
         GTest::Main open-engine-sim-geometry ZLIB::ZLIB SDL3::SDL3)
     gtest_discover_tests(lab_mesh_asset_test)
+endif()
+if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
+    add_executable(lab_font_test lab_font_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/lab/FontRenderer.cpp
+        ${PROJECT_SOURCE_DIR}/src/lab/MeshAsset.cpp)
+    target_include_directories(lab_font_test SYSTEM PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
+    target_compile_definitions(lab_font_test PRIVATE
+        LAB_FONT_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/slkscr.ttf.zlib.b64"
+        LAB_FALLBACK_FONT_ASSET_PATH="${PROJECT_BINARY_DIR}/assets/DejaVuSansMono-Bold.ttf.zlib.b64")
+    target_link_libraries(lab_font_test PRIVATE GTest::GTest GTest::Main
+        open-engine-sim-geometry ZLIB::ZLIB SDL3::SDL3 Freetype::Freetype)
+    gtest_discover_tests(lab_font_test)
+endif()
+add_executable(lab_trace_geometry_test lab_trace_geometry_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/lab/TraceGeometry.cpp)
+target_link_libraries(lab_trace_geometry_test PRIVATE GTest::GTest GTest::Main)
+gtest_discover_tests(lab_trace_geometry_test)
+if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
+    add_executable(lab_scene_color_test lab_scene_color_test.cpp)
+    target_link_libraries(lab_scene_color_test PRIVATE GTest::GTest
+        GTest::Main SDL3::SDL3)
+    gtest_discover_tests(lab_scene_color_test)
+    add_executable(lab_profile_audit_test lab_profile_audit_test.cpp)
+    target_link_libraries(lab_profile_audit_test PRIVATE GTest::GTest
+        GTest::Main SDL3::SDL3)
+    gtest_discover_tests(lab_profile_audit_test)
+    add_executable(lab_ui_preferences_test lab_ui_preferences_test.cpp)
+    target_link_libraries(lab_ui_preferences_test PRIVATE GTest::GTest
+        GTest::Main SDL3::SDL3)
+    gtest_discover_tests(lab_ui_preferences_test)
+    add_executable(lab_layout_test lab_layout_test.cpp)
+    target_link_libraries(lab_layout_test PRIVATE GTest::GTest
+        GTest::Main SDL3::SDL3)
+    gtest_discover_tests(lab_layout_test)
 endif()
 add_executable(lab_runner_smoke runner_snapshot_smoke.cpp)
 target_link_libraries(lab_runner_smoke PRIVATE emu8051-tty_lib)

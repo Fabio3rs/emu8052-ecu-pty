@@ -114,4 +114,5 @@ Diferente de sistemas com válvula de desvio de ar (IACV / atuador *stepper* em 
 | Escala do Termômetro | $50 - 90 - 130^\circ\text{C}$ | [apps/sevel-ma17-lab/SdlDisplay.cpp](file:///mnt/projects/Projects/emu8051-tty/apps/sevel-ma17-lab/SdlDisplay.cpp) |
 | Haste do Motor DC | `STEM: X.XX mm` ($0\text{ a }5\text{ mm}$) | [src/lab/LabInstruments.cpp](file:///mnt/projects/Projects/emu8051-tty/src/lab/LabInstruments.cpp) |
 | Microswitch de Batente | `IDLE SW: CLOSED / OPEN` | [src/lab/LabInstruments.cpp](file:///mnt/projects/Projects/emu8051-tty/src/lab/LabInstruments.cpp) |
-| Cilindrada & Vazão de Ar | $1.581\text{ L}$ ($0.0279 \times \text{RPM} \times \eta_v$) | [src/lab/LabInstruments.cpp](file:///mnt/projects/Projects/emu8051-tty/src/lab/LabInstruments.cpp) |
+| Cilindrada | $1.581\text{ L}$ (modelo usa `displacement_m3 = 0.001580`, 1,580 L — divergência de 1 cm³ da especificação, pendente de decisão; não é mais fórmula de GUI) | [include/engine/IntakeFuel.hpp](file:///mnt/projects/Projects/emu8051-tty/include/engine/IntakeFuel.hpp) |
+| Vazão de Ar | canal `air_in_kg_s` do modelo de admissão, convertido para g/s pela GUI (sem a antiga aproximação $0.0279 \times \text{RPM} \times \eta_v$) | [docs/SEVEL_LAB_CHANNEL_MAP.md](file:///mnt/projects/Projects/emu8051-tty/docs/SEVEL_LAB_CHANNEL_MAP.md) |

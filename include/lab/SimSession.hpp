@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -101,6 +102,17 @@ class SimSession {
     bool capture_snapshot(ma17::EmulatorSnapshot &snapshot) const;
     bool finished() const { return finished_.load(); }
     int result() const { return result_.load(); }
+    // True once the simulation thread ended on a model exception; the session
+    // is then paused and latest() reports `simulation_fault` with the
+    // drivetrain channel unavailable. fault_reason() carries the message.
+    bool faulted() const { return faulted_.load(); }
+    std::string fault_reason() const;
+    // Test seam: `hook` runs on the simulation thread at the start of every
+    // control batch, so a test can raise a real exception inside the loop.
+    // Set it before start(); it is never touched afterwards.
+    void set_loop_hook_for_test(std::function<void()> hook) {
+        loop_hook_ = std::move(hook);
+    }
     std::vector<ma17::EmulatorEvent> events() const;
     EventWindow event_window() const;
     std::vector<AppliedControl> control_history() const;
@@ -160,6 +172,10 @@ class SimSession {
     std::atomic<bool> cancel_{false};
     std::atomic<bool> finished_{false};
     std::atomic<int> result_{0};
+    std::atomic<bool> faulted_{false};
+    std::string fault_reason_; // guarded by mutex_
+    void record_fault(const char *reason);
+    std::function<void()> loop_hook_;
 };
 
 } // namespace lab

@@ -148,8 +148,10 @@ The radial view repeats the donor `CylinderHead` mesh at each cylinder section
 and places two donor `Valve` meshes above each bore. Their lifts follow the
 documented SEVEL timing. The longitudinal view keeps its donor valve meshes
 and schematic single camshaft; neither view runs the donor's valvetrain.
-The status panel uses the donor's unmodified Silkscreen font bytes. The Lab
-decodes them beside the executable and rasterizes glyph runs with FreeType;
+The donor's unmodified Silkscreen font bytes are packaged and decoded by the
+Lab, but the current default UI face is the first available system font
+(`SEVEL_FONT=retro|slkscr` forces Silkscreen; Lote A moves the default back to
+the embedded face). Glyph runs are rasterized with FreeType;
 `FontRenderer` is new Lab code, not the donor `TextRenderer` implementation.
 The control bar adapts the donor `UiButton` frame, fill and hover/held colors.
 Nine SDL3 buttons call the same `SimSession` commands as keyboard controls;
@@ -703,3 +705,70 @@ NativeLab `p_c0c9f1a7a93f`: parallel full build and the new test passed
 (14.10 s test time). `p_5a2a254f52b2`: both GUI FIT-button interaction tests,
 900x620 and 1920x1080, passed in 3.72 s. No broad screenshot acceptance was
 repeated for this behavior-preserving extraction.
+
+## Decisão por componente OES (Lote 0.3 — 2026-11-18)
+
+Base: doador `1e226ee7bfbeb1d5012c7696aee82a57355df281`. "Idêntico" =
+`diff` vazio entre `.work/open-engine-sim/src/<f>.cpp` e
+`third_party/open-engine-sim/src/<f>.cpp`.
+
+| Componente OES | Estado | Dependência real que decide | Motivo | Decisão |
+| --- | --- | --- | --- | --- |
+| `geometry_generator` | copiado literal (idêntico) | só `render_math.h`/`ui_math.h` | Gera tiras, arcos e traços sem estado de aplicação | Manter; Lote B adiciona miter/lotes no adaptador, não em `third_party/` |
+| `ui_math` | copiado literal (idêntico) | nenhuma de aplicação | `Grid`, `Bounds`, `Point` puros | Manter; base do `LabLayout` (Lote C) |
+| shaders (`engine_sim.hlsl/.msl/.spv`) e assets (malhas, Silkscreen) | copiado literal, hashes na tabela acima | `SdlGpuRenderer` | Dados sem lógica | Manter; regenerar só com `SDL_shadercross` registrado |
+| `gauge.cpp` | esvaziado/reimplementado (diverge 197 linhas do doador) | `render()` doador usa `EngineSimApplication` | Fica o estado `Gauge` (gamma, thetaMin/Max); desenho vai para `draw_oes_dial` | Adaptar (Lote B: gamma uma só vez, escala única) |
+| `oscilloscope.cpp` | esvaziado/reimplementado (diverge 223 linhas) | `render()` doador usa `EngineSimApplication` | Fica buffer/pontos; traço vem de `draw_donor_trace` | Adaptar (B.7–B.9) |
+| `labeled_gauge` | não usado | herda `UiElement` e chama `EngineSimApplication` | Moldura/proporções já extraídas em `labeled_gauge_layout.h` | Manter referência |
+| `right_gauge_cluster` | não usado | `engine.h`, `simulator.h` (solver), `fuel/afr_cluster` | Importar levaria o solver OES para a apresentação (regra 2) | Manter referência |
+| `engine_view` | não usado | `UiElement` + `EngineSimApplication` | Cena SEVEL já vem de `DonorScene` com snapshot físico | Manter referência |
+| `ui_element` / `ui_button` / `ui_manager` | não usado | `EngineSimApplication`, `overlay_host.h`, `desktop_platform.h` | Árvore de widgets acoplada à aplicação doadora; `ui_button_style.h` já adaptado | Manter referência |
+| `text_renderer` | não usado | `render_math.h` só, mas rasteriza com pipeline GPU do doador | `FontRenderer` (FreeType) é código novo do Lab | Manter referência; Lote A reforça `FontRenderer` |
+
+Nenhum item da tabela exige o pipeline SDL GPU para funcionar.
+
+## Backend oficial da janela principal (Lote 0.4)
+
+Decisão: **(i)** `SDL_Renderer` é o backend oficial da janela principal;
+`SdlGpuRenderer` permanece como prova de equivalência e captura offscreen
+(B.14, G.4). Justificativa: nenhum transplante da tabela acima depende de
+SDL GPU (os componentes não usados são os acoplados à aplicação doadora, não
+ao renderer), e `SdlDisplay.cpp` já usa `SDL_Renderer` como caminho primário.
+Migrar para (ii) continua sendo decisão do proprietário, registrada no REPORT.
+
+### Embedded glyph fallback — DejaVu Sans Mono Bold (Lote A, 2026-11-18)
+
+Not an OES asset. The donor's Silkscreen covers only ASCII 32–126 (95 glyphs,
+no kerning; `.work/gui-review/A/silkscreen-coverage.txt`), so `° λ Δ · ± µ`
+and PT-BR accents need a licensed embedded fallback.
+
+| Source | Local path | License | Modification | SHA-256 |
+| --- | --- | --- | --- | --- |
+| Debian `fonts-dejavu-core` `DejaVuSansMono-Bold.ttf` | `third_party/dejavu/DejaVuSansMono-Bold.ttf.zlib.b64` | Bitstream Vera + public-domain DejaVu changes (`third_party/dejavu/LICENSE.txt`) | None (lossless zlib/Base64 packaging, so no rename is required) | TTF `3a3c502eeff669a231549e80df9f7c49de109bafe303170409e905d0b31a38fe` |
+
+Adaptation: `src/lab/FontRenderer.cpp` draws a glyph from the fallback only
+when the primary face has no glyph for it, at 0.82 x the primary em so the cap
+heights match. System fonts are probed only for `FontSpec::Kind::System` or
+`SEVEL_FONT=modern`. Test: `LabFont.*` in `tests/lab_font_test.cpp`.
+
+### Lote B — desenho vetorial (2026-11-18)
+
+| Origem / hash | Destino | Adaptação | Teste |
+| --- | --- | --- | --- |
+| Doador `gauge.cpp`/`gauge.h` (`1e226ee…`), já adaptado | `third_party/open-engine-sim/{include/gauge.h,src/gauge.cpp}` | Novo `Gauge::angleForPosition(position)`: ângulo para uma posição **já** com gamma (`needlePosition()`). O dial passava essa posição de novo por `angleForFraction`, aplicando o gamma duas vezes (B.4) | `DonorGauge.NeedlePositionAlreadyIncludesGammaAndIsNotAppliedTwice` (gamma = 2) |
+| Doador `Oscilloscope::render` + `oscilloscope_path.h` | `src/lab/LabInstruments.cpp` (`draw_donor_tapered_trace`) | Afinamento 0,5→1→3 do doador mantido só como opção estética: `SEVEL_SCOPE_TAPER=1`, desligada por padrão (B.7). Limite de 5000 pontos do gerador de 16 bits | captura offscreen e Xvfb sem a opção |
+| Código novo (não vem do OES) | `include/lab/TraceGeometry.hpp`, `src/lab/TraceGeometry.cpp` | Polilinha de largura constante: miter `half/cos(θ/2)` com limite, bevel nas quinas agudas e inversões, lotes ≤ 65532 vértices, sem NaN (B.7–B.9). `GeometryGenerator` do doador **não** foi editado | `TraceGeometry.*` (6 testes) |
+| Código novo | `include/lab/SceneColor.hpp`, `PixelSnap.hpp` | Alpha do `BaseColor` preservado e blend `SDL_BLENDMODE_BLEND`, equivalente ao pipeline GPU do doador (`sdl_gpu_renderer.cpp`, linhas 138–144) (B.11); recorte das vistas por bordas arredondadas (B.12) | `LabSceneColor.*`, `LabPixelSnap.*` |
+| Código novo | `include/lab/RecordingRenderer.hpp` (`save_svg`) | Um `<path>` por draw call, `fill-opacity` pelo alpha, `crispEdges` nos opacos (B.13) | `LabCapture.SvgExport` |
+
+### Lotes C, D e E — notas de adaptação (2026-11-18)
+
+| Item | Destino | O que mudou | Teste |
+| --- | --- | --- | --- |
+| C.1/C.2 layout puro | `include/lab/LabLayout.hpp`, `LabInstruments.*`, `SdlDisplay.cpp`, `LabButtons.hpp` | `LayoutState` + `LabLayout::compute/effective/scope_height/divider_at/with_divider_moved`, **sem nenhum `inline static` mutável** (`static_assert` no teste). O app é o dono único do `LayoutState`; os helpers de scope recebem o estado efetivo (`layout_in_force()`); retângulo `header` e `kHeaderHeight` no lugar do `90.0f` fixo | `LabLayoutPure.*`; 48 testes de layout/arrasto/escala/scopes passam |
+| C.3/C.4/C.6 | — | **não executados** (proporções restantes `width*0.66f`, modelo único de escala com `SDL_GetWindowDisplayScale`, extração de painéis de `show_sdl_display`) | — |
+| D.1 falha de modelo | `SimSession.cpp/.hpp`, `EmulatorSnapshot.hpp` | `run()` captura `std::exception` da thread do simulador: grava `fault_reason`, pausa, `latest()` marca `simulation_fault` e `drivetrain_available=false`; cabeçalho mostra `SIM FAULT`. Ponto de injeção `set_loop_hook_for_test` | `LabSession.ModelExceptionStopsSessionWithoutTerminate` |
+| D.2–D.4 | `docs/SEVEL_LAB_CHANNEL_MAP.md`, `SpeedReading.hpp`, `LabInstruments.cpp` | hipóteses do drivetrain, carga aditiva, transcrição do manual (discrepância nas marchas 3–5), ré como `R |v|` | `SevelTransmission.*` |
+| D.5 sanitizers | `.work/asan-d5` | 24 testes de drivetrain/virabrequim/câmbio sob ASan+UBSan+LSan | `.work/gui-review/goal/asan-d5-run.log` |
+| E.3 ponteiro principal | `SevelInstrumentProfile.hpp`, `LabInstruments.cpp`, `SdlDisplay.cpp` | o conta-giros mostra o RPM **físico**; P1.1 vira linha secundária do tooltip; título `RPM` sem `?` | capturas do Lote G |
+| E.4 | `tests/ma17_tachometer_test.cpp` | timeout de 500 ms, recuperação após parada, transientes | `Ma17Tachometer.*` (5) |

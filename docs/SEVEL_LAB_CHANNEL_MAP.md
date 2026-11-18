@@ -240,3 +240,55 @@ producer is unavailable, and its phase field shows `--` when crank phase is
 unavailable or nonfinite. Its event-loss count comes from the live
 `SimSession` event buffer; a standalone fixed capture has no corresponding
 session counter and shows `--` instead of a fabricated zero.
+
+## Drivetrain: hypotheses and manual cross-check (Lote D, 2026-11-18)
+
+Source pages are scans in `PhotosECU/`: `manual_embreagem.png` = Fiat Tipo
+manual B.500.837, §00.18, p. 19; `manual_cambio.png` = §00.21-27, p. 20 (gearbox
+type C.513.5.13); `manual_cambio_2.png` = §00.21-27, p. 21 (differential).
+
+**Modelled (`engine::Drivetrain`, `ClutchCoupling`):** longitudinal vehicle mass
+reflected through the selected ratio; one slipping clutch with a pressure
+fraction and a maximum torque; rolling + aerodynamic road force; neutral and
+reverse (signed speed).
+
+**Hypotheses that are NOT in the manual or the model:**
+- no transmission losses (efficiency = 1);
+- no wheel or gearbox rotating inertia (only the vehicle mass is reflected);
+- no tire slip: the contact patch is rigid;
+- rolling radius 0.29 m is an estimate (`reference_tire_radius_m`; the manual
+  specifies no tire);
+- the maximum clutch torque (`--clutch-max-nm`) is a scenario parameter: the
+  manual gives only a 450 daN diaphragm-spring load, Ø190/Ø134 mm disc and a
+  145 ± 5 mm pedal travel, not a torque capacity;
+- vehicle mass is a scenario parameter (`--vehicle-mass-kg`).
+
+**Applied load vs drivetrain.** The 0–60 N·m scenario load is an *independent*
+brake torque on the crank: `CrankDynamics::step` sums it with the
+transmission torque and then calls `Drivetrain::couple`. With a drivetrain
+active, the load and the clutch-reflected road load therefore **add**; it is
+not switched off. Set the load to 0 to study the vehicle alone.
+
+**Transcription of the gearbox pages (value → page):**
+
+| Gear | p. 20 gear ratio | p. 21 wheel ratio | p. 21 ÷ 3.9375 | Code (`gear_ratios`) |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 3.909 | 15.393 | 3.909 | 3.909 |
+| 2 | 2.238 | 8.813 | 2.238 | 2.238 |
+| 3 | **1.541** | **5.784** | **1.469** | 1.541 |
+| 4 | **1.156** | **4.107** | **1.043** | 1.156 |
+| 5 | **0.891** | **3.343** | **0.849** | 0.891 |
+| R | 3.909 | 15.393 | 3.909 | 3.909 |
+
+Differential: 16/63 (3.938), i.e. 63/16 = 3.9375 in code.
+
+**Open discrepancy (owner decision).** Gears 1, 2 and reverse agree between the
+two pages, but for gears 3–5 the manual's own wheel ratios (p. 21) imply
+1.469 / 1.043 / 0.849, not the 1.541 / 1.156 / 0.891 printed on p. 20 and used
+in code. No value was changed: a different ratio is an intentional physical
+change that needs its own baseline. `SevelTransmission.ManualPagesDisagreeForGears3To5`
+pins both readings so that the decision is visible in tests.
+
+**Reverse presentation.** A negative road speed is shown as `|v|` with an `R`
+marker, never as the `LOW` under-range arrow of a 0–200 dial (`vehicle_speed`
+keeps its signed value in telemetry and CSV).

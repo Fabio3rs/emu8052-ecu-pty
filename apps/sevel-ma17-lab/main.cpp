@@ -469,11 +469,11 @@ int main(int argc, char **argv) {
 #endif
     std::printf("[LAB-CAPTURE] tick=%lld rpm=%.3f ram47=%u "
                 "draw_calls=%d triangles=%zu events=%zu event_overflow=%llu "
-                "svg=%s\n",
+                "svg=%s drawn_calls=%zu\n",
                 capture.snapshot.tick, capture.snapshot.rpm,
                 static_cast<unsigned>(capture.snapshot.ram47),
                 renderer.draw_calls(), renderer.triangle_count(),
-                capture.events.size(), capture.event_overflow,
-                svg_path.c_str());
+                capture.events.size(), capture.event_overflow, svg_path.c_str(),
+                renderer.drawn_call_count());
     return 0;
 }

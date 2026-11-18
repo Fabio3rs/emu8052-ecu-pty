@@ -55,6 +55,27 @@ std::vector<unsigned char> decode_packaged_bytes(const std::string &path,
     }
     if (compressed.empty() || encoded.empty() || bits >= 6)
         return obj;
+    if (expected_size == 0) {
+        // Unknown size: grow until the stream fits (bounded at 64 MiB).
+        constexpr std::size_t kMaxBytes = 64U * 1024U * 1024U;
+        std::size_t capacity = compressed.size() * 4U + 4096U;
+        while (capacity <= kMaxBytes) {
+            obj.resize(capacity);
+            uLongf size = obj.size();
+            const int status =
+                uncompress(obj.data(), &size, compressed.data(),
+                           static_cast<uLong>(compressed.size()));
+            if (status == Z_OK) {
+                obj.resize(size);
+                return obj;
+            }
+            if (status != Z_BUF_ERROR)
+                break;
+            capacity *= 2U;
+        }
+        obj.clear();
+        return obj;
+    }
     obj.resize(expected_size);
     uLongf decoded_size = obj.size();
     if (uncompress(obj.data(), &decoded_size, compressed.data(),

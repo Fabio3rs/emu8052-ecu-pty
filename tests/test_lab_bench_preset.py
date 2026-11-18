@@ -25,7 +25,7 @@ def run(argv):
 
 headless = run([binary, rom, "--headless", "--bench-preset",
                 "--capture-tick", tick, "--capture-svg", str(svg)])
-assert "<polygon" in svg.read_text()
+assert "<path " in svg.read_text() and "<polygon" not in svg.read_text()
 pulses = [int(value) for value in re.findall(r"cc3_pulses=(\d+)", headless)]
 burns = [int(value) for value in re.findall(r'"burns":(\d+)', headless)]
 assert pulses and pulses[-1] > 0 and burns and burns[-1] > 0

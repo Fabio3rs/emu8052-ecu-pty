@@ -281,7 +281,7 @@ repeatable SVG and WAV without SDL, use
 The current scene uses documented bore, stroke, firing order and valve timing;
 rod length, valve lift and outer geometry are explicitly drawing estimates.
 The donor's piston and valve sections, radial rod-end and crank meshes,
-Silkscreen font, shader state, adapted Gauge and Oscilloscope objects, audio
+Silkscreen font (packaged; selectable, not yet the default face), shader state, adapted Gauge and Oscilloscope objects, audio
 filters and synthesizer are integrated. The full
 donor impulse WAV is archived losslessly; the runtime uses its first 2048
 samples (99.69% of the source energy). The original donor GPU backend is

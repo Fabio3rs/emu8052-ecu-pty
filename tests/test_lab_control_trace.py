@@ -40,7 +40,7 @@ result = subprocess.run(
 assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
 assert "[LAB-REPLAY] tick=1200000 controls=7 events=" in result.stdout
 assert saved.read_bytes() == pathlib.Path(trace).read_bytes()
-assert "<polygon" in svg.read_text()
+assert "<path " in svg.read_text() and "<polygon" not in svg.read_text()
 with wave.open(str(wav), "rb") as audio:
     assert audio.getframerate() == 44100
     assert audio.getnchannels() == 1 and audio.getsampwidth() == 2

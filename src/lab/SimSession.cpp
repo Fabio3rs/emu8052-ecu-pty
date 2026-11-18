@@ -1,7 +1,9 @@
 #include "lab/SimSession.hpp"
 
-#include "engine/ThrottleAssembly.hpp"
+#include <cstdio>
+
 #include "engine/Drivetrain.hpp"
+#include "engine/ThrottleAssembly.hpp"
 #include "lab/AcousticAdapter.hpp"
 #include "ma17/EmulatorLoop.hpp"
 #include "ma17/Runner.hpp"
@@ -20,9 +22,8 @@
 namespace lab {
 namespace {
 
-void append_archive_extrema(
-    const std::vector<ma17::EmulatorSnapshot> &pending,
-    std::deque<ma17::EmulatorSnapshot> &archive) {
+void append_archive_extrema(const std::vector<ma17::EmulatorSnapshot> &pending,
+                            std::deque<ma17::EmulatorSnapshot> &archive) {
     if (pending.empty())
         return;
     std::vector<bool> keep(pending.size(), false);
@@ -33,46 +34,53 @@ void append_archive_extrema(
         bool ma17::EmulatorSnapshot::*available;
         bool requires_exhaust_sample = false;
     };
-    constexpr std::array<Field, 20> fields{{
-        {&ma17::EmulatorSnapshot::vehicle_speed_kmh,
-         &ma17::EmulatorSnapshot::vehicle_speed_available},
-        {&ma17::EmulatorSnapshot::clutch_pressure,
-         &ma17::EmulatorSnapshot::drivetrain_available},
-        {&ma17::EmulatorSnapshot::clutch_crank_torque_nm,
-         &ma17::EmulatorSnapshot::drivetrain_available},
-        {&ma17::EmulatorSnapshot::clutch_heat_j,
-         &ma17::EmulatorSnapshot::drivetrain_available},
-        {&ma17::EmulatorSnapshot::rpm, &ma17::EmulatorSnapshot::crank_available},
-        {&ma17::EmulatorSnapshot::applied_load_nm,
-         &ma17::EmulatorSnapshot::crank_available},
-        {&ma17::EmulatorSnapshot::lambda,
-         &ma17::EmulatorSnapshot::crank_available, true},
-        {&ma17::EmulatorSnapshot::lambda_voltage_v,
-         &ma17::EmulatorSnapshot::crank_available},
-        {&ma17::EmulatorSnapshot::battery_supply_v,
-         &ma17::EmulatorSnapshot::battery_supply_available},
-        {&ma17::EmulatorSnapshot::tps_track1_v, &ma17::EmulatorSnapshot::tps_available},
-        {&ma17::EmulatorSnapshot::tps_track2_v, &ma17::EmulatorSnapshot::tps_available},
-        {&ma17::EmulatorSnapshot::throttle_angle_rad,
-         &ma17::EmulatorSnapshot::throttle_available},
-        {&ma17::EmulatorSnapshot::coolant_c, &ma17::EmulatorSnapshot::thermal_available},
-        {&ma17::EmulatorSnapshot::intake_air_c,
-         &ma17::EmulatorSnapshot::thermal_available},
-        {&ma17::EmulatorSnapshot::thermostat_open_fraction,
-         &ma17::EmulatorSnapshot::thermal_available},
-        {&ma17::EmulatorSnapshot::manifold_pressure_pa,
-         &ma17::EmulatorSnapshot::intake_available},
-        {&ma17::EmulatorSnapshot::air_in_kg_s, &ma17::EmulatorSnapshot::intake_available},
-        {&ma17::EmulatorSnapshot::fuel_film_kg, &ma17::EmulatorSnapshot::intake_available},
-        {&ma17::EmulatorSnapshot::fuel_vapor_kg,
-         &ma17::EmulatorSnapshot::intake_available},
-        {&ma17::EmulatorSnapshot::idle_stem_m,
-         &ma17::EmulatorSnapshot::idle_bridge_candidate}}};
+    constexpr std::array<Field, 20> fields{
+        {{&ma17::EmulatorSnapshot::vehicle_speed_kmh,
+          &ma17::EmulatorSnapshot::vehicle_speed_available},
+         {&ma17::EmulatorSnapshot::clutch_pressure,
+          &ma17::EmulatorSnapshot::drivetrain_available},
+         {&ma17::EmulatorSnapshot::clutch_crank_torque_nm,
+          &ma17::EmulatorSnapshot::drivetrain_available},
+         {&ma17::EmulatorSnapshot::clutch_heat_j,
+          &ma17::EmulatorSnapshot::drivetrain_available},
+         {&ma17::EmulatorSnapshot::rpm,
+          &ma17::EmulatorSnapshot::crank_available},
+         {&ma17::EmulatorSnapshot::applied_load_nm,
+          &ma17::EmulatorSnapshot::crank_available},
+         {&ma17::EmulatorSnapshot::lambda,
+          &ma17::EmulatorSnapshot::crank_available, true},
+         {&ma17::EmulatorSnapshot::lambda_voltage_v,
+          &ma17::EmulatorSnapshot::crank_available},
+         {&ma17::EmulatorSnapshot::battery_supply_v,
+          &ma17::EmulatorSnapshot::battery_supply_available},
+         {&ma17::EmulatorSnapshot::tps_track1_v,
+          &ma17::EmulatorSnapshot::tps_available},
+         {&ma17::EmulatorSnapshot::tps_track2_v,
+          &ma17::EmulatorSnapshot::tps_available},
+         {&ma17::EmulatorSnapshot::throttle_angle_rad,
+          &ma17::EmulatorSnapshot::throttle_available},
+         {&ma17::EmulatorSnapshot::coolant_c,
+          &ma17::EmulatorSnapshot::thermal_available},
+         {&ma17::EmulatorSnapshot::intake_air_c,
+          &ma17::EmulatorSnapshot::thermal_available},
+         {&ma17::EmulatorSnapshot::thermostat_open_fraction,
+          &ma17::EmulatorSnapshot::thermal_available},
+         {&ma17::EmulatorSnapshot::manifold_pressure_pa,
+          &ma17::EmulatorSnapshot::intake_available},
+         {&ma17::EmulatorSnapshot::air_in_kg_s,
+          &ma17::EmulatorSnapshot::intake_available},
+         {&ma17::EmulatorSnapshot::fuel_film_kg,
+          &ma17::EmulatorSnapshot::intake_available},
+         {&ma17::EmulatorSnapshot::fuel_vapor_kg,
+          &ma17::EmulatorSnapshot::intake_available},
+         {&ma17::EmulatorSnapshot::idle_stem_m,
+          &ma17::EmulatorSnapshot::idle_bridge_candidate}}};
     constexpr std::array<std::size_t, 6> adc_channels{0, 1, 2, 3, 5, 6};
     const auto valid_field = [](const ma17::EmulatorSnapshot &sample,
                                 const Field &field) {
         return sample.*field.available &&
-               (!field.requires_exhaust_sample || sample.exhaust_sample_available) &&
+               (!field.requires_exhaust_sample ||
+                sample.exhaust_sample_available) &&
                std::isfinite(sample.*field.value);
     };
     const auto valid_adc = [](const ma17::EmulatorSnapshot &sample,
@@ -108,15 +116,15 @@ void append_archive_extrema(
         for (std::size_t index = 0; index < pending.size(); ++index) {
             if (!valid_adc(pending[index], channel))
                 continue;
-            const double value = pending[index].adc_last_conversion[channel]
-                                     .pin_voltage_v;
+            const double value =
+                pending[index].adc_last_conversion[channel].pin_voltage_v;
             if (minimum == pending.size() ||
-                value < pending[minimum].adc_last_conversion[channel]
-                            .pin_voltage_v)
+                value <
+                    pending[minimum].adc_last_conversion[channel].pin_voltage_v)
                 minimum = index;
             if (maximum == pending.size() ||
-                value > pending[maximum].adc_last_conversion[channel]
-                            .pin_voltage_v)
+                value >
+                    pending[maximum].adc_last_conversion[channel].pin_voltage_v)
                 maximum = index;
         }
         if (minimum != pending.size()) {
@@ -149,12 +157,13 @@ void append_archive_extrema(
                 pending[index - 1].drivetrain_available ||
             (pending[index].drivetrain_available &&
              pending[index].transmission_gear !=
-                pending[index - 1].transmission_gear)) {
+                 pending[index - 1].transmission_gear)) {
             keep[index - 1] = true;
             keep[index] = true;
         }
         for (const std::size_t channel : adc_channels) {
-            const auto &before = pending[index - 1].adc_last_conversion[channel];
+            const auto &before =
+                pending[index - 1].adc_last_conversion[channel];
             const auto &after = pending[index].adc_last_conversion[channel];
             if (valid_adc(pending[index - 1], channel) !=
                 valid_adc(pending[index], channel)) {
@@ -216,12 +225,12 @@ const char *control_name(ControlType type) {
 bool parse_control_name(const std::string &name, ControlType &type) {
     for (ControlType candidate :
          {ControlType::Pedal, ControlType::Load, ControlType::VehicleSpeed,
-          ControlType::Starter,
-          ControlType::Key, ControlType::Pause, ControlType::Resume,
-          ControlType::StepTicks, ControlType::StepIgnition,
-          ControlType::StepInjector, ControlType::StepSpark,
-          ControlType::StepCombustion, ControlType::StepMisfire,
-          ControlType::StepLamp, ControlType::Gear, ControlType::ClutchPressure}) {
+          ControlType::Starter, ControlType::Key, ControlType::Pause,
+          ControlType::Resume, ControlType::StepTicks,
+          ControlType::StepIgnition, ControlType::StepInjector,
+          ControlType::StepSpark, ControlType::StepCombustion,
+          ControlType::StepMisfire, ControlType::StepLamp, ControlType::Gear,
+          ControlType::ClutchPressure}) {
         if (name == control_name(candidate)) {
             type = candidate;
             return true;
@@ -501,8 +510,8 @@ void SimSession::set_load(double torque_nm) {
 }
 
 void SimSession::set_vehicle_speed(double kmh) {
-    schedule_control({0, ControlType::VehicleSpeed,
-                      std::clamp(kmh, 0.0, 200.0)});
+    schedule_control(
+        {0, ControlType::VehicleSpeed, std::clamp(kmh, 0.0, 200.0)});
 }
 
 void SimSession::set_starter(bool engaged) {
@@ -548,6 +557,10 @@ bool SimSession::latest(ma17::EmulatorSnapshot &snapshot) const {
     if (!has_snapshot_)
         return false;
     snapshot = snapshot_;
+    if (faulted_.load()) {
+        snapshot.simulation_fault = true;
+        snapshot.drivetrain_available = false;
+    }
     return true;
 }
 
@@ -561,12 +574,12 @@ SimSession::snapshot_window(long long first_tick) const {
             [](const auto &sample, long long tick) {
                 return sample.tick < tick;
             });
-        const auto archive_end = std::lower_bound(
-            archive_first, snapshot_archive_.end(),
-            snapshot_history_.front().tick,
-            [](const auto &sample, long long tick) {
-                return sample.tick < tick;
-            });
+        const auto archive_end =
+            std::lower_bound(archive_first, snapshot_archive_.end(),
+                             snapshot_history_.front().tick,
+                             [](const auto &sample, long long tick) {
+                                 return sample.tick < tick;
+                             });
         result.insert(result.end(), archive_first, archive_end);
     }
     const auto first = std::lower_bound(
@@ -667,7 +680,8 @@ void SimSession::receive_snapshot(const ma17::EmulatorSnapshot &snapshot,
         if (!self.archive_pending_.empty() &&
             snapshot.tick - self.archive_pending_.front().tick >=
                 archive_step_ticks) {
-            append_archive_extrema(self.archive_pending_, self.snapshot_archive_);
+            append_archive_extrema(self.archive_pending_,
+                                   self.snapshot_archive_);
             self.archive_pending_.clear();
         }
         self.archive_pending_.push_back(snapshot);
@@ -777,6 +791,8 @@ void SimSession::receive_event(const ma17::EmulatorEvent &event,
 
 void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
     auto &self = *static_cast<SimSession *>(raw);
+    if (self.loop_hook_)
+        self.loop_hook_();
     std::unique_lock lock(self.mutex_);
     if (!self.loop_context_) {
         self.loop_context_ = &context;
@@ -932,11 +948,38 @@ void SimSession::run() {
     argv.reserve(args_.size());
     for (auto &arg : args_)
         argv.push_back(arg.data());
-    result_.store(ma17::run_cli(
-        static_cast<int>(argv.size()), argv.data(),
-        {receive_snapshot, receive_event, this, &cancel_, apply_controls}));
+    // The physics models (Drivetrain, ClutchCoupling, CrankDynamics) reject
+    // invalid input with exceptions. On this worker thread an uncaught one
+    // would call std::terminate, so stop the simulation and publish why.
+    try {
+        result_.store(ma17::run_cli(
+            static_cast<int>(argv.size()), argv.data(),
+            {receive_snapshot, receive_event, this, &cancel_, apply_controls}));
+    } catch (const std::exception &error) {
+        record_fault(error.what());
+        result_.store(1);
+    } catch (...) {
+        record_fault("unknown simulation exception");
+        result_.store(1);
+    }
     finished_.store(true);
     wake_.notify_all();
+}
+
+void SimSession::record_fault(const char *reason) {
+    {
+        std::lock_guard lock(mutex_);
+        fault_reason_ = reason ? reason : "unknown";
+        paused_ = true;
+        ++pace_generation_;
+    }
+    faulted_.store(true);
+    std::fprintf(stderr, "[LAB-SIM-FAULT] %s\n", fault_reason().c_str());
+}
+
+std::string SimSession::fault_reason() const {
+    std::lock_guard lock(mutex_);
+    return fault_reason_;
 }
 
 } // namespace lab

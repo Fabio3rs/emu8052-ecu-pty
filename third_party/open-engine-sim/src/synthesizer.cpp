@@ -320,7 +320,7 @@ void Synthesizer::endInputBlock() {
     }
 
     if (m_inputChannelCount != 0) m_latency = m_inputChannels[0].data.size();
-    
+
     m_inputSamplesRead = 0;
     m_processed = false;
 
@@ -359,7 +359,7 @@ void Synthesizer::renderAudio() {
     for (int i = 0; i < m_inputChannelCount; ++i) {
         m_inputChannels[i].data.read(n, m_inputChannels[i].transferBuffer);
     }
-    
+
     m_inputSamplesRead = n;
     m_processed = true;
 

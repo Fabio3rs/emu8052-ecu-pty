@@ -27,6 +27,9 @@ class Gauge {
     void reset(float value);
     float needlePosition() const { return m_needlePosition; }
     float angleForFraction(float fraction) const;
+    // Sweep angle for a position that already includes gamma
+    // (needlePosition()).
+    float angleForPosition(float position) const;
     bool isMajorTick(int offset) const;
     bool showsTick(int offset) const;
 

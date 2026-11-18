@@ -911,7 +911,7 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                               r"first=(\d+) last=(\d+)", output)
             assert saved and saved[2] == "10", output[-1000:]
             lines = Path(saved[1]).read_text().splitlines()
-            assert any("idle_stem|HASTE|mm|candidate idle-actuator bridge"
+            assert any("idle_stem|IDLE STEM|mm|candidate idle-actuator bridge"
                        in line for line in lines)
             data = list(csv.DictReader(line for line in lines
                                        if not line.startswith("#")))
@@ -1046,10 +1046,13 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                 chunks.append((kind, payload))
                 offset += length + 12
             assert offset == len(panel_bytes)
-            text_chunks = [payload for kind, payload in chunks if kind == b"tEXt"]
-            assert len(text_chunks) == 1
-            keyword, panel_metadata = text_chunks[0].split(b"\0", 1)
-            assert keyword == b"SEVEL Scope"
+            text_chunks = {payload.split(b"\0", 1)[0]: payload.split(b"\0", 1)[1]
+                           for kind, payload in chunks if kind == b"tEXt"}
+            # Every saved PNG records the UI face; the scope panel adds its own.
+            assert sorted(text_chunks) == [b"SEVEL Font", b"SEVEL Scope"], \
+                sorted(text_chunks)
+            assert text_chunks[b"SEVEL Font"].startswith(b"Silkscreen sha256=")
+            keyword, panel_metadata = b"SEVEL Scope", text_chunks[b"SEVEL Scope"]
             for expected in (b"# rom_fnv64=", b"# scenario_arg_0=",
                              b"# channel_0=tps_track1", b"# selection_first_tick=",
                              b"# view_last_tick=", b"# trigger_mode=off"):
@@ -1136,8 +1139,10 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                 "scope heading overlaps FIT Y", title_pixels, overlap_pixels)
         if radial_mode == "coolant-underrange":
             assert (width, height) in ((1920, 1080), (900, 620))
+            # B.5: the LOW marker is an arrow plus label at the lower-left end of
+            # the dial scale (not a corner label), clear of the numeric value.
             if width == 1920:
-                marker_rows, marker_columns = range(285, 306), range(15, 75)
+                marker_rows, marker_columns = range(283, 306), range(140, 190)
                 value_columns = range(180, 275)
             else:
                 marker_rows, marker_columns = range(292, 310), range(598, 632)
@@ -1147,7 +1152,8 @@ with tempfile.TemporaryFile(mode="w+") as log, \
             value_pixels = 0
             lambda_top_pixels = 0
             lambda_bottom_pixels = 0
-            for row in range(610 if width == 900 else 310):
+            lambda_value_pixels = 0
+            for row in range(611 if width == 900 else 310):
                 kind = scanlines[row * stride]
                 encoded = scanlines[row * stride + 1:(row + 1) * stride]
                 pixels = bytearray(width * 4)
@@ -1172,25 +1178,30 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                     value_pixels += sum(
                         min(pixels[4 * x:4 * x + 3]) >= 190
                         for x in value_columns)
-                if width == 900 and 556 <= row < 574:
+                if width == 900 and 589 <= row < 600:
+                    # lambda "LOW" label, above-left of its arrow
                     lambda_top_pixels += sum(
                         pixels[4 * x] >= 190 and pixels[4 * x + 1] < 120
                         and pixels[4 * x + 2] < 120
-                        for x in range(598, 631))
-                if width == 900 and 591 <= row < 610:
+                        for x in range(590, 614))
+                if width == 900 and 598 <= row < 611:
+                    # the numeric value must carry no red marker/needle pixels
                     lambda_bottom_pixels += sum(
                         pixels[4 * x] >= 190 and pixels[4 * x + 1] < 120
                         and pixels[4 * x + 2] < 120
-                        # The donor-width needle reaches the right edge here.
-                        for x in range(598, 615))
+                        for x in range(611, 640))
+                    lambda_value_pixels += sum(
+                        min(pixels[4 * x:4 * x + 3]) >= 190
+                        for x in range(611, 640))
                 previous = pixels
             assert low_pixels > 8 and value_pixels > 15, (
                 "coolant LOW marker or numeric value missing",
                 low_pixels, value_pixels)
             if width == 900:
-                assert lambda_top_pixels > 20 and lambda_bottom_pixels < 12, (
-                    "lambda LOW marker overlaps its numeric value",
-                    lambda_top_pixels, lambda_bottom_pixels)
+                assert (lambda_top_pixels > 20 and lambda_value_pixels > 15 and
+                        lambda_bottom_pixels == 0), (
+                    "lambda LOW marker missing or overlapping its numeric value",
+                    lambda_top_pixels, lambda_value_pixels, lambda_bottom_pixels)
         # A resize must produce a cleared frame, not a transparent new area.
         previous_alpha = 0
         for row in range(height):

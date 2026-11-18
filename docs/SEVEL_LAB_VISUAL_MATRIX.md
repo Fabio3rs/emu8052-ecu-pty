@@ -93,3 +93,28 @@ Reproduce the stopped/idle/replay/high-load frames with
 `LabCapture.PausedReplay1920x1080` refreshes the paused frame. NativeLab
 passed five focused stopped, Full HD, high-load and paused-replay capture
 tests after the current GUI changes.
+
+## Renderização por hardware (offscreen) — 2026-11-18
+
+Ambiente medido pelo NativeLab: `/dev/dri/renderD128` acessível (ACL
+`user:fabio:rw-`), Vulkan com `GPU0 = Radeon RX 7900 XTX (RADV NAVI31)` e
+`GPU1 = llvmpipe`. Sem `DISPLAY`/Wayland e sem `card*` exposto no NativeLab.
+
+| Backend | Comando | Renderer | Dispositivo medido |
+| --- | --- | --- | --- |
+| Xvfb (padrão dos `LabCapture.*`) | `SDL_VIDEODRIVER=x11 xvfb-run -a …` | `opengl` | `llvmpipe` (CPU); Vulkan falha: "No DRI3 support" |
+| **SDL offscreen (hardware)** | `SDL_VIDEODRIVER=offscreen …` | `opengl` (padrão) | **Radeon RX 7900 XTX (radeonsi, navi31)** |
+| SDL offscreen + GLES | `SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengles2` | `opengles2` | RX 7900 XTX |
+| SDL offscreen + Vulkan | `SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=vulkan` | `vulkan` | RX 7900 XTX (dispositivo físico ligado; sem string, `device=n/a` no log) |
+
+- O Lab imprime `[LAB-VIDEO] renderer=… video=… device=…`; `device` vem de
+  `GL_RENDERER` e é `n/a` para renderers não-GL.
+- Teste: `LabCapture.HardwareGpu` (`tests/test_lab_hardware_gpu.py`) exige
+  `video=offscreen`, renderer ≠ `software` e dispositivo ≠ llvmpipe/softpipe/
+  swrast; pula (código 77) sem render node. Controle negativo com
+  `LIBGL_ALWAYS_SOFTWARE=1` reprova com `llvmpipe`.
+- Evidência: `.work/gui-review/goal/gpu/` (sonda `sdl_probe.c`, logs e PNGs
+  `offscreen-*.png` x `xvfb-default.png`).
+- Limite: o offscreen não exercita apresentação em janela, redimensionamento,
+  fullscreen nem entrada de mouse; esses cenários (G.1) continuam no Xvfb ou
+  exigem sessão gráfica real com `card1`.

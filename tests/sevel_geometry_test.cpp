@@ -7,6 +7,8 @@
 #include "lab/SevelTransmission.hpp"
 #include "lab/SevelValves.hpp"
 
+#include "lab/SpeedReading.hpp"
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -17,7 +19,8 @@ namespace {
 
 constexpr double pi = 3.14159265358979323846;
 
-TEST(DrivetrainExport, PreservesReverseAndSignedTorqueWithExplicitAvailability) {
+TEST(DrivetrainExport,
+     PreservesReverseAndSignedTorqueWithExplicitAvailability) {
     ma17::EmulatorSnapshot sample;
     sample.drivetrain_available = true;
     sample.vehicle_speed_available = true;
@@ -31,13 +34,15 @@ TEST(DrivetrainExport, PreservesReverseAndSignedTorqueWithExplicitAvailability) 
     EXPECT_EQ(row.str(), ",1,-12.5,-1,0.25,-45.5,123.75");
     std::ostringstream header;
     lab::write_drivetrain_csv_header(header);
-    EXPECT_NE(header.str().find("physical_vehicle_speed_kmh"), std::string::npos);
+    EXPECT_NE(header.str().find("physical_vehicle_speed_kmh"),
+              std::string::npos);
     EXPECT_NE(header.str().find("clutch_heat_J"), std::string::npos);
 }
 
 TEST(DrivetrainExport, MissingOrInvalidValuesRemainEmpty) {
     ma17::EmulatorSnapshot sample;
-    sample.vehicle_speed_kmh = 100.0; // Scenario input is not physical evidence.
+    sample.vehicle_speed_kmh =
+        100.0; // Scenario input is not physical evidence.
     std::ostringstream missing;
     lab::write_drivetrain_csv_row(missing, sample);
     EXPECT_EQ(missing.str(), ",0,,,,,");
@@ -52,8 +57,8 @@ TEST(DrivetrainExport, MissingOrInvalidValuesRemainEmpty) {
 }
 
 TEST(SevelTransmission, RecomputesOverallRatiosFromGearAndFinalDrive) {
-    constexpr std::array<double, 5> expected{
-        15.3916875, 8.812125, 6.0676875, 4.55175, 3.5083125};
+    constexpr std::array<double, 5> expected{15.3916875, 8.812125, 6.0676875,
+                                             4.55175, 3.5083125};
     EXPECT_DOUBLE_EQ(lab::transmission::final_drive_ratio, 3.9375);
     EXPECT_DOUBLE_EQ(lab::transmission::overall_ratio(0), 0.0);
     EXPECT_DOUBLE_EQ(lab::transmission::overall_ratio(6), 0.0);
@@ -62,19 +67,59 @@ TEST(SevelTransmission, RecomputesOverallRatiosFromGearAndFinalDrive) {
                     expected[static_cast<std::size_t>(gear - 1)], 1e-9);
 }
 
+TEST(SevelTransmission, ReverseSpeedShowsMagnitudeWithRMarker) {
+    const auto reverse = lab::speed_reading(-12.4, "KM/H");
+    EXPECT_TRUE(reverse.reversing);
+    EXPECT_DOUBLE_EQ(reverse.dial_value, 12.4); // never a negative needle value
+    EXPECT_EQ(reverse.text, "R 12 KM/H");
+    const auto forward = lab::speed_reading(37.6, "KM/H");
+    EXPECT_FALSE(forward.reversing);
+    EXPECT_EQ(forward.text, "38 KM/H");
+    // Standing still and a nonfinite value are not "reverse".
+    EXPECT_FALSE(lab::speed_reading(0.0, "KM/H").reversing);
+    EXPECT_FALSE(lab::speed_reading(-0.0, "KM/H").reversing);
+    EXPECT_FALSE(lab::speed_reading(std::nan(""), "KM/H").reversing);
+}
+
+TEST(SevelTransmission, ManualPagesDisagreeForGears3To5) {
+    // Fiat Tipo manual B.500.837 p. 21 ("Relacao nas rodas"), transcribed from
+    // PhotosECU/manual_cambio_2.png; see docs/SEVEL_LAB_CHANNEL_MAP.md.
+    constexpr std::array<double, 5> manual_wheel_ratio{15.393, 8.813, 5.784,
+                                                       4.107, 3.343};
+    for (int gear : {1, 2})
+        EXPECT_NEAR(lab::transmission::overall_ratio(gear),
+                    manual_wheel_ratio[static_cast<std::size_t>(gear - 1)],
+                    0.005)
+            << "gear " << gear;
+    EXPECT_NEAR(-lab::transmission::overall_ratio(-1), 15.393, 0.005);
+    // Gears 3-5: the code follows p. 20 (1.541/1.156/0.891) but p. 21 implies
+    // 1.469/1.043/0.849. The gap is intentional until the owner chooses; when
+    // the ratios are changed this test must be updated together with a new
+    // physical baseline.
+    for (int gear : {3, 4, 5}) {
+        const double gap =
+            lab::transmission::overall_ratio(gear) -
+            manual_wheel_ratio[static_cast<std::size_t>(gear - 1)];
+        // 0.28 / 0.45 / 0.17: far above the manual's 3-decimal rounding.
+        EXPECT_GT(gap, 0.1) << "gear " << gear;
+    }
+}
+
 TEST(SevelTransmission, CalculatesIdealWheelRpmWithoutRoadSpeedClaim) {
     EXPECT_DOUBLE_EQ(*lab::transmission::wheel_rpm(0.0, 1), 0.0);
     EXPECT_FALSE(lab::transmission::wheel_rpm(1000.0, 0).has_value());
     EXPECT_FALSE(lab::transmission::wheel_rpm(1000.0, 6).has_value());
     EXPECT_FALSE(lab::transmission::wheel_rpm(-100.0, 1).has_value());
     EXPECT_FALSE(lab::transmission::wheel_rpm(
-        std::numeric_limits<double>::quiet_NaN(), 1).has_value());
-    EXPECT_FALSE(lab::transmission::wheel_rpm(
-        std::numeric_limits<double>::infinity(), 1).has_value());
-    EXPECT_NEAR(*lab::transmission::wheel_rpm(1000.0, 1),
-                1000.0 / 15.3916875, 1e-9);
-    EXPECT_NEAR(*lab::transmission::wheel_rpm(1000.0, 5),
-                1000.0 / 3.5083125, 1e-9);
+                     std::numeric_limits<double>::quiet_NaN(), 1)
+                     .has_value());
+    EXPECT_FALSE(
+        lab::transmission::wheel_rpm(std::numeric_limits<double>::infinity(), 1)
+            .has_value());
+    EXPECT_NEAR(*lab::transmission::wheel_rpm(1000.0, 1), 1000.0 / 15.3916875,
+                1e-9);
+    EXPECT_NEAR(*lab::transmission::wheel_rpm(1000.0, 5), 1000.0 / 3.5083125,
+                1e-9);
 }
 
 TEST(SevelTransmission, CalculatesEngagedClutchSpeedReference) {
@@ -86,8 +131,8 @@ TEST(SevelTransmission, CalculatesEngagedClutchSpeedReference) {
     EXPECT_FALSE(lab::transmission::ideal_speed_kmh(1000.0, 1, 0.0));
     EXPECT_FALSE(lab::transmission::ideal_speed_kmh(
         std::numeric_limits<double>::infinity(), 1, radius));
-    EXPECT_FALSE(lab::transmission::ideal_speed_kmh(1000.0, 1,
-        std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(lab::transmission::ideal_speed_kmh(
+        1000.0, 1, std::numeric_limits<double>::quiet_NaN()));
 }
 
 TEST(SevelTransmission, ReflectedInertiaPreservesVehicleEnergyAcrossGears) {
@@ -95,16 +140,16 @@ TEST(SevelTransmission, ReflectedInertiaPreservesVehicleEnergyAcrossGears) {
     // during shifts by changing shaft speed along with reflected inertia.
     constexpr double mass = 1000.0, radius = 0.29, speed = 20.0;
     for (const int gear : {-1, 1, 2, 3, 4, 5}) {
-        const auto inertia = engine::transmission::reflected_inertia_kg_m2(
-            mass, gear, radius);
+        const auto inertia =
+            engine::transmission::reflected_inertia_kg_m2(mass, gear, radius);
         ASSERT_TRUE(inertia);
-        const double omega = speed *
-            engine::transmission::overall_ratio(gear) / radius;
-        EXPECT_NEAR(0.5 * *inertia * omega * omega,
-                    0.5 * mass * speed * speed, 1e-8);
+        const double omega =
+            speed * engine::transmission::overall_ratio(gear) / radius;
+        EXPECT_NEAR(0.5 * *inertia * omega * omega, 0.5 * mass * speed * speed,
+                    1e-8);
         for (const double force : {-1000.0, 0.0, 1000.0}) {
-            const auto torque = engine::transmission::reflected_torque_nm(
-                force, gear, radius);
+            const auto torque =
+                engine::transmission::reflected_torque_nm(force, gear, radius);
             ASSERT_TRUE(torque);
             EXPECT_NEAR(*torque * omega, force * speed, 1e-9);
         }
@@ -118,17 +163,17 @@ TEST(SevelTransmission, ReflectedLoadsRejectDisconnectedAndInvalidInputs) {
         EXPECT_FALSE(reflected_inertia_kg_m2(1000.0, gear, 0.29));
         EXPECT_FALSE(reflected_torque_nm(1000.0, gear, 0.29));
     }
-    for (const double invalid : {0.0, -1.0,
-             std::numeric_limits<double>::quiet_NaN(),
-             std::numeric_limits<double>::infinity()}) {
+    for (const double invalid :
+         {0.0, -1.0, std::numeric_limits<double>::quiet_NaN(),
+          std::numeric_limits<double>::infinity()}) {
         EXPECT_FALSE(reflected_inertia_kg_m2(invalid, 1, 0.29));
         EXPECT_FALSE(reflected_inertia_kg_m2(1000.0, 1, invalid));
         EXPECT_FALSE(reflected_torque_nm(1000.0, 1, invalid));
     }
-    EXPECT_FALSE(reflected_torque_nm(
-        std::numeric_limits<double>::quiet_NaN(), 1, 0.29));
-    EXPECT_FALSE(reflected_torque_nm(
-        std::numeric_limits<double>::infinity(), 1, 0.29));
+    EXPECT_FALSE(
+        reflected_torque_nm(std::numeric_limits<double>::quiet_NaN(), 1, 0.29));
+    EXPECT_FALSE(
+        reflected_torque_nm(std::numeric_limits<double>::infinity(), 1, 0.29));
 }
 
 TEST(SevelTransmission, ReverseChangesDirectionWithoutNegativeInertia) {
@@ -145,7 +190,7 @@ TEST(SevelTransmission, ReverseChangesDirectionWithoutNegativeInertia) {
     // positive engine shaft rotation through the negative ratio.
     EXPECT_LT(*reflected_torque_nm(1000.0, -1, 0.29), 0.0);
     EXPECT_FALSE(ideal_speed_kmh(std::numeric_limits<double>::max(), -1,
-                               std::numeric_limits<double>::max()));
+                                 std::numeric_limits<double>::max()));
 }
 
 TEST(ScopeCursor, SelectsRecordedSampleInsideVisibleWindow) {
@@ -167,8 +212,7 @@ TEST(ScopeCursor, SelectsRecordedSampleInsideVisibleWindow) {
     EXPECT_EQ(lab::nearest_scope_sample(samples, 250, 250, 300), 2U);
     EXPECT_EQ(lab::nearest_scope_sample(samples, 500000, 0, 900000),
               std::nullopt);
-    EXPECT_EQ(lab::nearest_scope_sample(samples, 900000, 0, 900000),
-              3U);
+    EXPECT_EQ(lab::nearest_scope_sample(samples, 900000, 0, 900000), 3U);
 }
 
 TEST(ScopeCursor, FormatsRecordedValuesUnitsAndMissingChannels) {
@@ -182,9 +226,9 @@ TEST(ScopeCursor, FormatsRecordedValuesUnitsAndMissingChannels) {
               "B 1.500 s  1.50V / 2.00V / 4.50deg");
     EXPECT_EQ(lab::format_scope_cursor_row('B', std::nullopt, last, units),
               "B NO SAMPLE");
-    EXPECT_EQ(lab::format_scope_cursor_delta(990000LL, 1485000LL,
-                                             first, last, units),
-              "DT 500.00 ms  D1 +0.30V  D2 --  D3 -0.50deg");
+    EXPECT_EQ(
+        lab::format_scope_cursor_delta(990000LL, 1485000LL, first, last, units),
+        "DT 500.00 ms  D1 +0.30V  D2 --  D3 -0.50deg");
 }
 
 TEST(DigitalPulseMeasurements, UsesRecordedEdgesRatherThanVisualPulseWidth) {
@@ -236,33 +280,33 @@ TEST(DigitalPulseMeasurements, CursorSnapsToOriginalPinEdge) {
     EXPECT_FALSE(b->high);
     EXPECT_EQ(lab::nearest_digital_edge(events, 0, 150, 0, 200, 10),
               std::nullopt);
-    EXPECT_EQ(lab::nearest_digital_edge(events, 1, 101, 0, 200, 10)->tick,
-              102);
+    EXPECT_EQ(lab::nearest_digital_edge(events, 1, 101, 0, 200, 10)->tick, 102);
 }
 
 TEST(DigitalPulseMeasurements, IdleCursorUsesFirstValidChangedSample) {
     std::array<ma17::EmulatorSnapshot, 8> history{};
-    constexpr std::array<long long, 8> ticks{
-        10, 20, 30, 40, 50, 300000, 300010, 300020};
-    constexpr std::array<bool, 8> closed{
-        false, false, true, false, true, false, true, false};
+    constexpr std::array<long long, 8> ticks{10, 20,     30,     40,
+                                             50, 300000, 300010, 300020};
+    constexpr std::array<bool, 8> closed{false, false, true, false,
+                                         true,  false, true, false};
     for (std::size_t i = 0; i < history.size(); ++i) {
         history[i].tick = ticks[i];
         history[i].throttle_available = true;
         history[i].idle_contact_closed = closed[i];
     }
     history[3].throttle_available = false;
-    const auto closed_edge = lab::nearest_idle_sample_transition(
-        history, 29, 0, 50, 10);
+    const auto closed_edge =
+        lab::nearest_idle_sample_transition(history, 29, 0, 50, 10);
     ASSERT_TRUE(closed_edge.has_value());
     EXPECT_EQ(closed_edge->tick, 30);
     EXPECT_TRUE(closed_edge->high);
-    EXPECT_FALSE(lab::nearest_idle_sample_transition(
-        history, 50, 0, 50, 0).has_value());
-    EXPECT_FALSE(lab::nearest_idle_sample_transition(
-        history, 300000, 0, 300000, 0).has_value());
-    const auto reopened = lab::nearest_idle_sample_transition(
-        history, 300020, 300015, 300020, 0);
+    EXPECT_FALSE(
+        lab::nearest_idle_sample_transition(history, 50, 0, 50, 0).has_value());
+    EXPECT_FALSE(
+        lab::nearest_idle_sample_transition(history, 300000, 0, 300000, 0)
+            .has_value());
+    const auto reopened =
+        lab::nearest_idle_sample_transition(history, 300020, 300015, 300020, 0);
     ASSERT_TRUE(reopened.has_value());
     EXPECT_EQ(reopened->tick, 300020);
     EXPECT_FALSE(reopened->high);
@@ -286,8 +330,7 @@ TEST(DigitalScopeExport, SelectsOriginalEventsAndObservedContactChanges) {
         history[i].throttle_available = true;
     }
     history[2].throttle_available = false;
-    const auto rows = lab::selected_digital_records(events, history,
-                                                     100, 180);
+    const auto rows = lab::selected_digital_records(events, history, 100, 180);
     ASSERT_EQ(rows.size(), 4U);
     EXPECT_EQ(rows[0].tick, 110);
     EXPECT_EQ(rows[0].event->type, EmulatorEventType::InjectorPin);
@@ -304,25 +347,27 @@ TEST(DigitalScopeExport, SelectsOriginalEventsAndObservedContactChanges) {
 TEST(AnalogTrigger, UsesSourceTicksAndRequiresValidAdjacentSamples) {
     std::array<ma17::EmulatorSnapshot, 8> samples{};
     constexpr std::array<double, 8> values{0.2, 1.2, 0.2, 1.3,
-                                            0.1, 1.4, 0.1, 1.5};
-    constexpr std::array<long long, 8> ticks{10, 20, 30, 40,
+                                           0.1, 1.4, 0.1, 1.5};
+    constexpr std::array<long long, 8> ticks{10, 20,     30,     40,
                                              50, 400000, 400010, 400020};
     for (std::size_t i = 0; i < samples.size(); ++i) {
         samples[i].tick = ticks[i];
         samples[i].tps_track1_v = values[i];
         samples[i].tps_available = true;
     }
-    const auto value_of = [](const ma17::EmulatorSnapshot &sample)
-        -> std::optional<double> {
+    const auto value_of =
+        [](const ma17::EmulatorSnapshot &sample) -> std::optional<double> {
         if (!sample.tps_available)
             return std::nullopt;
         return sample.tps_track1_v;
     };
     using lab::TriggerSlope;
     EXPECT_EQ(lab::latest_analog_trigger(samples, value_of, 1.0,
-                                         TriggerSlope::Rising, 0, 50), 40);
+                                         TriggerSlope::Rising, 0, 50),
+              40);
     EXPECT_EQ(lab::latest_analog_trigger(samples, value_of, 1.0,
-                                         TriggerSlope::Falling, 0, 50), 50);
+                                         TriggerSlope::Falling, 0, 50),
+              50);
     EXPECT_EQ(lab::latest_analog_trigger(samples, value_of, 1.0,
                                          TriggerSlope::Rising, 41, 400010),
               std::nullopt);
@@ -330,9 +375,9 @@ TEST(AnalogTrigger, UsesSourceTicksAndRequiresValidAdjacentSamples) {
     EXPECT_EQ(lab::latest_analog_trigger(samples, value_of, 1.0,
                                          TriggerSlope::Rising, 21, 40),
               std::nullopt);
-    EXPECT_EQ(lab::latest_analog_trigger(samples, value_of,
-                                         std::numeric_limits<double>::quiet_NaN(),
-                                         TriggerSlope::Rising, 0, 50),
+    EXPECT_EQ(lab::latest_analog_trigger(
+                  samples, value_of, std::numeric_limits<double>::quiet_NaN(),
+                  TriggerSlope::Rising, 0, 50),
               std::nullopt);
 }
 
@@ -346,30 +391,91 @@ TEST(AnalogTrigger, SingleSelectsFirstEligibleCrossingAcrossFrameBatches) {
     for (std::size_t i = 0; i < events.size(); ++i)
         events[i] = {static_cast<long long>(i + 1) * 20,
                      ma17::EmulatorEventType::IgnitionPin, 0, true};
-    const auto value = [](const ma17::EmulatorSnapshot &sample)
-        -> std::optional<double> { return sample.tps_track1_v; };
+    const auto value =
+        [](const ma17::EmulatorSnapshot &sample) -> std::optional<double> {
+        return sample.tps_track1_v;
+    };
     for (const long long frame_end : {40LL, 60LL, 80LL}) {
         // Armed after tick 20: first eligible edge is 40 even if a slow
         // renderer receives several crossings together in a later frame.
-        EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
-            lab::TriggerSlope::Rising, 21, frame_end, 247500,
-            lab::TriggerOccurrence::First), 40);
-        EXPECT_EQ(lab::find_event_trigger(events,
-            lab::EventTriggerSource::Ignition0, lab::TriggerSlope::Rising,
-            21, frame_end, lab::TriggerOccurrence::First), 40);
+        EXPECT_EQ(lab::find_analog_trigger(
+                      samples, value, 1.0, lab::TriggerSlope::Rising, 21,
+                      frame_end, 247500, lab::TriggerOccurrence::First),
+                  40);
+        EXPECT_EQ(
+            lab::find_event_trigger(events, lab::EventTriggerSource::Ignition0,
+                                    lab::TriggerSlope::Rising, 21, frame_end,
+                                    lab::TriggerOccurrence::First),
+            40);
         EXPECT_EQ(lab::latest_analog_trigger(samples, value, 1.0,
-            lab::TriggerSlope::Rising, 21, frame_end), frame_end);
-        EXPECT_EQ(lab::latest_event_trigger(events,
-            lab::EventTriggerSource::Ignition0, lab::TriggerSlope::Rising,
-            21, frame_end), frame_end);
+                                             lab::TriggerSlope::Rising, 21,
+                                             frame_end),
+                  frame_end);
+        EXPECT_EQ(lab::latest_event_trigger(
+                      events, lab::EventTriggerSource::Ignition0,
+                      lab::TriggerSlope::Rising, 21, frame_end),
+                  frame_end);
     }
     samples[3].tps_track1_v = std::numeric_limits<double>::quiet_NaN();
     EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
-        lab::TriggerSlope::Rising, 21, 80, 247500,
-        lab::TriggerOccurrence::First), 60);
+                                       lab::TriggerSlope::Rising, 21, 80,
+                                       247500, lab::TriggerOccurrence::First),
+              60);
     EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
-        lab::TriggerSlope::Falling, 21, 80, 247500,
-        lab::TriggerOccurrence::First), 30);
+                                       lab::TriggerSlope::Falling, 21, 80,
+                                       247500, lab::TriggerOccurrence::First),
+              30);
+}
+
+TEST(AnalogTrigger, PreTriggerPlacesTheEventAtTheConfiguredFractionOfTheView) {
+    constexpr long long span = 990000; // 1 s view
+    for (const double pre_fraction : {0.10, 0.25, 0.50}) {
+        const auto w =
+            lab::trigger_search_window(span, pre_fraction, 0, 10 * span, 0);
+        EXPECT_EQ(w.pre_ticks + w.post_ticks, span) << pre_fraction;
+        // An event at tick T is shown with T - pre_ticks as the first tick of
+        // the view, i.e. at pre_fraction of the span from its left edge.
+        const long long event = 5 * span;
+        const long long view_end = event + w.post_ticks;
+        const long long view_first = view_end - span;
+        EXPECT_NEAR(static_cast<double>(event - view_first) / span,
+                    pre_fraction, 1e-6);
+        // The latest eligible event leaves exactly `post_ticks` of data.
+        EXPECT_EQ(w.last_candidate, 10 * span - w.post_ticks);
+    }
+    // Invalid fractions fall back to the 25 % default instead of escaping the
+    // view.
+    const auto bad =
+        lab::trigger_search_window(span, std::nan(""), 0, 10 * span, 0);
+    EXPECT_EQ(bad.pre_ticks, span / 4);
+    EXPECT_EQ(lab::trigger_search_window(span, 1.5, 0, 10 * span, 0).pre_ticks,
+              span / 4);
+}
+
+TEST(AnalogTrigger,
+     RearmingWhilePausedLeavesNoEligibleCrossingUntilNewDataArrives) {
+    constexpr long long span = 990000;
+    constexpr long long paused_tick = 8 * span;
+    const auto before =
+        lab::trigger_search_window(span, 0.25, 0, paused_tick, 0);
+    EXPECT_FALSE(before.empty());
+    // Re-arm at the paused tick: nothing already recorded is eligible, and a
+    // paused clock cannot make anything eligible.
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        const auto armed =
+            lab::trigger_search_window(span, 0.25, 0, paused_tick, paused_tick);
+        EXPECT_TRUE(armed.empty());
+        EXPECT_EQ(armed.first_candidate, paused_tick);
+    }
+    // Only after `post_ticks` of new data does the window open again.
+    const auto later = lab::trigger_search_window(
+        span, 0.25, 0, paused_tick + before.post_ticks + 1, paused_tick);
+    EXPECT_FALSE(later.empty());
+    // A history that starts late limits the first candidate (acquisition
+    // limit).
+    const auto limited =
+        lab::trigger_search_window(span, 0.25, 7 * span, paused_tick, 0);
+    EXPECT_GE(limited.first_candidate, 7 * span + limited.pre_ticks);
 }
 
 TEST(AnalogTrigger, SelectsRecordedElectricalEdgesAndSparkPairs) {
@@ -387,17 +493,23 @@ TEST(AnalogTrigger, SelectsRecordedElectricalEdgesAndSparkPairs) {
     using lab::EventTriggerSource;
     using lab::TriggerSlope;
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Ignition0,
-                                        TriggerSlope::Rising, 0, 70), 10);
+                                        TriggerSlope::Rising, 0, 70),
+              10);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Ignition0,
-                                        TriggerSlope::Falling, 0, 70), 20);
+                                        TriggerSlope::Falling, 0, 70),
+              20);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Ignition1,
-                                        TriggerSlope::Rising, 0, 70), 30);
+                                        TriggerSlope::Rising, 0, 70),
+              30);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Injector,
-                                        TriggerSlope::Falling, 0, 70), 50);
+                                        TriggerSlope::Falling, 0, 70),
+              50);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Spark14,
-                                        TriggerSlope::Falling, 0, 70), 60);
+                                        TriggerSlope::Falling, 0, 70),
+              60);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Spark23,
-                                        TriggerSlope::Rising, 0, 70), 70);
+                                        TriggerSlope::Rising, 0, 70),
+              70);
     EXPECT_EQ(lab::latest_event_trigger(events, EventTriggerSource::Spark14,
                                         TriggerSlope::Rising, 61, 70),
               std::nullopt);
@@ -474,8 +586,9 @@ TEST(SevelGeometry, RejectsImpossibleDimensions) {
     lab::SevelVisualGeometry geometry;
     geometry.visual_estimate_rod_length_m = 0.02;
     EXPECT_THROW(lab::cylinder_pose(0.0, 1, geometry), std::invalid_argument);
-    EXPECT_THROW(lab::cylinder_pose(std::numeric_limits<double>::quiet_NaN(), 1),
-                 std::invalid_argument);
+    EXPECT_THROW(
+        lab::cylinder_pose(std::numeric_limits<double>::quiet_NaN(), 1),
+        std::invalid_argument);
     EXPECT_THROW(lab::cylinder_pose(0.0, 5), std::invalid_argument);
 }
 
@@ -510,10 +623,10 @@ TEST(SevelValves, FollowsConfiguredPhysicalTdcReference) {
     EXPECT_EQ(lab::valve_lift_fraction(450.0 * pi / 180.0, 0,
                                        lab::ValveKind::Intake, reference),
               0.0);
-    EXPECT_THROW(lab::valve_lift_fraction(
-                     0.0, 0, lab::ValveKind::Intake,
-                     std::numeric_limits<double>::quiet_NaN()),
-                 std::invalid_argument);
+    EXPECT_THROW(
+        lab::valve_lift_fraction(0.0, 0, lab::ValveKind::Intake,
+                                 std::numeric_limits<double>::quiet_NaN()),
+        std::invalid_argument);
 }
 
 } // namespace

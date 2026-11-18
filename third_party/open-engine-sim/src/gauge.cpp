@@ -47,6 +47,11 @@ float Gauge::angleForFraction(float fraction) const {
     return s * m_thetaMax + (1.0f - s) * m_thetaMin;
 }
 
+float Gauge::angleForPosition(float position) const {
+    const float s = std::clamp(position, 0.0f, 1.0f);
+    return s * m_thetaMax + (1.0f - s) * m_thetaMin;
+}
+
 bool Gauge::isMajorTick(int offset) const {
     return m_majorStep > 0 && offset % m_majorStep == 0;
 }
@@ -58,8 +63,8 @@ bool Gauge::showsTick(int offset) const {
 }
 
 void Gauge::update(float dt) {
-    if (m_max <= m_min || !std::isfinite(m_value) ||
-        !std::isfinite(dt) || dt <= 0.0f)
+    if (m_max <= m_min || !std::isfinite(m_value) || !std::isfinite(dt) ||
+        dt <= 0.0f)
         return;
     const float value = std::clamp(m_value, m_min, m_max);
     const float needle_s = std::pow((value - m_min) / (m_max - m_min), m_gamma);

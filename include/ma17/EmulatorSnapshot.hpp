@@ -10,6 +10,11 @@ namespace ma17 {
 // Copied from the simulation thread after a complete machine-cycle batch.
 // Electrical pin meanings remain candidates until board wiring is verified.
 struct EmulatorSnapshot {
+    // Set by the Lab session when the simulation thread stopped on a model
+    // exception (e.g. invalid drivetrain input). Physical channels such as
+    // the drivetrain are then published as unavailable and the values that
+    // remain are the last valid ones, not live data.
+    bool simulation_fault = false;
     long long tick = 0;
     double crank_angle_rad = 0.0;
     double tdc_phase_rad = 0.0; // Candidate physical 1/4 firing TDC reference.
@@ -54,7 +59,8 @@ struct EmulatorSnapshot {
     double idle_stem_m = 0.0;
     uint16_t pc = 0;
     uint8_t ram47 = 0;
-    uint8_t ram46 = 0; // ROM nominal idle RPM; 25 RPM/count, distinct from actual.
+    uint8_t ram46 =
+        0; // ROM nominal idle RPM; 25 RPM/count, distinct from actual.
     std::array<uint8_t, 8> rom_iram_60_67{};
     uint8_t ram27_faults = 0;
     uint8_t ram28_faults = 0;

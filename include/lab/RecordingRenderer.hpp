@@ -53,6 +53,7 @@ class RecordingRenderer final : public Renderer {
         for (int face = 0; face < face_count; ++face) {
             Triangle triangle;
             triangle.color = color;
+            triangle.call = draw_calls_;
             for (int corner = 0; corner < 3; ++corner) {
                 const auto offset = start + static_cast<std::size_t>(face) * 3 +
                                     static_cast<std::size_t>(corner);
@@ -74,9 +75,21 @@ class RecordingRenderer final : public Renderer {
 
     void endFrame() override {}
 
+    const ysVector &clear_color() const { return clear_color_; }
     int draw_calls() const { return draw_calls_; }
     int scene_draw_calls() const { return scene_draw_calls_; }
     std::size_t triangle_count() const { return triangles_.size(); }
+    // Draw calls that emitted at least one triangle (one SVG path each).
+    std::size_t drawn_call_count() const {
+        std::size_t groups = 0;
+        int previous = 0;
+        for (const auto &triangle : triangles_) {
+            if (triangle.call != previous)
+                ++groups;
+            previous = triangle.call;
+        }
+        return groups;
+    }
 
     bool pixel_bounds(float &min_x, float &min_y, float &max_x,
                       float &max_y) const {
@@ -109,11 +122,29 @@ class RecordingRenderer final : public Renderer {
         out << "<rect width=\"100%\" height=\"100%\" fill=\""
             << color_hex(clear_color_) << "\"/>\n";
         out << std::fixed << std::setprecision(2);
-        for (const auto &triangle : triangles_) {
-            out << "<polygon points=\"";
-            for (const auto &point : triangle.points)
-                out << point.x << ',' << point.y << ' ';
-            out << "\" fill=\"" << color_hex(triangle.color) << "\"/>\n";
+        // One <path> per draw call: all its triangles are subpaths of a single
+        // fill, so abutting triangles raster as one shape (no seams) and a
+        // translucent call is blended once. Opaque calls also disable
+        // anti-aliasing at shared edges (crispEdges); translucent ones keep it.
+        std::size_t index = 0;
+        while (index < triangles_.size()) {
+            const Triangle &first = triangles_[index];
+            const float alpha = std::clamp(first.color.w, 0.0f, 1.0f);
+            out << "<path d=\"";
+            for (; index < triangles_.size() &&
+                   triangles_[index].call == first.call;
+                 ++index) {
+                const auto &points = triangles_[index].points;
+                out << 'M' << points[0].x << ',' << points[0].y << 'L'
+                    << points[1].x << ',' << points[1].y << 'L' << points[2].x
+                    << ',' << points[2].y << 'Z';
+            }
+            out << "\" fill=\"" << color_hex(first.color) << '"';
+            if (alpha < 1.0f)
+                out << " fill-opacity=\"" << alpha << '"';
+            else
+                out << " shape-rendering=\"crispEdges\"";
+            out << "/>\n";
         }
         out << "</svg>\n";
         return static_cast<bool>(out);
@@ -127,6 +158,7 @@ class RecordingRenderer final : public Renderer {
     struct Triangle {
         std::array<Point, 3> points{};
         ysVector color{};
+        int call = 0; // 1-based draw call that emitted this triangle
     };
 
     static std::string color_hex(const ysVector &color) {
