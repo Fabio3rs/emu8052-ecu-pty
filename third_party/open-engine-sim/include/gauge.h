@@ -58,6 +58,8 @@ class Gauge {
     float m_needleMaxVelocity;
     float m_needleKs;
     float m_needleKd;
+    // Positive values select an exponential display filter instead of a spring.
+    float m_needleTimeConstant = 0.0f;
     bool m_renderText;
     Point m_center;
 

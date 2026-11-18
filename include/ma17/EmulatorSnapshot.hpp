@@ -14,6 +14,9 @@ struct EmulatorSnapshot {
     double crank_angle_rad = 0.0;
     double tdc_phase_rad = 0.0; // Candidate physical 1/4 firing TDC reference.
     double rpm = 0.0;
+    double tachometer_rpm = 0.0; // P1.1 candidate, two pulses/revolution.
+    unsigned long long tachometer_pulses = 0;
+    bool tachometer_available = false;
     bool crank_available = false;
     double throttle_angle_rad = 0.0;
     double pedal_pull_m = 0.0;
@@ -41,11 +44,17 @@ struct EmulatorSnapshot {
     bool thermal_available = false;
     double vehicle_speed_kmh = 0.0;
     bool vehicle_speed_available = false;
+    bool drivetrain_available = false;
+    int transmission_gear = 0; // -1 reverse, 0 neutral, 1..5 forward.
+    double clutch_pressure = 0.0;
+    double clutch_crank_torque_nm = 0.0;
+    double clutch_heat_j = 0.0;
     double thermostat_open_fraction = 0.0;
     bool radiator_fan_on = false;
     double idle_stem_m = 0.0;
     uint16_t pc = 0;
     uint8_t ram47 = 0;
+    uint8_t ram46 = 0; // ROM nominal idle RPM; 25 RPM/count, distinct from actual.
     std::array<uint8_t, 8> rom_iram_60_67{};
     uint8_t ram27_faults = 0;
     uint8_t ram28_faults = 0;

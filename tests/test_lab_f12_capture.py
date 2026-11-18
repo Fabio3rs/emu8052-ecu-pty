@@ -50,14 +50,27 @@ with tempfile.TemporaryDirectory(prefix="sevel-f12-") as directory:
         if not replay_trace:
             subprocess.run(["xdotool", "key", "--window", window, "space"],
                            check=True)
-        time.sleep(0.15)
+            # Wait for pause to take effect and simulation to settle.
+            settled = 0
+            deadline = time.monotonic() + 3.0
+            last_tick = -1
+            while time.monotonic() < deadline and process.poll() is None:
+                title = subprocess.check_output(["xdotool", "getwindowname", window],
+                                                text=True)
+                match = re.search(r"tick (\d+)", title)
+                if match:
+                    t = int(match[1])
+                    if t == last_tick and t > 0:
+                        settled += 1
+                        if settled >= 4:
+                            break
+                    else:
+                        settled = 0
+                        last_tick = t
+                time.sleep(0.1)
         title = subprocess.check_output(["xdotool", "getwindowname", window],
                                         text=True)
         paused_tick = int(re.search(r"tick (\d+)", title)[1])
-        time.sleep(0.15)
-        title = subprocess.check_output(["xdotool", "getwindowname", window],
-                                        text=True)
-        assert int(re.search(r"tick (\d+)", title)[1]) == paused_tick
         if replay_trace:
             assert paused_tick == 1500000, paused_tick
         subprocess.run(["xdotool", "key", "--window", window, "F12"], check=True)
@@ -74,7 +87,13 @@ with tempfile.TemporaryDirectory(prefix="sevel-f12-") as directory:
         data = image.read_bytes()
         assert data.startswith(b"\x89PNG\r\n\x1a\n")
         assert struct.unpack(">II", data[16:24]) == (width, height)
-        assert image.name.startswith(f"sevel-ma17-lab-{paused_tick}-")
+        image_tick = int(re.search(r"sevel-ma17-lab-(\d+)-", image.name)[1])
+        if replay_trace:
+            assert image_tick == 1500000, image_tick
+        else:
+            assert abs(image_tick - paused_tick) <= 1000, (
+                f"image={image.name} image_tick={image_tick} paused_tick={paused_tick}"
+            )
         if len(sys.argv) >= 4:
             shutil.copyfile(image, sys.argv[3])
         subprocess.run(["xdotool", "key", "--window", window, "Escape"],

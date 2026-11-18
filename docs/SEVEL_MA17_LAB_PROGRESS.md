@@ -2289,3 +2289,21 @@ the UI-preferences test now clicks the CC3 selector in its visible digital
 lane. NativeLab rebuilt with `nproc`. The button and preferences tests passed
 individually (2/2); six other focused mouse, replay, fit and capture tests
 passed after the production edit.
+
+The candidate tachometer now reads P1.1 rising-edge periods, independently
+of physical RPM; the inspector compares physical RPM, RAM47*25, RAM46*25
+and P1.1 with its pulse count. The cable acceleration investigation reached
+about 5,044 RPM and found variable revolutions per P1.1 edge, so wiring and
+pulses/revolution remain unverified (see `.work/P11_TACOMETRO_INVESTIGACAO.md`).
+
+Gauge needles and tick marks now call the incorporated OES
+`GeometryGenerator::generateLine2d`; the extra central square and duplicate
+SDL major-tick strokes were removed. The shared line adapter reuses one
+geometry buffer within each dial and applies the donor width fields.
+NativeLab passed five DonorGauge tests, including mathematical label-layout
+and needle-width checks at 100/150/200%. A batched presentation run passed
+all nine resolution/scale captures and both debug captures (11/11).
+The 1280x720/200% and 900x620 debug PNGs were inspected: the new needle/ticks
+render, both engine views remain present, and the RPM comparison fits the
+inspector. This is not a fresh acceptance of all 46 requirements; other
+interaction/backend checks and donor component work remain open.

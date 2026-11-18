@@ -99,7 +99,7 @@ contact uses held steps at observed state changes, with all retained transitions
 preserved within a screen column. The stem's -10 to 30 mm display scale is a
 laboratory range, not a claimed absolute actuator stroke.
 The two TBI panels show `--` for a missing candidate stem; `N/D` remains
-reserved for an undefined measurement such as clutch coupling. The right
+reserved for an undefined measurement such as volumetric efficiency. The right
 throttle drawing handles angle, cable, stem and contact availability
 independently, so an invalid angle does not hide a valid contact observation.
 The ADC groups display last completed conversions: ADC TPS uses ADC0/TPS2
@@ -176,10 +176,12 @@ policy. These counters describe the session, not only the selected interval.
 
 | Display channel | Snapshot field | Reading point and source | Display validity |
 | --- | --- | --- | --- |
-| Engine speed | `rpm` | Physical crank model, not ROM RPM | `crank_available` |
-| Vehicle speed | `vehicle_speed_kmh` | Scenario road-speed input published independently of thermal state | `vehicle_speed_available`; not vehicle dynamics |
-| Gear reference | GUI selection `N`, 1–5, `lab::transmission::overall_ratio` and snapshot `rpm` | Fiat manual individual ratios × 63/16 differential; donor gear-card geometry | Hover tooltip shows both ratios, their product, ideal wheel RPM and ideal road speed using an explicitly estimated 0.29 m tire radius and engaged clutch; neutral is `N/D`, missing/nonfinite crank RPM is `--`; no measured wheel speed, clutch or crank load coupling yet |
-| Clutch pressure | No snapshot field | Donor 0–100 gauge scale retained as a visual reference on wide layouts | `N/D`, no needle; tooltip identifies the missing SEVEL clutch state |
+| Tachometer gauge (`RPM P1.1?`) | `tachometer_rpm`, `tachometer_pulses` | `ecu_hw::Ma17Tachometer` observes emulated P1.1 latch rising edges; candidate connector 24, assumed two pulses/revolution | `tachometer_available`; first level is not an edge, two edges needed for a period; zero after 500 ms without pulses; 200 ms display filter; no physical-crank fallback |
+| Physical engine speed (status/scopes) | `rpm` | Physical crank model, not ROM RPM | `crank_available`; retained independently from the candidate tachometer |
+| ROM actual / nominal idle RPM | `ram47` / `ram46` | Raw IRAM bytes 47h / 46h, each multiplied by 25 RPM/count | Distinct actual and target values; raw retained RAM is not proof of a fresh timer measurement |
+| Vehicle speed | `vehicle_speed_kmh` | Physical signed road speed when `drivetrain_available`; otherwise scenario input | `vehicle_speed_available`; tooltip distinguishes the source; reverse retains its negative numeric value beyond the dial's 0–200 scale |
+| Gear | `transmission_gear` when `drivetrain_available`; otherwise GUI reference selection | Fiat ratios × 63/16 differential; donor gear-card geometry | Physical R/N/1–5 comes from applied telemetry, including replay. Reference mode retains N–5 and REF. Tooltip ideal speed assumes no clutch slip and estimated 0.29 m radius; it is not measured road speed |
+| Clutch pressure | `clutch_pressure` | Physical drivetrain applied pressure fraction × 100; donor dial 0–100, minor 10, major 50, angles 0.8π to 0.2π | Requires `drivetrain_available`, finite fraction in [0,1]; missing/stale hides needle. 0=open, 100=engaged. Page Up/Down requests ±10 percentage points with clamping and replay lock; applied value appears in the TBI detail and wide-layout dial |
 | Battery supply | `battery_supply_v` | Physical sensor-circuit supply before ADC1 divider | `battery_supply_available`; scenario value, not an observed ADC conversion |
 | Coolant | `coolant_c` | Physical thermal model | `thermal_available` |
 | Intake air temperature | `intake_air_c` | Physical thermal model at the air sensor, in °C; distinct from ADC2 voltage | `thermal_available` |

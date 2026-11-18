@@ -21,6 +21,8 @@ extern "C" {
 
 #include "CrankshaftSimulator.hpp"
 #include "engine/CrankDynamics.hpp"
+#include "engine/Drivetrain.hpp"
+#include <optional>
 #include "engine/IdleActuator.hpp"
 #include "engine/ThrottleAssembly.hpp"
 #include "engine/ThermalState.hpp"
@@ -247,6 +249,19 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     start = std::chrono::steady_clock::now();
     CrankshaftSimulator sim;
     engine::CrankDynamics physical_crank;
+    std::optional<engine::Drivetrain> drivetrain;
+    if (config->drivetrain) {
+        drivetrain.emplace(config->vehicle_mass_kg,
+            engine::transmission::reference_tire_radius_m, config->clutch_max_nm,
+            config->vehicle_speed_kmh / 3.6);
+        drivetrain->set_gear(config->transmission_gear);
+        drivetrain->set_clutch_pressure(config->clutch_percent / 100.0);
+        // Provisional road-load estimates, separate from donor calibration.
+        drivetrain->set_road_resistance(100.0, 1.184, 0.32, 2.0);
+        fprintf(stderr, "Drivetrain estimates: mass=%d kg radius=0.29 m "
+                        "clutch=%d Nm rolling=100 N rho=1.184 Cd=0.32 A=2 m2\n",
+                config->vehicle_mass_kg, config->clutch_max_nm);
+    }
     ma17::PhysicalCrankInput physical_input;
     engine::ThrottleAssembly throttle;
     if (config->idle_contact_p43 || config->idle_contact_p46 ||
@@ -452,6 +467,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     loop.control_context = observer.context;
     if (config->physical_crank) {
         loop.physical_crank = &physical_crank;
+        loop.drivetrain = drivetrain ? &*drivetrain : nullptr;
         loop.physical_pty_realtime = config->physical_pty_realtime;
         loop.physical_input = &physical_input;
         if (config->tdc_reference_deg >= 0 || config->swap_ignition_coils ||

@@ -94,9 +94,10 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
                            float ui_scale, bool stale, int selected_gear,
                            DisplayUnits units);
 
-void draw_unavailable_clutch(SDL_Renderer *renderer, FontRenderer &font,
-                             const SDL_FRect &bounds, long long tick,
-                             float ui_scale);
+void draw_clutch(SDL_Renderer *renderer, FontRenderer &font,
+                 const SDL_FRect &bounds,
+                 const ma17::EmulatorSnapshot &snapshot,
+                 float ui_scale, bool stale);
 
 SDL_FRect compact_instrument_tab_rect(const SDL_FRect &bounds, int tab);
 

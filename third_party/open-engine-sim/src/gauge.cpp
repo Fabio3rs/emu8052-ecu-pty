@@ -58,11 +58,18 @@ bool Gauge::showsTick(int offset) const {
 }
 
 void Gauge::update(float dt) {
-    if (m_max <= m_min)
+    if (m_max <= m_min || !std::isfinite(m_value) ||
+        !std::isfinite(dt) || dt <= 0.0f)
         return;
-    dt = std::clamp(dt, 0.0f, 0.05f);
     const float value = std::clamp(m_value, m_min, m_max);
     const float needle_s = std::pow((value - m_min) / (m_max - m_min), m_gamma);
+    if (m_needleTimeConstant > 0.0f) {
+        const float alpha = -std::expm1(-dt / m_needleTimeConstant);
+        m_needlePosition += alpha * (needle_s - m_needlePosition);
+        m_needleVelocity = 0.0f;
+        return;
+    }
+    dt = std::clamp(dt, 0.0f, 0.05f);
     const float force = m_needleKs * (needle_s - m_needlePosition) -
                         m_needleKd * m_needleVelocity;
     m_needleVelocity = std::clamp(m_needleVelocity + force * dt,

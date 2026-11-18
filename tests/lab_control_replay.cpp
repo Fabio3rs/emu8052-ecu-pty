@@ -1,5 +1,6 @@
 #include "lab/SimSession.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -12,23 +13,29 @@ struct Result {
     ma17::EmulatorSnapshot snapshot;
     std::vector<ma17::EmulatorEvent> events;
     std::vector<lab::AppliedControl> history;
+    std::vector<ma17::EmulatorSnapshot> samples;
+    unsigned long long raw_evicted = 0;
     std::size_t event_base_index = 0;
     unsigned long long event_overflow = 0;
 };
 
 bool run(const char *rom, const std::vector<lab::AppliedControl> &controls,
-         Result &result, std::size_t event_capacity = 65536) {
-    lab::SimSession session({"lab_control_replay", rom, "--physical-crank",
-                             "--stop-ticks", "1200000", "--starter-ticks",
+         Result &result, std::size_t event_capacity = 65536,
+         bool drivetrain = false, long long stop_tick = 1200000) {
+    std::vector<std::string> args{"lab_control_replay", rom, "--physical-crank",
+                             "--stop-ticks", std::to_string(stop_tick), "--starter-ticks",
                              "495000", "--idle-contact-p46",
-                             "--idle-bridge-p15-p16", "--adc7-mv", "1232"},
-                            event_capacity);
+                             "--idle-bridge-p15-p16", "--adc7-mv", "1232"};
+    if (drivetrain)
+        args.push_back("--drivetrain");
+    lab::SimSession session(args, event_capacity);
     for (const auto &control : controls)
         session.schedule_control(control);
     session.set_speed(16.0);
     session.start();
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        std::chrono::steady_clock::now() +
+        std::chrono::seconds(stop_tick > 1200000 ? 120 : 30);
     while (!session.finished() && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     if (!session.finished()) {
@@ -42,6 +49,8 @@ bool run(const char *rom, const std::vector<lab::AppliedControl> &controls,
     result.event_base_index = window.base_index;
     result.event_overflow = session.event_overflow();
     result.history = session.control_history();
+    result.samples = session.snapshot_window(0);
+    result.raw_evicted = session.snapshot_retention().raw_evicted;
     return true;
 }
 
@@ -50,6 +59,77 @@ bool run(const char *rom, const std::vector<lab::AppliedControl> &controls,
 int main(int argc, char **argv) {
     if (argc != 2)
         return 2;
+    const std::vector<lab::AppliedControl> drive_commands{
+        {495000, lab::ControlType::Gear, 1.0},
+        {495000, lab::ControlType::ClutchPressure, 0.1},
+        {800000, lab::ControlType::ClutchPressure, 0.0},
+        {800000, lab::ControlType::Gear, 2.0},
+        {900000, lab::ControlType::ClutchPressure, 0.1}};
+    Result driven, driven_replay;
+    std::vector<lab::AppliedControl> drive_loaded;
+    if (!run(argv[1], drive_commands, driven, 65536, true) ||
+        !driven.snapshot.drivetrain_available ||
+        driven.snapshot.transmission_gear != 2 ||
+        driven.snapshot.clutch_pressure != 0.1 ||
+        driven.snapshot.vehicle_speed_kmh <= 0.0 ||
+        driven.snapshot.clutch_heat_j <= 0.0 ||
+        !lab::save_control_trace("lab-drive-controls.txt", driven.history) ||
+        !lab::load_control_trace("lab-drive-controls.txt", drive_loaded) ||
+        !run(argv[1], drive_loaded, driven_replay, 65536, true) ||
+        driven_replay.snapshot.vehicle_speed_kmh != driven.snapshot.vehicle_speed_kmh ||
+        driven_replay.snapshot.clutch_heat_j != driven.snapshot.clutch_heat_j ||
+        driven_replay.snapshot.clutch_crank_torque_nm != driven.snapshot.clutch_crank_torque_nm ||
+        driven_replay.snapshot.rpm != driven.snapshot.rpm ||
+        driven_replay.history.size() != drive_commands.size())
+        return 1;
+    for (std::size_t index = 0; index < drive_commands.size(); ++index) {
+        if (driven_replay.history[index].tick != drive_commands[index].tick ||
+            driven_replay.history[index].type != drive_commands[index].type ||
+            driven_replay.history[index].value != drive_commands[index].value)
+            return 1;
+    }
+    Result drive_archive;
+    if (!run(argv[1], drive_commands, drive_archive, 65536, true, 10000000) ||
+        drive_archive.raw_evicted == 0 || driven.raw_evicted != 0)
+        return 1;
+    const auto retained = [&](const ma17::EmulatorSnapshot &sample) {
+        const auto found = std::lower_bound(
+            drive_archive.samples.begin(), drive_archive.samples.end(), sample.tick,
+            [](const auto &entry, long long tick) { return entry.tick < tick; });
+        return found != drive_archive.samples.end() && found->tick == sample.tick &&
+            found->transmission_gear == sample.transmission_gear &&
+            found->vehicle_speed_kmh == sample.vehicle_speed_kmh &&
+            found->clutch_pressure == sample.clutch_pressure &&
+            found->clutch_crank_torque_nm == sample.clutch_crank_torque_nm &&
+            found->clutch_heat_j == sample.clutch_heat_j;
+    };
+    for (std::size_t index = 1; index < driven.samples.size(); ++index) {
+        if (driven.samples[index].transmission_gear !=
+                driven.samples[index - 1].transmission_gear &&
+            (!retained(driven.samples[index - 1]) || !retained(driven.samples[index])))
+            return 1;
+    }
+    // Compare each complete 100 ms acquisition bucket against the unabridged run.
+    for (long long start = driven.samples.front().tick;
+         start + 99000 < 1200000; start += 99000) {
+        const auto begin = std::lower_bound(driven.samples.begin(), driven.samples.end(), start,
+            [](const auto &entry, long long tick) { return entry.tick < tick; });
+        const auto end = std::lower_bound(begin, driven.samples.end(), start + 99000,
+            [](const auto &entry, long long tick) { return entry.tick < tick; });
+        if (begin == end)
+            return 1;
+        for (auto field : {&ma17::EmulatorSnapshot::vehicle_speed_kmh,
+                           &ma17::EmulatorSnapshot::clutch_pressure,
+                           &ma17::EmulatorSnapshot::clutch_crank_torque_nm,
+                           &ma17::EmulatorSnapshot::clutch_heat_j}) {
+            const auto less = [field](const auto &a, const auto &b) {
+                return a.*field < b.*field;
+            };
+            if (!retained(*std::min_element(begin, end, less)) ||
+                !retained(*std::max_element(begin, end, less)))
+                return 1;
+        }
+    }
     const std::array<lab::AppliedControl, 11> commands{{
         {0, lab::ControlType::Key, 0.0},
         {50000, lab::ControlType::Key, 1.0},

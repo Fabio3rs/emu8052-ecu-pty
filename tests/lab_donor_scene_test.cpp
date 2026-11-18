@@ -3,10 +3,15 @@
 #include "lab/MeshAsset.hpp"
 #endif
 #include "gauge.h"
+#include "geometry_generator.h"
+#include "labeled_gauge_layout.h"
+#include "ecu_hw/Ma17Tachometer.hpp"
 #include "lab/RecordingRenderer.hpp"
 #include "lab/ScopeDecimation.hpp"
+#include "lab/SceneCameraFit.hpp"
 #include "lab/SevelScene.hpp"
 #include "oscilloscope.h"
+#include "oscilloscope_path.h"
 
 #include <gtest/gtest.h>
 
@@ -15,6 +20,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -22,8 +28,69 @@ namespace {
 
 using Bounds = std::array<float, 4>;
 
+TEST(DonorScope, PathWidthPreservesDonorTaperAndTip) {
+    EXPECT_FLOAT_EQ(oes::oscilloscope_path_width(0.0f), 0.5f);
+    EXPECT_FLOAT_EQ(oes::oscilloscope_path_width(0.5f), 0.5f);
+    EXPECT_FLOAT_EQ(oes::oscilloscope_path_width(0.75f), 0.75f);
+    EXPECT_FLOAT_EQ(oes::oscilloscope_path_width(0.95f), 0.95f);
+    // A 100-point path ends at s=99/100, not at 1: tip width is 2.59 px.
+    EXPECT_NEAR(oes::oscilloscope_path_width(0.99f), 2.59f, 0.00001f);
+    // The donor adds the tip highlight after scaling the base stroke.
+    EXPECT_NEAR(oes::oscilloscope_path_width(0.99f, 2.0f), 3.58f, 0.00001f);
+    float previous = 0.0f;
+    for (int i = 0; i < 100; ++i) {
+        const float width = oes::oscilloscope_path_width(static_cast<float>(i) / 100.0f);
+        EXPECT_GE(width, previous);
+        EXPECT_GE(width, 0.5f);
+        EXPECT_LT(width, 3.0f);
+        previous = width;
+    }
+}
+
+TEST(DonorGauge, LabelLayoutPreservesDonorCoordinatesAndUniformScale) {
+    // OES LabeledGauge::render: 10 px inset, 90% dial band, -20 px center.
+    // A 340x204 cell gives a 320x165.6 dial, radius 82.8 and center (170,72.8).
+    for (const float scale : {1.0f, 1.5f, 2.0f}) {
+        const auto layout = labeled_gauge_layout(
+            ::Bounds(0.0f, 340.0f * scale, 0.0f, 204.0f * scale),
+            10.0f * scale, -20.0f * scale);
+        EXPECT_NEAR(layout.title.bottom(), 175.6f * scale, 0.0001f);
+        EXPECT_NEAR(layout.title.top(), 194.0f * scale, 0.0001f);
+        EXPECT_NEAR(layout.gauge.width(), 320.0f * scale, 0.0001f);
+        EXPECT_NEAR(layout.gauge.height(), 165.6f * scale, 0.0001f);
+        EXPECT_NEAR(layout.radius, 82.8f * scale, 0.0001f);
+        EXPECT_NEAR(layout.center.x, 170.0f * scale, 0.0001f);
+        EXPECT_NEAR(layout.center.y, 72.8f * scale, 0.0001f);
+        EXPECT_NEAR(layout.needle_outer_radius, 57.96f * scale, 0.0001f);
+        EXPECT_NEAR(layout.needle_inner_radius, 8.28f * scale, 0.0001f);
+        EXPECT_NEAR(layout.value.height(), 41.4f * scale, 0.0001f);
+    }
+}
+
+TEST(Tachometer, MeasuresEdgesAndTimesOutWithoutCrankInput) {
+    ecu_hw::Ma17Tachometer meter;
+    EXPECT_FALSE(meter.available());
+    meter.observe(true, 0); // Initial high level is not a pulse.
+    EXPECT_EQ(meter.pulses(), 0U);
+    meter.observe(false, 1);
+    meter.observe(true, 100);
+    EXPECT_DOUBLE_EQ(meter.rpm(100), 0.0);
+    meter.observe(false, 200);
+    meter.observe(true, 29800);
+    EXPECT_DOUBLE_EQ(meter.rpm(29800), 1000.0);
+    meter.observe(true, 30000); // A held level must not add an edge.
+    EXPECT_EQ(meter.pulses(), 2U);
+    EXPECT_DOUBLE_EQ(meter.rpm(524800), 0.0);
+    meter.observe(false, 524801);
+    meter.observe(true, 524802);
+    EXPECT_DOUBLE_EQ(meter.rpm(524802), 0.0);
+    meter.observe(false, 524803);
+    meter.observe(true, 539652);
+    EXPECT_DOUBLE_EQ(meter.rpm(539652), 2000.0);
+}
+
 TEST(DonorScene, FittedProjectionPreservesPhysicalAspectRatio) {
-    for (const auto [width, height] :
+    for (const auto &[width, height] :
          {std::pair{269.0f, 576.0f}, std::pair{403.0f, 864.0f},
           std::pair{720.0f, 1152.0f}}) {
         const auto projection = lab::scene_fit_projection(
@@ -48,6 +115,103 @@ TEST(DonorGauge, TracksValueWithoutEscapingDial) {
     EXPECT_NEAR(gauge.needlePosition(), 1.0f, 0.02f);
     gauge.setBandCount(-1);
     EXPECT_THROW(gauge.setBand({}, 0), std::out_of_range);
+}
+
+TEST(DonorGauge, GeneratedNeedleKeepsWidthAtEveryAngleAndDpi) {
+    struct Generator : GeometryGenerator {
+        ~Generator() { destroy(); }
+    } generator;
+    generator.initialize(4, 6);
+    for (const float scale : {1.0f, 1.5f, 2.0f}) {
+        for (const float theta : {-0.6283185f, 1.5707963f, 3.7699112f}) {
+            generator.reset();
+            generator.startShape();
+            const float x = std::cos(theta), y = std::sin(theta);
+            GeometryGenerator::Line2dParameters line{};
+            line.x0 = -8.28f * scale * x;
+            line.y0 = -8.28f * scale * y;
+            line.x1 = 57.96f * scale * x;
+            line.y1 = 57.96f * scale * y;
+            line.lineWidth = 4.0f * scale;
+            ASSERT_TRUE(generator.generateLine2d(line));
+            GeometryGenerator::GeometryIndices shape;
+            generator.endShape(&shape);
+            ASSERT_EQ(generator.getCurrentVertexCount(), 4);
+            ASSERT_EQ(generator.getCurrentIndexCount(), 6);
+            for (int i = 0; i < 4; ++i) {
+                const auto &p = generator.getVertexData()[i].Pos;
+                EXPECT_NEAR(std::abs(-y * p.x + x * p.y),
+                            2.0f * scale, 0.0001f);
+                EXPECT_NEAR(x * p.x + y * p.y,
+                            (i < 2 ? -8.28f : 57.96f) * scale, 0.0001f);
+            }
+            for (int i = 0; i < 6; ++i)
+                EXPECT_LT(generator.getIndexData()[i], 4);
+        }
+    }
+}
+
+TEST(DonorGauge, GeneratedBandsPreserveRadiiAndAngularEndpoints) {
+    struct Generator : GeometryGenerator {
+        ~Generator() { destroy(); }
+    } generator;
+    generator.initialize(4096, 12288);
+    for (const float scale : {1.0f, 1.5f, 2.0f}) {
+        generator.reset();
+        generator.startShape();
+        GeometryGenerator::Ring2dParameters ring;
+        ring.innerRadius = 79.8f * scale;
+        ring.outerRadius = 82.8f * scale;
+        ring.startAngle = -0.6283185f;
+        ring.endAngle = 3.7699112f;
+        ring.maxEdgeLength = 5.0f;
+        ASSERT_TRUE(generator.generateRing2d(ring));
+        GeometryGenerator::GeometryIndices shape;
+        generator.endShape(&shape);
+        const int count = generator.getCurrentVertexCount();
+        ASSERT_GT(count, 6);
+        ASSERT_EQ(count % 2, 0);
+        for (int i = 0; i < count; ++i) {
+            const auto &p = generator.getVertexData()[i].Pos;
+            const float radius = i % 2 ? ring.innerRadius : ring.outerRadius;
+            EXPECT_NEAR(std::hypot(p.x, p.y), radius, 0.0001f);
+            if (i < 2 || i >= count - 2) {
+                const float angle = i < 2 ? ring.startAngle : ring.endAngle;
+                EXPECT_NEAR(p.x, radius * std::cos(angle), 0.0001f);
+                EXPECT_NEAR(p.y, radius * std::sin(angle), 0.0001f);
+            }
+        }
+        for (int i = 0; i < generator.getCurrentIndexCount(); ++i)
+            EXPECT_LT(generator.getIndexData()[i], count);
+    }
+}
+
+TEST(DonorGauge, LowPassIsMonotonicAndFrameRateIndependent) {
+    for (const int fps : {20, 60, 144}) {
+        Gauge gauge;
+        gauge.m_max = 7000.0f;
+        gauge.m_needleTimeConstant = 0.2f;
+        gauge.reset(1000.0f);
+        gauge.m_value = 4000.0f;
+        float previous = gauge.needlePosition();
+        for (int frame = 0; frame < fps; ++frame) {
+            gauge.update(1.0f / static_cast<float>(fps));
+            EXPECT_GE(gauge.needlePosition(), previous);
+            EXPECT_LE(gauge.needlePosition(), 4000.0f / 7000.0f);
+            previous = gauge.needlePosition();
+        }
+        EXPECT_NEAR(gauge.needlePosition(),
+                    (4000.0f - 3000.0f * std::exp(-5.0f)) / 7000.0f,
+                    1e-6f);
+        gauge.m_value = 0.0f;
+        gauge.update(0.2f);
+        EXPECT_NEAR(gauge.needlePosition(), previous * std::exp(-1.0f),
+                    1e-6f);
+        previous = gauge.needlePosition();
+        gauge.m_value = std::numeric_limits<float>::quiet_NaN();
+        gauge.update(0.1f);
+        EXPECT_FLOAT_EQ(gauge.needlePosition(), previous);
+    }
 }
 
 TEST(DonorGauge, ReusesSweepAndTickGeometry) {
@@ -260,6 +424,103 @@ TEST(DonorScene, ShowsBothSparkGapsWithoutDuplicatingCombustion) {
 }
 
 #ifdef SEVEL_LAB_MESH_ASSET
+TEST(DonorScene, AutomaticFitContainsFullCycleWithMarkers) {
+    AuthoredMeshLibrary library;
+    ASSERT_TRUE(lab::load_packaged_meshes(library, LAB_MESH_ASSET_PATH));
+    struct Rect { float x, y, w, h; };
+    for (const auto &[width, height] :
+         {std::pair{269.0f, 576.0f}, std::pair{720.0f, 350.0f}}) {
+        const Rect target{width * 0.1f, 108.0f, width * 0.8f, height - 124.0f};
+        for (int view = -1; view <= 4; ++view) {
+            ma17::EmulatorSnapshot snapshot;
+            lab::SceneCamera camera{0.78f, 0.0f, 0.0f};
+            const auto render = [&](lab::RecordingRenderer &frame,
+                                    const ma17::EmulatorSnapshot &sample,
+                                    lab::SceneCamera candidate,
+                                    std::array<lab::ScenePulse, 4> pulses) {
+                if (view == -1)
+                    lab::render_sevel_scene_donor(frame, sample, width,
+                        height, {}, {}, candidate, &library, pulses);
+                else
+                    lab::render_sevel_radial_donor(frame, sample, width,
+                        height, library, {}, {}, candidate, pulses, view);
+            };
+            lab::fit_scene_camera(camera, snapshot, width, height, target,
+                [&](auto &frame, const auto &sample, auto candidate) {
+                    render(frame, sample, candidate, {});
+                });
+            std::array<lab::ScenePulse, 4> pulses{};
+            for (auto &pulse : pulses)
+                pulse = {1.0f, false, 1.0f, 1.0f};
+            for (int degrees = 0; degrees <= 720; degrees += 5) {
+                SCOPED_TRACE(::testing::Message() << width << 'x' << height
+                             << " view=" << view << " degrees=" << degrees);
+                snapshot.crank_angle_rad = degrees * 3.14159265358979323846 / 180.0;
+                lab::RecordingRenderer frame;
+                render(frame, snapshot, camera, pulses);
+                float left, top, right, bottom;
+                ASSERT_TRUE(frame.pixel_bounds(left, top, right, bottom));
+                ASSERT_GE(left, target.x - 0.1f);
+                ASSERT_GE(top, target.y - 0.1f);
+                ASSERT_LE(right, target.x + target.w + 0.1f);
+                ASSERT_LE(bottom, target.y + target.h + 0.1f);
+            }
+        }
+    }
+}
+
+TEST(DonorScene, FullCycleMeshesStayInsideDefaultViewports) {
+    AuthoredMeshLibrary library;
+    ASSERT_TRUE(lab::load_packaged_meshes(library, LAB_MESH_ASSET_PATH));
+    // Test actual submitted mesh vertices, before rasterizer clipping.
+    // Includes narrow/tall and wide/short panes and all selectable sections.
+    std::array<float, 4> minimum_margins{1.0f, 1.0f, 1.0f, 1.0f};
+    for (const auto &[width, height] :
+         {std::pair{180.0f, 240.0f}, std::pair{269.0f, 576.0f},
+          std::pair{403.0f, 864.0f}, std::pair{720.0f, 350.0f}}) {
+        for (int degrees = 0; degrees <= 720; degrees += 5) {
+            ma17::EmulatorSnapshot snapshot;
+            snapshot.crank_angle_rad =
+                static_cast<double>(degrees) * 3.14159265358979323846 / 180.0;
+            std::array<lab::ScenePulse, 4> pulses{};
+            for (auto &pulse : pulses)
+                pulse = {1.0f, false, 1.0f, 1.0f};
+            for (int view = -1; view <= 4; ++view) {
+                SCOPED_TRACE(::testing::Message()
+                             << width << 'x' << height << " degrees="
+                             << degrees << " view=" << view);
+                lab::RecordingRenderer frame;
+                const lab::SceneCamera camera{0.78f, 0.0f, 0.0f};
+                if (view == -1)
+                    lab::render_sevel_scene_donor(frame, snapshot, width,
+                        height, {}, {}, camera, &library, pulses);
+                else
+                    lab::render_sevel_radial_donor(frame, snapshot, width,
+                        height, library, {}, {}, camera, pulses, view);
+                float left, top, right, bottom;
+                ASSERT_TRUE(frame.pixel_bounds(left, top, right, bottom));
+                minimum_margins[0] = std::min(minimum_margins[0], left / width);
+                minimum_margins[1] = std::min(minimum_margins[1], top / height);
+                minimum_margins[2] = std::min(minimum_margins[2], 1.0f - right / width);
+                minimum_margins[3] = std::min(minimum_margins[3], 1.0f - bottom / height);
+                ASSERT_GE(left, width * 0.10f);
+                ASSERT_GE(top, height * 0.10f);
+                ASSERT_LE(right, width * 0.90f);
+                ASSERT_LE(bottom, height * 0.90f);
+                frame.for_each_triangle([&](const auto &points, const auto &) {
+                    for (const auto &point : points) {
+                        ASSERT_TRUE(std::isfinite(point.x));
+                        ASSERT_TRUE(std::isfinite(point.y));
+                    }
+                });
+            }
+        }
+    }
+    for (std::size_t side = 0; side < minimum_margins.size(); ++side)
+        RecordProperty("minimum_margin_" + std::to_string(side),
+                       std::to_string(minimum_margins[side]));
+}
+
 TEST(DonorScene, RendersImportedMechanicalMeshes) {
     AuthoredMeshLibrary library;
     ASSERT_TRUE(lab::load_packaged_meshes(library, LAB_MESH_ASSET_PATH));

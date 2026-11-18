@@ -111,9 +111,11 @@ void tick_physical_crank_input(em8051 *cpu, engine::CrankDynamics &crank,
                                bool starter_engaged,
                                double combustion_torque_nm,
                                double load_torque_nm,
-                               bool sensor_connected) {
+                               bool sensor_connected,
+                               engine::Drivetrain *drivetrain) {
     const bool crossed =
-        crank.step(starter_engaged, combustion_torque_nm, load_torque_nm);
+        crank.step(starter_engaged, combustion_torque_nm, load_torque_nm,
+                   0.0, drivetrain);
     if (crossed &&
         crank.wheel_position() >= engine::CrankDynamics::physical_teeth) {
         ++input.missing_positions;

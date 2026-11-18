@@ -44,9 +44,19 @@ target_link_libraries(lab_runner_smoke PRIVATE emu8051-tty_lib)
 add_test(NAME LabRunner.OriginalRomSnapshot
     COMMAND lab_runner_smoke
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+add_test(NAME LabRunner.TachometerMatchesLatchTrace
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_tachometer_trace.py
+            $<TARGET_FILE:lab_runner_smoke>
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
 add_test(NAME LabRunner.AdcFaultTelemetry
     COMMAND lab_runner_smoke
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin adc_fault)
+add_test(NAME LabRunner.DrivetrainTelemetry
+    COMMAND lab_runner_smoke
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin drivetrain)
+add_test(NAME LabRunner.DrivetrainCli
+    COMMAND lab_runner_smoke
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin drivetrain_cli)
 add_test(NAME PhysicalCrank.FiatRomRpm
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_physical_crank.py
             $<TARGET_FILE:emu8051-tty>

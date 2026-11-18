@@ -4,6 +4,7 @@
 #include "ma17/AdcSimulator.hpp"
 #include "ma17/CrankInput.hpp"
 #include "engine/CrankDynamics.hpp"
+#include "engine/Drivetrain.hpp"
 #include "engine/ThrottleAssembly.hpp"
 #include "engine/ThermalState.hpp"
 #include "ecu_hw/Ma17TpsCircuit.hpp"
@@ -499,9 +500,11 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                       load + (context.intake
                                                   ? context.intake->pumping_torque_nm()
                                                   : 0.0),
-                                      false);
+                                      false, context.drivetrain);
+            if (context.drivetrain)
+                context.vehicle_speed_kmh = context.drivetrain->speed_m_s() * 3.6;
             if (context.thermal && context.ticks % 990 == 0) {
-                context.vehicle_speed_kmh += std::clamp(
+                if (!context.drivetrain) context.vehicle_speed_kmh += std::clamp(
                     context.vehicle_speed_target_kmh - context.vehicle_speed_kmh,
                     -0.02, 0.02);
                 context.thermal->advance_ticks(
@@ -510,7 +513,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                         ? std::max(0.0, context.intake->last_air_in_kg_s())
                         : 0.0,
                     context.coolant_heat_pending_j * 1000.0,
-                    context.vehicle_speed_kmh);
+                    std::abs(context.vehicle_speed_kmh));
                 context.coolant_heat_pending_j = 0.0;
             }
             if (context.intake && context.throttle && context.thermal &&
@@ -570,14 +573,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.ticks, context.coil_channel);
         }
         if (context.thermal && context.ticks % 990 == 0) {
-            context.vehicle_speed_kmh += std::clamp(
+            if (!context.drivetrain) context.vehicle_speed_kmh += std::clamp(
                 context.vehicle_speed_target_kmh - context.vehicle_speed_kmh,
                 -0.02, 0.02);
             context.thermal->advance_ticks(
                 990, context.intake ? std::max(0.0, context.intake->last_air_in_kg_s())
                                     : 0.0,
                 context.coolant_heat_pending_j * 1000.0,
-                context.vehicle_speed_kmh);
+                std::abs(context.vehicle_speed_kmh));
             context.coolant_heat_pending_j = 0.0;
         }
         if (context.throttle && context.ticks == context.pedal_step_tick) {
@@ -673,7 +676,9 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                           (context.intake
                                                ? context.intake->pumping_torque_nm()
                                                : 0.0),
-                                      sensor_connected);
+                                      sensor_connected, context.drivetrain);
+            if (context.drivetrain)
+                context.vehicle_speed_kmh = context.drivetrain->speed_m_s() * 3.6;
             if (context.physical_input->missing_positions != gaps_before) {
                 fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
                                 "\"position\":%d,\"rpm\":%.3f}\n",
@@ -832,6 +837,21 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                 context.ticks, static_cast<unsigned>(last_pc),
                                 observed_ports[port], bit, high,
                                 static_cast<unsigned>(cpu.mLowerData[0x47]));
+                        if (observed_ports[port] == 0x90 && bit == 1 &&
+                            cpu.mUpperData)
+                            fprintf(stderr,
+                                    "[P11-OBS] tick=%lld high=%u angle=%.12f "
+                                    "physical_rpm=%.6f ram46=%u ram47=%u "
+                                    "iram9fa0=%u irama1a2=%u\n",
+                                    context.ticks, high,
+                                    context.physical_crank->angle_rad(),
+                                    context.physical_crank->rpm(),
+                                    static_cast<unsigned>(cpu.mLowerData[0x46]),
+                                    static_cast<unsigned>(cpu.mLowerData[0x47]),
+                                    (static_cast<unsigned>(cpu.mUpperData[0x1F]) << 8) |
+                                        cpu.mUpperData[0x20],
+                                    (static_cast<unsigned>(cpu.mUpperData[0x21]) << 8) |
+                                        cpu.mUpperData[0x22]);
                     }
                 }
             }
@@ -1174,6 +1194,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
             trace_cc3_and_ram67(cpu, context.ticks, last_pc, timer2_before);
             trace_memory_changes(cpu, context.ticks, last_pc);
         }
+        context.tachometer.observe((cpu.mSFR[0x90 - 0x80] & 0x02u) != 0,
+                                   context.ticks);
         trace_p13_shadow(cpu, context.ticks, last_pc);
         if (context.trace_pc)
             trace_port_edges(cpu, context.ticks, last_pc);
@@ -1210,6 +1232,10 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     snapshot.tick = context.ticks;
     snapshot.pc = cpu.mPC;
     snapshot.ram47 = cpu.mLowerData[0x47];
+    snapshot.ram46 = cpu.mLowerData[0x46];
+    snapshot.tachometer_rpm = context.tachometer.rpm(context.ticks);
+    snapshot.tachometer_pulses = context.tachometer.pulses();
+    snapshot.tachometer_available = context.tachometer.available();
     for (std::size_t index = 0; index < snapshot.rom_iram_60_67.size(); ++index)
         snapshot.rom_iram_60_67[index] = cpu.mLowerData[0x60 + index];
     snapshot.ram27_faults = cpu.mLowerData[0x27];
@@ -1234,6 +1260,14 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     snapshot.key_on = context.key_on;
     snapshot.vehicle_speed_kmh = context.vehicle_speed_kmh;
     snapshot.vehicle_speed_available = true;
+    if (context.drivetrain && context.physical_crank) {
+        snapshot.drivetrain_available = true;
+        snapshot.vehicle_speed_kmh = context.drivetrain->speed_m_s() * 3.6;
+        snapshot.transmission_gear = context.drivetrain->gear();
+        snapshot.clutch_pressure = context.drivetrain->clutch_pressure();
+        snapshot.clutch_crank_torque_nm = context.drivetrain->crank_torque_nm();
+        snapshot.clutch_heat_j = context.drivetrain->clutch_heat_j();
+    }
     if (context.sensor_circuit) {
         snapshot.battery_supply_v = context.sensor_circuit->supply_voltage();
         snapshot.battery_supply_available = true;

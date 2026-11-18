@@ -14,11 +14,14 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Uso: %s <rom.bin> [--8052] [--physical-crank "
                         "--starter-ticks N --stop-ticks N "
-                        "--vehicle-kmh 0..200]\n", argv[0]);
+                        "--vehicle-kmh 0..200] [--drivetrain --gear -1..5 "
+                        "--clutch-percent 0..100 --vehicle-mass-kg 500..3000 "
+                        "--clutch-max-nm 1..1000]\n", argv[0]);
         return std::nullopt;
     }
 
     EmulatorConfig config{argv[1]};
+    bool drivetrain_options = false;
     auto parse_positive = [](const char *value, long long &target) {
         char *end = nullptr;
         const long long parsed = std::strtoll(value, &end, 10);
@@ -38,6 +41,42 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
     };
     for (int index = 2; index < argc; ++index) {
         if (strcmp(argv[index], "--8052") == 0) continue;
+        if (strcmp(argv[index], "--drivetrain") == 0) {
+            config.drivetrain = true;
+            continue;
+        }
+        int *drivetrain_target = nullptr;
+        long minimum = 0, maximum = 0;
+        if (strcmp(argv[index], "--gear") == 0) {
+            drivetrain_target = &config.transmission_gear;
+            minimum = -1; maximum = 5;
+        } else if (strcmp(argv[index], "--clutch-percent") == 0) {
+            drivetrain_target = &config.clutch_percent;
+            maximum = 100;
+        } else if (strcmp(argv[index], "--vehicle-mass-kg") == 0) {
+            drivetrain_target = &config.vehicle_mass_kg;
+            minimum = 500; maximum = 3000;
+        } else if (strcmp(argv[index], "--clutch-max-nm") == 0) {
+            drivetrain_target = &config.clutch_max_nm;
+            minimum = 1; maximum = 1000;
+        }
+        if (drivetrain_target) {
+            if (index + 1 >= argc) {
+                fprintf(stderr, "Missing drivetrain option value\n");
+                return std::nullopt;
+            }
+            const char *value = argv[++index];
+            char *end = nullptr;
+            errno = 0;
+            const long parsed = std::strtol(value, &end, 10);
+            if (errno || !*value || *end || parsed < minimum || parsed > maximum) {
+                fprintf(stderr, "Invalid drivetrain option value: %s\n", value);
+                return std::nullopt;
+            }
+            *drivetrain_target = static_cast<int>(parsed);
+            drivetrain_options = true;
+            continue;
+        }
         if (strcmp(argv[index], "--physical-crank") == 0) {
             config.physical_crank = true;
             continue;
@@ -349,6 +388,11 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
             }
         }
         fprintf(stderr, "Invalid emulator argument: %s\n", argv[index]);
+        return std::nullopt;
+    }
+    if ((config.drivetrain && !config.physical_crank) ||
+        (drivetrain_options && !config.drivetrain)) {
+        fprintf(stderr, "Drivetrain options require --drivetrain --physical-crank\n");
         return std::nullopt;
     }
     if (config.physical_crank) {

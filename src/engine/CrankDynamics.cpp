@@ -1,4 +1,5 @@
 #include "engine/CrankDynamics.hpp"
+#include "engine/Drivetrain.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -28,23 +29,31 @@ CrankDynamics::CrankDynamics(CrankParameters parameters)
 }
 
 bool CrankDynamics::step(bool starter_engaged, double combustion_torque_nm,
-                         double load_torque_nm) {
+                         double load_torque_nm, double transmission_torque_nm,
+                         Drivetrain *drivetrain) {
     if (!std::isfinite(combustion_torque_nm) ||
-        !std::isfinite(load_torque_nm) || load_torque_nm < 0.0)
+        !std::isfinite(load_torque_nm) || load_torque_nm < 0.0 ||
+        !std::isfinite(transmission_torque_nm))
         throw std::invalid_argument("invalid crank torque");
 
     const double drive_nm =
         combustion_torque_nm +
         (starter_engaged ? parameters_.starter_torque_nm : 0.0) -
-        load_torque_nm;
-    if (speed_rad_s_ == 0.0 && drive_nm <= parameters_.breakaway_torque_nm)
+        load_torque_nm + transmission_torque_nm;
+    if (!drivetrain && speed_rad_s_ == 0.0 &&
+        drive_nm <= parameters_.breakaway_torque_nm)
         return false;
 
     const double friction_nm = friction_torque_nm();
     const double acceleration =
         (drive_nm - friction_nm) / parameters_.inertia_kg_m2;
-    const double next_speed =
+    double next_speed =
         std::fmax(0.0, speed_rad_s_ + acceleration / ticks_per_second);
+    if (speed_rad_s_ == 0.0 && drive_nm <= parameters_.breakaway_torque_nm)
+        next_speed = 0.0;
+    if (drivetrain)
+        next_speed = drivetrain->couple(next_speed, parameters_.inertia_kg_m2,
+                                        1.0 / ticks_per_second);
     angle_rad_ += (speed_rad_s_ + next_speed) / (2.0 * ticks_per_second);
     speed_rad_s_ = next_speed;
 

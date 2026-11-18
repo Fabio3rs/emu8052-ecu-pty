@@ -1,5 +1,42 @@
 # SEVEL Lab visual comparison matrix
 
+## Current five-state batch — 2026-11-18
+
+NativeLab `p_cb3092e6c577` captured all five states at 1920×1080 in isolated
+Xvfb displays (two concurrent workers). All five scripts passed. Each new
+log's complete `[LAB-STATE]` line exactly matches its historical before log,
+including physical RPM, RAM47, state/event hashes and zero overflow.
+
+| State | Tick | Physical RPM | Current artifact |
+| --- | ---: | ---: | --- |
+| Key off | 800000 | 0 | [PNG](../.work/gui-review/states-20261118/stopped.png) |
+| Warm bench candidate idle | 800000 | 939.609808 | [PNG](../.work/gui-review/states-20261118/idle-fixed.png) |
+| Replayed 24 Nm | 800000 | 654.545794 | [PNG](../.work/gui-review/states-20261118/replay-load.png) |
+| Replayed 60 Nm / 25 mm cable | 3000000 | 768.165537 | [PNG](../.work/gui-review/states-20261118/high-load.png) |
+| Paused replay | 1500000 | 997.653527 | [PNG](../.work/gui-review/states-20261118/paused.png) |
+
+All five images were inspected: both mechanical views, piston orientation,
+gauges, out-of-range lambda text, replay-disabled controls, selected KEY/PAUSE
+inversion and scope labels remain visible. P1.1 dial values still differ
+from physical RPM and are explicitly marked as a hypothesis; this batch
+does not validate the electrical tachometer mapping.
+
+Inspection found START's HOLD annotation crossing its 40 px button border
+because the old vertical offsets scaled independently of button height.
+Both text positions now derive from button height. NativeLab
+`p_9332a92aedc0` rebuilt and refreshed only the affected idle cell as
+`idle-fixed.png`; visual inspection confirms HOLD is inside the border.
+The other four images retain the pre-fix annotation and are not claimed
+as pixel-exact captures of that final two-line position adjustment.
+Final binary SHA-256:
+`d860b50666ca920b339caa24860d6d2d3c1a6f829b926339f41ee04c5bbb5384`.
+Final idle PNG SHA-256:
+`60793a9f2a46d1487caddee7fa039c4b01261fa1426a66e3e403908d93b3f37d`.
+Each PNG has a sibling log. This batch covers these five Full HD states;
+it does not replace the remaining DPI/interaction/fidelity acceptance work.
+
+## Historical comparison batch
+
 NativeLab captures use the original Fiat Tipo MA1.7 ROM and the same
 1920×1080 output size within each pair. `Before` is an earlier Lab GUI
 capture; `current` is the present renderer. These files are local review

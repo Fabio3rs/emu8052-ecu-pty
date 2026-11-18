@@ -1,6 +1,7 @@
 """Exercise the donor GPU preview with SDL's offscreen video driver."""
 
 import os
+from contextlib import nullcontext
 from pathlib import Path
 import re
 import struct
@@ -62,7 +63,11 @@ def png_foreground_bounds(data):
     return bounds
 
 
-with tempfile.TemporaryDirectory(prefix="sevel-gpu-offscreen-") as directory:
+artifact_directory = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+if artifact_directory:
+    artifact_directory.mkdir(parents=True, exist_ok=True)
+with (nullcontext(str(artifact_directory)) if artifact_directory else
+      tempfile.TemporaryDirectory(prefix="sevel-gpu-offscreen-")) as directory:
     image = Path(directory) / "main.png"
     gpu_image = image.with_name("main-gpu.png")
     environment = os.environ.copy()
@@ -74,6 +79,8 @@ with tempfile.TemporaryDirectory(prefix="sevel-gpu-offscreen-") as directory:
     completed = subprocess.run(command, env=environment, text=True,
                                capture_output=True, timeout=30)
     output = completed.stdout + completed.stderr
+    if artifact_directory:
+        (artifact_directory / "run.log").write_text(output)
     if "[LAB-GPU] preview_ready=1" not in output:
         if ("SDL GPU preview unavailable:" in output or
                 "SDL renderer:" in output or "SDL window:" in output):

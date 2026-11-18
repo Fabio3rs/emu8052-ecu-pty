@@ -249,8 +249,11 @@ void render_sevel_radial_donor(Renderer &renderer,
     constexpr std::array<const char *, 5> names{
         "Crankshaft", "ConnectingRod", "Piston", "CylinderHead", "Valve"};
     std::array<const AuthoredMeshLibrary::Mesh *, 5> meshes{};
-    int vertex_capacity = 128;
-    int index_capacity = 192;
+    // Four housing/rod lines per cylinder plus the common shaft; each
+    // cylinder can also display two spark and two combustion marker lines.
+    constexpr int max_lines = 4 * 4 + 1 + 4 * (2 + 2);
+    int vertex_capacity = max_lines * 4;
+    int index_capacity = max_lines * 6;
     for (std::size_t index = 0; index < meshes.size(); ++index) {
         meshes[index] = mesh_library.find(names[index]);
         if (!meshes[index])

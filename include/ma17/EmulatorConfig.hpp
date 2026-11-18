@@ -9,6 +9,11 @@ struct EmulatorConfig {
     int crank_rpm = 1000;
     bool crank_immediate = false;
     bool physical_crank = false;
+    bool drivetrain = false;
+    int transmission_gear = 0;
+    int clutch_percent = 0;
+    int vehicle_mass_kg = 1000; // Provisional, configurable; not a manual value.
+    int clutch_max_nm = 200; // Provisional capacity.
     bool physical_pty_realtime = false;
     long long starter_ticks = 0;
     long long stop_ticks = 0;

@@ -1,4 +1,6 @@
 #include "ma17/Runner.hpp"
+#include "ma17/EmulatorLoop.hpp"
+#include "engine/Drivetrain.hpp"
 
 #include <array>
 #include <cstdio>
@@ -17,7 +19,16 @@ struct Observation {
     bool events_ordered = true;
     bool saw_tps1_adc_fault = false;
     bool saw_tps1_adc_restore = false;
+    engine::Drivetrain car{1000.0, 0.29, 200.0}; // Explicit test parameters.
 };
+
+void connect_drivetrain(ma17::EmulatorLoopContext &loop, void *raw) {
+    auto &car = static_cast<Observation *>(raw)->car;
+    car.set_gear(1);
+    car.set_clutch_pressure(loop.ticks >= 495000 ? 0.1 : 0.0);
+    loop.drivetrain = &car;
+    loop.vehicle_speed_target_kmh = 100.0; // Must not override physical speed.
+}
 
 void receive_snapshot(const ma17::EmulatorSnapshot &snapshot, void *raw) {
     auto &observation = *static_cast<Observation *>(raw);
@@ -51,7 +62,9 @@ int main(int argc, char **argv) {
     if (argc != 2 && argc != 3)
         return 2;
     const bool adc_fault = argc == 3 && std::string{argv[2]} == "adc_fault";
-    if (argc == 3 && !adc_fault)
+    const bool drivetrain = argc == 3 && std::string{argv[2]} == "drivetrain";
+    const bool drivetrain_cli = argc == 3 && std::string{argv[2]} == "drivetrain_cli";
+    if (argc == 3 && !adc_fault && !drivetrain && !drivetrain_cli)
         return 2;
     std::vector<std::string> words{
         argv[0],  argv[1],        "--physical-crank", "--starter-ticks",
@@ -63,6 +76,10 @@ int main(int argc, char **argv) {
     if (adc_fault)
         words.insert(words.end(), {"--tps1-high-tick", "500000",
                                    "--tps1-restore-tick", "700000"});
+    if (drivetrain_cli)
+        words.insert(words.end(), {"--drivetrain", "--gear", "1",
+            "--clutch-percent", "10", "--vehicle-mass-kg", "1000",
+            "--clutch-max-nm", "200"});
     std::vector<char *> harness_argv(words.size());
     for (std::size_t index = 0; index < words.size(); ++index)
         harness_argv[index] = words[index].data();
@@ -70,11 +87,26 @@ int main(int argc, char **argv) {
     Observation observation;
     const int result = ma17::run_cli(
         static_cast<int>(harness_argv.size()), harness_argv.data(),
-        {receive_snapshot, receive_event, &observation});
+        {receive_snapshot, receive_event, &observation, nullptr,
+         drivetrain ? connect_drivetrain : nullptr});
+    if ((drivetrain || drivetrain_cli) && (!observation.latest.drivetrain_available ||
+        observation.latest.transmission_gear != 1 ||
+        observation.latest.clutch_pressure != 0.1 ||
+        observation.latest.clutch_heat_j <= 0.0 ||
+        observation.latest.vehicle_speed_kmh <= 0.0 ||
+        (drivetrain && observation.latest.vehicle_speed_kmh !=
+                       observation.car.speed_m_s() * 3.6))) {
+        std::fprintf(stderr, "drivetrain snapshot mismatch speed=%.6f heat=%.6f\n",
+                     observation.latest.vehicle_speed_kmh, observation.latest.clutch_heat_j);
+        return 1;
+    }
     if (result != 0 || !observation.ordered || !observation.events_ordered ||
         observation.ignition_edges < 2 || observation.count < 100 ||
         observation.latest.tick != 1485000 ||
-        (!adc_fault && (observation.latest.rpm < 300.0 ||
+        !observation.latest.tachometer_available ||
+        observation.latest.tachometer_pulses < 2 ||
+        observation.latest.tachometer_rpm <= 0.0 ||
+        (!adc_fault && !drivetrain && !drivetrain_cli && (observation.latest.rpm < 300.0 ||
                         observation.latest.crank_angle_rad < 6.28 ||
                         observation.latest.ram47 == 0)) ||
         (adc_fault && (!observation.saw_tps1_adc_fault ||
@@ -89,5 +121,17 @@ int main(int argc, char **argv) {
                      observation.saw_tps1_adc_restore);
         return 1;
     }
+    std::fprintf(stderr, "tachometer P1.1 candidate: pulses=%llu rpm=%.3f\n",
+                 observation.latest.tachometer_pulses,
+                 observation.latest.tachometer_rpm);
+    std::fprintf(stderr,
+                 "RPM comparison tick=%lld physical=%.3f "
+                 "RAM47=%u actual=%u RAM46=%u idle_target=%u P1.1=%.3f\n",
+                 observation.latest.tick, observation.latest.rpm,
+                 static_cast<unsigned>(observation.latest.ram47),
+                 static_cast<unsigned>(observation.latest.ram47) * 25U,
+                 static_cast<unsigned>(observation.latest.ram46),
+                 static_cast<unsigned>(observation.latest.ram46) * 25U,
+                 observation.latest.tachometer_rpm);
     return 0;
 }

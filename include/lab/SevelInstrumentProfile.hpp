@@ -15,7 +15,14 @@ struct Band {
     double start = 0.0;
     double end = 0.0;
     SDL_Color color{};
+    // OES RightGaugeCluster: three-pixel ring, six-pixel outer offset.
+    float width = 3.0f;
+    float radial_offset = 6.0f;
+    float shorten_start = 0.0f;
+    float shorten_end = 0.0f;
 };
+
+inline constexpr float band_shorten_angle = 0.017453292519943295f;
 
 struct Instrument {
     const char *id;
@@ -32,11 +39,13 @@ struct Instrument {
 };
 
 inline constexpr Instrument rpm{
-    "rpm", "ENGINE SPEED", "RPM", "physical crank model", 0.0, 8000.0,
+    "rpm", "RPM P1.1?", "RPM", "ECU P1.1 candidate: 2 pulses/rev", 0.0, 8000.0,
     1000.0, 200.0,
     {{{400.0, 1000.0, {0, 229, 255, 255}},
-      {5600.0, 6000.0, {245, 205, 30, 255}},
-      {6000.0, 8000.0, {238, 68, 69, 255}}}},
+      {5600.0, 6000.0, {245, 205, 30, 255}, 3.0f, 6.0f,
+       -band_shorten_angle, band_shorten_angle},
+      {6000.0, 8000.0, {238, 68, 69, 255}, 3.0f, 6.0f,
+       band_shorten_angle, -band_shorten_angle}}},
     3};
 inline constexpr Instrument speed{
     "vehicle_speed", "VEHICLE SPEED", "KM/H", "scenario road input",
@@ -61,8 +70,8 @@ inline constexpr Instrument load{
     "applied_load", "APPLIED LOAD", "Nm", "scenario resisting load",
     0.0, 60.0, 20.0, 5.0};
 inline constexpr Instrument clutch{
-    "clutch_pressure", "CLUTCH", "%", "no SEVEL clutch state published",
-    0.0, 100.0, 50.0, 10.0, {}, 0, true};
+    "clutch_pressure", "CLUTCH", "%", "drivetrain pressure: 0=open, 100=engaged",
+    0.0, 100.0, 50.0, 10.0};
 inline constexpr Instrument lambda{
     "lambda", "LAMBDA", "1", "physical exhaust model", 0.5, 1.5,
     0.25, 0.1};

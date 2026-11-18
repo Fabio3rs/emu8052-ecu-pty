@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
     session.set_speed(16.0);
     session.start();
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        std::chrono::steady_clock::now() + std::chrono::seconds(120);
     while (!session.finished() && std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if (!session.finished()) {

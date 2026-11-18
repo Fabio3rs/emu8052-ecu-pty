@@ -2,6 +2,8 @@
 
 namespace engine {
 
+class Drivetrain;
+
 // Estimated equivalent crank/flywheel parameters; SI units throughout.
 struct CrankParameters {
     double inertia_kg_m2 = 0.20;
@@ -24,11 +26,15 @@ class CrankDynamics {
 
     // Advance one 11.88 MHz / 12 machine cycle. Returns true at a 6-degree
     // wheel boundary; positions 58 and 59 are the missing teeth.
+    // Transmission torque is signed: positive drives the crank, negative
+    // loads it. Keep this separate from combustion and scenario resistance.
     bool step(bool starter_engaged, double combustion_torque_nm = 0.0,
-              double load_torque_nm = 0.0);
+              double load_torque_nm = 0.0, double transmission_torque_nm = 0.0,
+              Drivetrain *drivetrain = nullptr);
 
     double angle_rad() const { return angle_rad_; }
     double speed_rad_s() const { return speed_rad_s_; }
+    double inertia_kg_m2() const { return parameters_.inertia_kg_m2; }
     double rpm() const;
     double friction_torque_nm() const;
     int wheel_position() const;

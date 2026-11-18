@@ -21,8 +21,10 @@ struct FontRenderer::Data {
 
     std::vector<unsigned char> bytes;
     std::vector<std::uint32_t> atlas_pixels;
-    int atlas_w = 512;
+    int atlas_w = 1024;
     int atlas_h = 256;
+    float atlas_scale = 2.0f;
+    float baseline = 12.0f;
     SDL_Texture *texture = nullptr;
     SDL_Renderer *cached_renderer = nullptr;
     FT_Library library = nullptr;
@@ -45,27 +47,50 @@ FontRenderer::FontRenderer(const std::string &path)
     if (FT_Init_FreeType(&data_->library) != 0)
         return;
 
-    data_->bytes = decode_packaged_bytes(path, 18336);
-    bool face_loaded = !data_->bytes.empty() &&
-                       FT_New_Memory_Face(data_->library, data_->bytes.data(),
-                                          static_cast<FT_Long>(data_->bytes.size()),
-                                          0, &data_->face) == 0;
-    constexpr const char *kSystemFonts[] = {
+    constexpr const char *kModernSystemFonts[] = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
-        "/usr/share/fonts/truetype/ubuntu/UbuntuMono-B.ttf"
+        "/usr/share/fonts/truetype/ubuntu/UbuntuMono-B.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf"
     };
-    if (!face_loaded) {
-        for (const char *sys_path : kSystemFonts) {
+    const char *env_font = std::getenv("SEVEL_FONT");
+    const bool force_retro = env_font && (std::string_view(env_font) == "retro" ||
+                                          std::string_view(env_font) == "slkscr");
+    bool face_loaded = false;
+
+    if (env_font && !force_retro && std::string_view(env_font) != "modern") {
+        face_loaded = FT_New_Face(data_->library, env_font, 0, &data_->face) == 0;
+    }
+
+    if (!face_loaded && !force_retro) {
+        for (const char *sys_path : kModernSystemFonts) {
             if (FT_New_Face(data_->library, sys_path, 0, &data_->face) == 0) {
                 face_loaded = true;
                 break;
             }
         }
     }
+
+    if (!face_loaded && !path.empty()) {
+        data_->bytes = decode_packaged_bytes(path, 18336);
+        if (!data_->bytes.empty()) {
+            face_loaded = FT_New_Memory_Face(data_->library, data_->bytes.data(),
+                                             static_cast<FT_Long>(data_->bytes.size()),
+                                             0, &data_->face) == 0;
+        } else {
+            face_loaded = FT_New_Face(data_->library, path.c_str(), 0, &data_->face) == 0;
+        }
+    }
     if (!face_loaded)
         return;
-    if (FT_Set_Pixel_Sizes(data_->face, 0, 14) != 0)
+
+    constexpr int kRasterPixelHeight = 28;
+    constexpr float kNominalPixelHeight = 14.0f;
+    data_->atlas_scale = static_cast<float>(kRasterPixelHeight) / kNominalPixelHeight;
+    data_->baseline = 12.0f;
+
+    if (FT_Set_Pixel_Sizes(data_->face, 0, kRasterPixelHeight) != 0)
         return;
 
     data_->atlas_pixels.assign(static_cast<std::size_t>(data_->atlas_w * data_->atlas_h), 0);
@@ -79,9 +104,10 @@ FontRenderer::FontRenderer(const std::string &path)
             return;
         auto &glyph = data_->glyphs[static_cast<std::size_t>(codepoint)];
         const FT_GlyphSlot slot = data_->face->glyph;
-        glyph.advance = static_cast<float>(slot->advance.x) / 64.0f;
-        glyph.left = static_cast<float>(slot->bitmap_left);
-        glyph.top = static_cast<float>(slot->bitmap_top);
+        glyph.advance =
+            (static_cast<float>(slot->advance.x) / 64.0f) / data_->atlas_scale;
+        glyph.left = static_cast<float>(slot->bitmap_left) / data_->atlas_scale;
+        glyph.top = static_cast<float>(slot->bitmap_top) / data_->atlas_scale;
 
         const FT_Bitmap &bitmap = slot->bitmap;
         const auto width = static_cast<int>(bitmap.width);
@@ -151,7 +177,7 @@ void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
             SDL_UpdateTexture(data_->texture, nullptr, data_->atlas_pixels.data(),
                               data_->atlas_w * 4);
             SDL_SetTextureBlendMode(data_->texture, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(data_->texture, SDL_SCALEMODE_NEAREST);
+            SDL_SetTextureScaleMode(data_->texture, SDL_SCALEMODE_LINEAR);
         }
     }
     if (!data_->texture)
@@ -161,13 +187,15 @@ void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
     SDL_SetTextureAlphaMod(data_->texture, color.a);
 
     float cursor = x;
+    const float inv_atlas_scale = 1.0f / data_->atlas_scale;
     for (char character : text) {
         const auto codepoint = static_cast<unsigned char>(character);
         const auto &glyph = data_->glyphs[codepoint < 128 ? codepoint : '?'];
         if (glyph.src.w > 0.0f && glyph.src.h > 0.0f) {
             const SDL_FRect dst{cursor + glyph.left * scale,
-                                y + (12.0f - glyph.top) * scale,
-                                glyph.src.w * scale, glyph.src.h * scale};
+                                y + (data_->baseline - glyph.top) * scale,
+                                glyph.src.w * inv_atlas_scale * scale,
+                                glyph.src.h * inv_atlas_scale * scale};
             SDL_RenderTexture(renderer, data_->texture, &glyph.src, &dst);
         }
         cursor += glyph.advance * scale;

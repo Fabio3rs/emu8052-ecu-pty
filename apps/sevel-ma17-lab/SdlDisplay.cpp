@@ -12,13 +12,16 @@
 #include "lab/MeshAsset.hpp"
 #include "lab/RecordingRenderer.hpp"
 #include "lab/ScopeCursor.hpp"
+#include "lab/SceneCameraFit.hpp"
 #include "lab/SimSession.hpp"
+#include "lab/DrivetrainExport.hpp"
 #include "lab/SevelInstrumentProfile.hpp"
 #include "lab/SevelTransmission.hpp"
 
 #include "gauge.h"
 #include "gear_card_layout.h"
 #include "sdl_gpu_renderer.h"
+#include "ui_button_style.h"
 
 #include <SDL3/SDL.h>
 
@@ -200,6 +203,9 @@ bool save_scope_csv(const std::filesystem::path &path,
         });
     if (first == last)
         return false;
+    const bool has_drivetrain = std::any_of(first, last, [](const auto &sample) {
+        return sample.drivetrain_available;
+    });
     std::size_t gaps_over_250ms = 0;
     for (auto sample = std::next(first); sample != last; ++sample) {
         if (sample->tick - std::prev(sample)->tick > 247500LL)
@@ -296,6 +302,8 @@ bool save_scope_csv(const std::filesystem::path &path,
             out << ",rom_iram_" << std::hex << (0x60 + index) << std::dec
                 << "_u8";
     }
+    if (has_drivetrain)
+        write_drivetrain_csv_header(out);
     out << '\n';
     for (auto sample = first; sample != last; ++sample) {
         out << sample->tick << ',' <<
@@ -329,6 +337,8 @@ bool save_scope_csv(const std::filesystem::path &path,
             for (const uint8_t value : sample->rom_iram_60_67)
                 out << ',' << static_cast<unsigned>(value);
         }
+        if (has_drivetrain)
+            write_drivetrain_csv_row(out, *sample);
         out << '\n';
     }
     return out.good();
@@ -685,47 +695,6 @@ SDL_FRect instrument_cluster_rect(int width, int height) {
             static_cast<float>(height) - 16.0f * scale};
 }
 
-template <typename Render>
-void fit_scene_camera(SceneCamera &camera,
-                      const ma17::EmulatorSnapshot &snapshot,
-                      float viewport_width, float viewport_height,
-                      const SDL_FRect &target, Render &&render) {
-    float min_x = std::numeric_limits<float>::max();
-    float min_y = min_x;
-    float max_x = std::numeric_limits<float>::lowest();
-    float max_y = max_x;
-    constexpr double pi = 3.14159265358979323846;
-    for (int phase = 0; phase < 16; ++phase) {
-        auto sample = snapshot;
-        sample.crank_angle_rad = sample.tdc_phase_rad +
-            static_cast<double>(phase) * (4.0 * pi / 16.0);
-        RecordingRenderer probe;
-        render(probe, sample, camera);
-        float x0, y0, x1, y1;
-        if (!probe.pixel_bounds(x0, y0, x1, y1))
-            continue;
-        min_x = std::min(min_x, x0);
-        min_y = std::min(min_y, y0);
-        max_x = std::max(max_x, x1);
-        max_y = std::max(max_y, y1);
-    }
-    const float span_x = max_x - min_x;
-    const float span_y = max_y - min_y;
-    if (!(span_x > 0.0f && span_y > 0.0f) ||
-        !std::isfinite(span_x) || !std::isfinite(span_y))
-        return;
-    const float requested = std::min(target.w / span_x, target.h / span_y);
-    const float zoom = std::clamp(camera.zoom * requested, 0.5f, 3.0f);
-    const float factor = zoom / camera.zoom;
-    const float anchor_x = viewport_width * 0.5f + camera.pan_x;
-    const float anchor_y = viewport_height * 0.42f + camera.pan_y;
-    const float next_x = anchor_x + ((min_x + max_x) * 0.5f - anchor_x) * factor;
-    const float next_y = anchor_y + ((min_y + max_y) * 0.5f - anchor_y) * factor;
-    camera.zoom = zoom;
-    camera.pan_x += target.x + target.w * 0.5f - next_x;
-    camera.pan_y += target.y + target.h * 0.5f - next_y;
-}
-
 SDL_FRect view_selector_rect(int width, int height) {
     if (width < 1280 || height < 720) {
         const SDL_FRect mechanical = LabLayout::for_output(width, height).mechanical;
@@ -780,6 +749,15 @@ SDL_FRect gear_widget_rect(int width, int height) {
     const float top = 410.0f * scale + 8.0f;
     const float bottom = static_cast<float>(height) - 340.0f;
     const float panel_w = LabLayout::for_output(width, height).left.w;
+    if (width >= 1800 && height >= 1000 && bottom - top >= 64.0f) {
+        // OES desktop 2048x816: each load-cluster cell is W/9 by H/6.
+        constexpr float donor_aspect = (2048.0f / 9.0f) / (816.0f / 6.0f);
+        const float gap = 8.0f * scale;
+        const float cell_w = std::min((panel_w - 32.0f * scale - gap) * 0.5f,
+                                      (bottom - top) * donor_aspect);
+        return {panel_w * 0.5f + gap * 0.5f, top,
+                cell_w, cell_w / donor_aspect};
+    }
     const float card_w = std::min(90.0f * scale, panel_w - 32.0f);
     if (bottom - top >= 64.0f)
         return {(panel_w - card_w) * 0.5f, top, card_w, bottom - top};
@@ -821,7 +799,7 @@ int gear_widget_step(float x, float y, int width, int height) {
 }
 
 void draw_gear_widget(SDL_Renderer *screen, FontRenderer &font, int width,
-                      int height, int selected_gear) {
+                      int height, int selected_gear, bool physical) {
     const SDL_FRect box = gear_widget_rect(width, height);
     if (box.w <= 0.0f)
         return;
@@ -831,12 +809,13 @@ void draw_gear_widget(SDL_Renderer *screen, FontRenderer &font, int width,
     SDL_SetRenderDrawColor(screen, 150, 157, 163, 255);
     SDL_RenderRect(screen, &box);
     const SDL_FRect inner = gear_widget_inner_rect(box, scale);
-    char digit[2]{selected_gear == 0 ? 'N' :
+    char digit[2]{selected_gear == -1 ? 'R' : selected_gear == 0 ? 'N' :
                       static_cast<char>('0' + selected_gear), '\0'};
     if (width < 1100) {
         char label[16];
         std::snprintf(label, sizeof(label),
-                      box.w < 120.0f ? "%s REF" : "GEAR %s REF", digit);
+                      box.w < 120.0f ? "%s %s" : "GEAR %s %s", digit,
+                      physical ? "" : "REF");
         const float text_scale = 0.68f * scale;
         font.draw(screen,
                   inner.x + (inner.w - font.measure(label) * text_scale) * 0.5f,
@@ -891,7 +870,7 @@ void draw_gear_widget(SDL_Renderer *screen, FontRenderer &font, int width,
 
 void draw_gear_tooltip(SDL_Renderer *screen, FontRenderer &font, int width,
                        int height, int selected_gear, double engine_rpm,
-                       bool crank_available) {
+                       bool crank_available, bool physical) {
     const SDL_FRect gear = gear_widget_rect(width, height);
     if (gear.w <= 0.0f)
         return;
@@ -903,7 +882,10 @@ void draw_gear_tooltip(SDL_Renderer *screen, FontRenderer &font, int width,
         y < gear.y || y >= gear.y + gear.h)
         return;
     char ratio[80];
-    if (selected_gear <= 0 ||
+    if (selected_gear == -1)
+        std::snprintf(ratio, sizeof(ratio), "GEAR R | TOTAL %.3f",
+                      lab::transmission::overall_ratio(-1));
+    else if (selected_gear <= 0 ||
         selected_gear >= static_cast<int>(lab::transmission::gear_ratios.size()))
         std::snprintf(ratio, sizeof(ratio), "GEAR N | NEUTRAL");
     else
@@ -931,7 +913,9 @@ void draw_gear_tooltip(SDL_Renderer *screen, FontRenderer &font, int width,
                       "IDEAL: %.1f W-RPM | %.1f KM/H", *ideal_wheel,
                       *ideal_speed);
     constexpr const char *source = "FIAT RATIOS | EST. TIRE R=0.29 M";
-    const char *limit = selected_gear == 0
+    const char *limit = physical
+        ? "ROAD: PHYSICS | IDEAL ASSUMES NO CLUTCH SLIP"
+        : selected_gear == 0
         ? "NO DRIVE IN NEUTRAL | ROAD: SCENARIO"
         : "CLUTCH ASSUMED ENGAGED | ROAD: SCENARIO";
     const float scale = lab_ui_scale(width, height);
@@ -984,15 +968,19 @@ void draw_lab_buttons(SDL_Renderer *screen, FontRenderer &font, int width,
         const bool held = over && (mouse_state & SDL_BUTTON_LMASK) != 0;
         const auto bounds = lab_button_rect(index, width, height, left_width);
         const SDL_FRect box{bounds.x, bounds.y, bounds.width, bounds.height};
-        const SDL_Color fill = !enabled[index]   ? SDL_Color{24, 30, 38, 255}
-                               : selected[index] ? SDL_Color{58, 93, 104, 255}
-                               : held            ? SDL_Color{47, 67, 76, 255}
-                               : over            ? SDL_Color{38, 56, 67, 255}
-                                                 : SDL_Color{29, 43, 55, 255};
+        const auto style = oes::button_style(
+            {235.0f, 241.0f, 246.0f, 255.0f},
+            {14.0f, 16.0f, 18.0f, 255.0f}, selected[index], held, over);
+        const auto sdl_color = [](const oes::ButtonColor &color) {
+            return SDL_Color{static_cast<Uint8>(color[0]),
+                             static_cast<Uint8>(color[1]),
+                             static_cast<Uint8>(color[2]),
+                             static_cast<Uint8>(color[3])};
+        };
+        const SDL_Color fill = !enabled[index] ? SDL_Color{24, 30, 38, 255}
+                                               : sdl_color(style.fill);
         const SDL_Color frame = !enabled[index] ? SDL_Color{65, 75, 82, 255}
-                                : selected[index]
-                                    ? SDL_Color{99, 211, 220, 255}
-                                    : SDL_Color{100, 139, 151, 255};
+                                               : sdl_color(style.foreground);
         SDL_SetRenderDrawColor(screen, fill.r, fill.g, fill.b, fill.a);
         SDL_RenderFillRect(screen, &box);
         SDL_SetRenderDrawColor(screen, frame.r, frame.g, frame.b, frame.a);
@@ -1011,7 +999,7 @@ void draw_lab_buttons(SDL_Renderer *screen, FontRenderer &font, int width,
             label = load_label;
         }
         const SDL_Color label_color =
-            enabled[index] ? SDL_Color{235, 241, 246, 255}
+            enabled[index] ? sdl_color(style.foreground)
                            : SDL_Color{94, 108, 116, 255};
         const float text_scale = bounds.height < 36.0f
                                      ? 0.68f * scale : scale;
@@ -1027,14 +1015,14 @@ void draw_lab_buttons(SDL_Renderer *screen, FontRenderer &font, int width,
             font.draw(screen,
                       bounds.x + (bounds.width - font.measure(label) * scale) /
                                      2.0f,
-                      bounds.y + 5.0f * scale, label, label_color, scale);
+                      bounds.y + bounds.height * 0.05f, label, label_color, scale);
             const std::string hint = "HOLD";
             const float hint_scale = 0.65f * scale;
             font.draw(screen,
                       bounds.x +
                           (bounds.width - font.measure(hint) * hint_scale) /
                               2.0f,
-                      bounds.y + 23.0f * scale, hint, label_color,
+                      bounds.y + bounds.height * 0.60f, hint, label_color,
                       hint_scale);
             continue;
         }
@@ -1343,7 +1331,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     double pedal_applied_m = pedal_pull_m;
     double load_nm = snapshot.applied_load_nm;
     double road_speed_target_kmh = snapshot.vehicle_speed_kmh;
-    int selected_gear = 0;
+    int selected_gear = snapshot.drivetrain_available ? snapshot.transmission_gear : 0;
+    std::optional<double> requested_clutch_pressure;
     int compact_instrument_page = 0;
     double remembered_load_nm = load_nm > 0.0 ? load_nm : 24.0;
     bool pedal_user_override = false;
@@ -1397,6 +1386,14 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     bool last_trigger_waiting = false;
     long long active_trigger_tick = -1;
     long long trigger_armed_tick = snapshot.tick;
+    struct NormalTriggerCapture {
+        long long armed_tick = -1;
+        long long trigger_tick = -1;
+        long long span = 0;
+        long long end = 0;
+        ma17::EmulatorSnapshot snapshot;
+        std::vector<ma17::EmulatorSnapshot> history;
+    } normal_capture;
     std::array<long long, 2> scope_cursor_ticks{-1, -1};
     std::array<std::optional<DigitalScopeCursor>, 2> digital_cursors{};
     float sound_volume = 1.0f;
@@ -1468,6 +1465,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     gauges[0].m_thetaMin = 1.2f * 3.14159265f;
     gauges[0].m_thetaMax = -0.2f * 3.14159265f;
     gauges[0].m_needleWidth = 4.0f;
+    gauges[0].m_needleTimeConstant = 0.2f;
     gauges[1].m_minorStep = 5;
     gauges[1].m_majorStep = 10;
     gauges[2].m_minorStep = 1;
@@ -1476,7 +1474,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         gauge.m_minorTickLength = 6.0f;
         gauge.m_majorTickLength = 14.0f;
     }
-    gauges[0].reset(static_cast<float>(displayed.rpm));
+    gauges[0].reset(static_cast<float>(displayed.tachometer_rpm));
     gauges[1].reset(static_cast<float>(displayed.throttle_angle_rad * 57.2958));
     gauges[2].reset(static_cast<float>(displayed.lambda));
     const auto activate_button = [&](LabButtonAction action) {
@@ -1812,6 +1810,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                     end, 0LL, displayed.tick);
                             }
                             trigger_armed_tick = displayed.tick;
+                            normal_capture = {};
                             if (trigger_latched) {
                                 analog_frozen = false;
                                 trigger_latched = false;
@@ -2049,6 +2048,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             trigger_channel = 0;
                             trigger_event_source = -1;
                             trigger_armed_tick = displayed.tick;
+                            normal_capture = {};
                             const auto &spec = analog_scope_instrument(
                                 analog_group, 0);
                             trigger_level = (spec.minimum + spec.maximum) * 0.5;
@@ -2071,6 +2071,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         analog_frozen = trigger_latched = false;
                         scope_cursor_ticks = {-1, -1};
                         trigger_armed_tick = displayed.tick;
+                        normal_capture = {};
                         continue;
                     }
                     if (!analog_scope && event.button.clicks >= 2 &&
@@ -2144,7 +2145,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             view_width, view_height);
                         if (step != 0) {
                             selected_gear = std::clamp(selected_gear + step,
-                                                       0, 5);
+                                displayed.drivetrain_available ? -1 : 0, 5);
+                            if (displayed.drivetrain_available)
+                                session->set_gear(selected_gear);
                             continue;
                         }
                     }
@@ -2326,6 +2329,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 trigger_channel = 0;
                 trigger_event_source = -1;
                 trigger_armed_tick = displayed.tick;
+                normal_capture = {};
                 const auto &spec = analog_scope_instrument(analog_group, 0);
                 trigger_level = (spec.minimum + spec.maximum) * 0.5;
                 if (trigger_latched) {
@@ -2404,6 +2408,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 if (changed_trigger) {
                     analog_navigation_end_tick.reset();
                     trigger_armed_tick = displayed.tick;
+                    normal_capture = {};
                     std::fprintf(stdout,
                                  "[LAB-TRIGGER] mode=%d group=%d channel=%zu source=%d level=%.3f slope=%c pre=%.2f armed=%lld\n",
                                  static_cast<int>(trigger_mode), analog_group,
@@ -2439,24 +2444,35 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     analog_frozen = false;
                     trigger_latched = false;
                     trigger_armed_tick = displayed.tick;
+                    normal_capture = {};
                 }
             }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
-                event.key.key == SDLK_C)
+                event.key.key == SDLK_C) {
                 scope_csv_requested = true;
+                std::fprintf(stdout, "[LAB-SCOPE-REQUEST] tick=%lld group=%d\n",
+                             displayed.tick, analog_scope ? analog_group : -1);
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
                 (event.key.key == SDLK_F || event.key.key == SDLK_F11))
                 toggle_fullscreen();
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
-                event.key.key == SDLK_F12)
+                event.key.key == SDLK_F12) {
+                std::fprintf(stdout, "[LAB-KEY] F12 received! displayed.tick=%lld\n", displayed.tick);
+                std::fflush(stdout);
                 manual_capture_requested = true;
+            }
             if (session && event.type == SDL_EVENT_KEY_DOWN &&
                 !event.key.repeat) {
-                if (event.key.key == SDLK_SPACE)
+                if (event.key.key == SDLK_SPACE) {
+                    std::fprintf(stdout, "[LAB-KEY] SPACE received! session->paused=%d displayed.tick=%lld\n",
+                                 session->paused(), displayed.tick);
+                    std::fflush(stdout);
                     activate_button(LabButtonAction::Pause);
+                }
                 else if (event.key.key == SDLK_PERIOD)
                     session->step_time(std::chrono::milliseconds(10));
                 else if (event.key.key == SDLK_COMMA)
@@ -2474,18 +2490,29 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 else if (event.key.key == SDLK_L)
                     activate_button(LabButtonAction::Load);
                 else if (!replay_controls &&
-                         (event.key.key == SDLK_Q || event.key.key == SDLK_E))
+                         (event.key.key == SDLK_Q || event.key.key == SDLK_E)) {
                     selected_gear = std::clamp(
                         selected_gear + (event.key.key == SDLK_E ? 1 : -1),
-                        0, 5);
+                        displayed.drivetrain_available ? -1 : 0, 5);
+                    if (displayed.drivetrain_available)
+                        session->set_gear(selected_gear);
+                }
                 else if (!replay_controls &&
                          (event.key.key == SDLK_PAGEUP ||
                           event.key.key == SDLK_PAGEDOWN)) {
-                    road_speed_target_kmh = std::clamp(
-                        road_speed_target_kmh +
-                            (event.key.key == SDLK_PAGEUP ? 10.0 : -10.0),
-                        0.0, 200.0);
-                    session->set_vehicle_speed(road_speed_target_kmh);
+                    if (displayed.drivetrain_available) {
+                        requested_clutch_pressure = std::clamp(
+                            requested_clutch_pressure.value_or(displayed.clutch_pressure) +
+                                (event.key.key == SDLK_PAGEUP ? 0.1 : -0.1),
+                            0.0, 1.0);
+                        session->set_clutch_pressure(*requested_clutch_pressure);
+                    } else {
+                        road_speed_target_kmh = std::clamp(
+                            road_speed_target_kmh +
+                                (event.key.key == SDLK_PAGEUP ? 10.0 : -10.0),
+                            0.0, 200.0);
+                        session->set_vehicle_speed(road_speed_target_kmh);
+                    }
                 }
                 else if (!replay_controls && event.key.key == SDLK_S) {
                     keyboard_starter_held = true;
@@ -2580,21 +2607,23 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                  displayed.tick - 2LL * analog_span_ticks + pre_ticks,
                  trigger_armed_tick});
             const long long last_candidate = displayed.tick - post_ticks;
+            const auto occurrence = trigger_mode == TriggerMode::Single
+                ? TriggerOccurrence::First : TriggerOccurrence::Latest;
             std::optional<long long> crossing;
             if (trigger_event_source >= 0)
-                crossing = latest_event_trigger(
+                crossing = find_event_trigger(
                     events,
                     static_cast<EventTriggerSource>(trigger_event_source),
-                    trigger_slope, first_candidate, last_candidate);
+                    trigger_slope, first_candidate, last_candidate, occurrence);
             else
-                crossing = latest_analog_trigger(
+                crossing = find_analog_trigger(
                     analog_history,
                     [&](const ma17::EmulatorSnapshot &sample) {
                         return analog_scope_value(sample, analog_group,
                                                   trigger_channel);
                     },
                     trigger_level, trigger_slope, first_candidate,
-                    last_candidate);
+                    last_candidate, 247500, occurrence);
             if (crossing) {
                 active_trigger_tick = *crossing;
                 analog_scope_end_tick = *crossing + post_ticks;
@@ -2606,27 +2635,52 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     });
                 if (after != analog_history.begin())
                     analog_scope_displayed = *std::prev(after);
+                if (trigger_mode == TriggerMode::Normal &&
+                    (normal_capture.armed_tick != trigger_armed_tick ||
+                     normal_capture.trigger_tick != *crossing ||
+                     normal_capture.span != analog_span_ticks)) {
+                    normal_capture = {trigger_armed_tick, *crossing,
+                        analog_span_ticks, analog_scope_end_tick,
+                        analog_scope_displayed, analog_history};
+                }
                 if (trigger_mode == TriggerMode::Single) {
                     frozen_scope_snapshot = analog_scope_displayed;
                     frozen_scope_end_tick = analog_scope_end_tick;
                     trigger_latched = analog_frozen = true;
                     std::fprintf(stdout,
-                                 "[LAB-TRIGGER] single tick=%lld end=%lld group=%d channel=%zu source=%d\n",
+                                 "[LAB-TRIGGER] single tick=%lld end=%lld group=%d channel=%zu source=%d span=%lld pre=%lld history_first=%lld available_end=%lld\n",
                                  *crossing, analog_scope_end_tick,
                                  analog_group, trigger_channel,
-                                 trigger_event_source);
+                                 trigger_event_source, analog_span_ticks,
+                                 pre_ticks, analog_history.front().tick,
+                                 displayed.tick);
                 }
             } else {
                 trigger_waiting = trigger_mode != TriggerMode::Auto;
+                if (trigger_mode == TriggerMode::Normal) {
+                    const bool retained =
+                        normal_capture.armed_tick == trigger_armed_tick &&
+                        normal_capture.span == analog_span_ticks;
+                    if (retained) {
+                        analog_history = normal_capture.history;
+                        analog_scope_displayed = normal_capture.snapshot;
+                        analog_scope_end_tick = normal_capture.end;
+                        active_trigger_tick = normal_capture.trigger_tick;
+                    } else {
+                        analog_history.clear();
+                    }
+                }
             }
         }
         if (trigger_waiting && !last_trigger_waiting)
             std::fprintf(stdout,
-                         "[LAB-TRIGGER] waiting group=%d channel=%zu level=%.3f source=%d\n",
+                         "[LAB-TRIGGER] waiting group=%d channel=%zu level=%.3f source=%d shown_samples=%zu\n",
                          analog_group, trigger_channel, trigger_level,
-                         trigger_event_source);
+                         trigger_event_source, analog_history.size());
         last_trigger_waiting = trigger_waiting;
         const Uint64 frame_ticks = SDL_GetTicks();
+        const int applied_gear = displayed.drivetrain_available
+            ? displayed.transmission_gear : selected_gear;
         if (displayed.tick != last_snapshot_tick) {
             last_snapshot_tick = displayed.tick;
             last_snapshot_wall_ms = frame_ticks;
@@ -2655,7 +2709,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 session->set_pedal(pedal_applied_m);
             }
         }
-        gauges[0].m_value = static_cast<float>(displayed.rpm);
+        gauges[0].m_value = static_cast<float>(displayed.tachometer_rpm);
         gauges[1].m_value =
             static_cast<float>(displayed.throttle_angle_rad * 57.2958);
         gauges[2].m_value = static_cast<float>(displayed.lambda);
@@ -2668,7 +2722,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             running = false;
             break;
         }
-        char title[256];
+        char title[288];
+        char clutch_label[24] = "CLUTCH --";
+        if (displayed.drivetrain_available)
+            std::snprintf(clutch_label, sizeof(clutch_label), "CLUTCH %.0f%%",
+                          displayed.clutch_pressure * 100.0);
         constexpr std::array<const char *, 4> view_names{
             "SHAFT", "RADIAL", "AXIAL 1/4", "AXIAL 2/3"};
         constexpr std::array<const char *, 11> scope_names{
@@ -2682,7 +2740,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         else
             std::snprintf(rpm_label, sizeof(rpm_label), "-- rpm");
         std::snprintf(title, sizeof(title),
-                      "%s | %s | %s SCOPE%s | %s @%lld | %s | GEAR %c | RAM47=%u | tick %lld | "
+                      "%s | %s | %s SCOPE%s | %s @%lld | %s | GEAR %c | %s | RAM47=%u | tick %lld | "
                       "V view, K key, S starter, arrows pedal, Q/E gear, L load, "
                       "Space pause, . 10ms, , next ignition",
                       profile::vehicle,
@@ -2698,8 +2756,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                           : !analog_scope && digital_frozen
                               ? frozen_digital_tick : displayed.tick,
                       rpm_label,
-                      selected_gear == 0 ? 'N' :
-                          static_cast<char>('0' + selected_gear),
+                      applied_gear == -1 ? 'R' : applied_gear == 0 ? 'N' :
+                          static_cast<char>('0' + applied_gear),
+                      clutch_label,
                       static_cast<unsigned>(displayed.ram47), displayed.tick);
         SDL_SetWindowTitle(window, title);
         RecordingRenderer geometry;
@@ -3087,8 +3146,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                     layout.left.w - 16.0f * ui_scale,
                                     320.0f * ui_scale};
         draw_oes_left_cluster(screen, font, left_bounds, displayed, ui_scale,
-                              stale_snapshot, selected_gear, display_units);
-        draw_gear_widget(screen, font, width, height, selected_gear);
+                              stale_snapshot, applied_gear, display_units);
+        draw_gear_widget(screen, font, width, height, applied_gear,
+                         displayed.drivetrain_available);
         const char *sound_state = "on";
         if (!audio_stream || !audio_source)
             sound_state = enable_audio ? "unavailable" : "off";
@@ -3141,15 +3201,15 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         "IG0", "IG1", "INJ", "SP14", "SP23"};
                     const bool spark = trigger_event_source >= 3;
                     std::snprintf(trigger_status, sizeof(trigger_status),
-                                  "T:%c%s%c/%d%%%s", mode,
+                                  "T:%c%s %s%c/%d%%", mode, state,
                                   names[static_cast<std::size_t>(
                                       trigger_event_source)],
                                   spark ? ' ' :
                                   trigger_slope == TriggerSlope::Rising ? '^' : 'v',
-                                  pre, state);
+                                  pre);
                 } else {
                     std::snprintf(trigger_status, sizeof(trigger_status),
-                                  "T:%c%zu%c%.1f%s/%d%%%s", mode,
+                                  "T:%c%s %zu%c%.1f%s/%d%%", mode, state,
                                   trigger_channel + 1,
                                   trigger_slope == TriggerSlope::Rising ? '^' : 'v',
                                   display_value(trigger_level,
@@ -3158,7 +3218,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                       display_units),
                                   unit_transform(analog_scope_instrument(
                                       analog_group, trigger_channel),
-                                      display_units).unit, pre, state);
+                                  display_units).unit, pre);
                 }
             }
             const auto retention = session
@@ -3168,7 +3228,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                   height, analog_scope_displayed,
                                   analog_history, analog_group,
                                   analog_span_ticks,
-                                  analog_frozen || analog_navigation_end_tick.has_value(),
+                                  analog_frozen || analog_navigation_end_tick.has_value() ||
+                                      (trigger_waiting && trigger_mode == TriggerMode::Normal),
                                   scope_cursor_ticks, analog_scope_end_tick,
                                   active_trigger_tick, trigger_status,
                                   retention.raw_evicted,
@@ -3209,12 +3270,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             session != nullptr};
         draw_lab_buttons(screen, font, width, height, button_selected,
                          button_enabled, load_nm);
-        constexpr std::array<SDL_Color, 6> status_colors{
+        constexpr std::array<SDL_Color, 7> status_colors{
             {{235, 241, 246, 255},
              {176, 218, 226, 255},
              {241, 198, 126, 255},
              {157, 182, 196, 255},
              {176, 218, 226, 255},
+             {157, 182, 196, 255},
              {157, 182, 196, 255}}};
         const SDL_FRect selector = view_selector_rect(width, height);
         const SDL_FRect debug_panel{
@@ -3223,10 +3285,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 ? std::max(status_panel.y + status_panel.h + 8.0f * ui_scale,
                            (lab_buttons_visible(width, height)
                                 ? lab_button_rect(0, width, height).y
-                                : layout.mechanical.h) - 78.0f * ui_scale)
+                                : layout.mechanical.h) - 98.0f * ui_scale)
                 : selector.y + selector.h + 8.0f * ui_scale,
             layout.mechanical.w - 16.0f * ui_scale,
-            (compact_overlay ? 68.0f : 110.0f) * ui_scale};
+            (compact_overlay ? 88.0f : 130.0f) * ui_scale};
         if (show_debug) {
             SDL_SetRenderDrawColor(screen, 20, 25, 31, 248);
             SDL_RenderFillRect(screen, &debug_panel);
@@ -3468,6 +3530,23 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 static_cast<unsigned>(displayed.rom_history_fault_banks[1]),
                 static_cast<unsigned>(displayed.rom_history_fault_banks[2]));
             draw_status(3, status);
+            char tach_value[24] = "--";
+            char tach_pulses[24] = "--";
+            if (displayed.tachometer_available &&
+                std::isfinite(displayed.tachometer_rpm)) {
+                std::snprintf(tach_value, sizeof(tach_value), "%.0f",
+                              displayed.tachometer_rpm);
+                std::snprintf(tach_pulses, sizeof(tach_pulses), "%llu",
+                              displayed.tachometer_pulses);
+            }
+            // RAM values are raw retained bytes, not a fresh timer capture.
+            std::snprintf(status, sizeof(status),
+                          "RPM PHY %s | RAM47 %u | IDLE46 %u | P1.1? %s (%s pulses)",
+                          readings[0].data(),
+                          static_cast<unsigned>(displayed.ram47) * 25U,
+                          static_cast<unsigned>(displayed.ram46) * 25U,
+                          tach_value, tach_pulses);
+            draw_status(compact_overlay ? 4 : 6, status);
         }
         if (show_debug) {
             const SDL_FRect lamp_square{
@@ -3505,10 +3584,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             font.draw(screen, panel.x + 16.0f * ui_scale,
                       panel.y + 16.0f * ui_scale, "SEVEL MA1.7 LAB  |  H: CLOSE",
                       {99, 211, 220, 255}, ui_scale);
-            constexpr std::array<const char *, 8> help_lines{
-                "K KEY  |  HOLD S START  |  UP/DOWN PEDAL  |  Q/E GEAR REF",
+            const std::array<const char *, 8> help_lines{
+                "K KEY  |  HOLD S START  |  UP/DOWN PEDAL  |  Q/E GEAR",
                 "SPACE PAUSE  |  . STEP 10MS  |  , NEXT IGNITION",
-                "+/- SIM  |  PGUP/DN ROAD INPUT  |  L LOAD  |  M MUTE",
+                displayed.drivetrain_available
+                    ? "+/- SIM | PGUP/DN CLUTCH +10/-10% | L LOAD | M MUTE"
+                    : "+/- SIM | PGUP/DN ROAD INPUT | L LOAD | M MUTE",
                 "V SHAFT/RADIAL/AXIAL PAIRS  |  WHEEL ZOOM  |  MIDDLE PAN",
 #ifdef SEVEL_LAB_PNG
                 "G GROUP  |  A ECU/ANALOG  |  X FREEZE  |  C CSV+PNG",
@@ -3546,15 +3627,16 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             SDL_RenderFillRect(screen, &grip);
         }
         if (!show_help)
-            draw_gear_tooltip(screen, font, width, height, selected_gear,
-                              displayed.rpm, displayed.crank_available);
+            draw_gear_tooltip(screen, font, width, height, applied_gear,
+                              displayed.rpm, displayed.crank_available,
+                              displayed.drivetrain_available);
         if (width >= 1800 && height >= 1000) {
             const SDL_FRect gear = gear_widget_rect(width, height);
-            const SDL_FRect clutch{16.0f * ui_scale, gear.y,
-                                   gear.x - 24.0f * ui_scale, gear.h};
+            const SDL_FRect clutch{gear.x - gear.w - 8.0f * ui_scale, gear.y,
+                                   gear.w, gear.h};
             if (clutch.w >= 100.0f && clutch.h >= 90.0f)
-                draw_unavailable_clutch(screen, font, clutch,
-                                        displayed.tick, ui_scale);
+                draw_clutch(screen, font, clutch, displayed, ui_scale,
+                            stale_snapshot);
         }
         if (!captured && displayed.tick >= capture_after_tick) {
             SDL_Surface *surface = SDL_RenderReadPixels(screen, nullptr);
@@ -3566,6 +3648,14 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                              "[LAB-CAPTURE] saved=%s tick=%lld digital_span_ticks=%lld\n",
                              screenshot_path.c_str(), displayed.tick,
                              analog_scope ? -1LL : scope_span_ticks);
+            if (captured && analog_scope && trigger_mode != TriggerMode::Off)
+                std::fprintf(stdout,
+                    "[LAB-TRIGGER-VIEW] mode=%d waiting=%d trigger=%lld end=%lld samples=%zu first=%lld last=%lld live=%lld\n",
+                    static_cast<int>(trigger_mode), trigger_waiting ? 1 : 0,
+                    active_trigger_tick, analog_scope_end_tick, analog_history.size(),
+                    analog_history.empty() ? -1LL : analog_history.front().tick,
+                    analog_history.empty() ? -1LL : analog_history.back().tick,
+                    displayed.tick);
         }
         if (scope_csv_requested) {
             const long long end_tick = analog_scope

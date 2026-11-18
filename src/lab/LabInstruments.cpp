@@ -13,6 +13,7 @@
 #include "lab/SevelInstrumentProfile.hpp"
 #include "lab/SevelTransmission.hpp"
 #include "oscilloscope.h"
+#include "oscilloscope_path.h"
 #include "ui_math.h"
 
 #include <algorithm>
@@ -31,35 +32,49 @@ namespace lab {
 
 namespace {
 
+class OwnedGeometryGenerator final : public GeometryGenerator {
+  public:
+    ~OwnedGeometryGenerator() { destroy(); }
+};
+
 void draw_gauge_arc(SDL_Renderer *renderer, float cx, float cy, float r_in,
                     float r_out, float th0, float th1, SDL_Color color) {
-    constexpr int max_steps = 24;
-    const int steps =
-        std::clamp(static_cast<int>(std::abs(th1 - th0) * 12.0f), 4, max_steps);
-    std::vector<SDL_Vertex> verts;
-    std::vector<int> idxs;
-    verts.reserve(static_cast<std::size_t>((steps + 1) * 2));
-    idxs.reserve(static_cast<std::size_t>(steps * 6));
+    if (!std::isfinite(r_in) || !std::isfinite(r_out) ||
+        !std::isfinite(th0) || !std::isfinite(th1) ||
+        r_in < 0.0f || r_out <= r_in || th0 == th1)
+        return;
+    GeometryGenerator::Ring2dParameters ring;
+    ring.innerRadius = r_in;
+    ring.outerRadius = r_out;
+    ring.startAngle = std::min(th0, th1);
+    ring.endAngle = std::max(th0, th1);
+    // Gauge::render uses a five-pixel edge limit. Clamp for tiny rings so
+    // the donor's asin(maxEdgeLength / (2 * radius)) remains defined.
+    ring.maxEdgeLength = std::min(5.0f, r_out);
+    const float steps = std::ceil((ring.endAngle - ring.startAngle) /
+        std::asin(ring.maxEdgeLength / (2.0f * r_out)));
+    if (!std::isfinite(steps) || steps > 32766.0f)
+        return; // Donor indices are 16-bit.
+    const int segments = std::max(3, static_cast<int>(steps));
+    OwnedGeometryGenerator generator;
+    generator.initialize((segments + 1) * 2, segments * 6);
+    generator.startShape();
+    if (!generator.generateRing2d(ring))
+        return;
+    GeometryGenerator::GeometryIndices shape;
+    generator.endShape(&shape);
+    std::vector<SDL_Vertex> verts(static_cast<std::size_t>((segments + 1) * 2));
+    std::vector<int> idxs(static_cast<std::size_t>(segments * 6));
     const SDL_FColor fcol{static_cast<float>(color.r) / 255.0f,
                           static_cast<float>(color.g) / 255.0f,
                           static_cast<float>(color.b) / 255.0f,
                           static_cast<float>(color.a) / 255.0f};
-    for (int i = 0; i <= steps; ++i) {
-        const float t = th0 + (th1 - th0) * (static_cast<float>(i) /
-                                             static_cast<float>(steps));
-        const float c = std::cos(t), s = std::sin(t);
-        verts.push_back({{cx + r_out * c, cy - r_out * s}, fcol, {0.0f, 0.0f}});
-        verts.push_back({{cx + r_in * c, cy - r_in * s}, fcol, {0.0f, 0.0f}});
+    for (std::size_t i = 0; i < verts.size(); ++i) {
+        const auto &point = generator.getVertexData()[i].Pos;
+        verts[i] = {{cx + point.x, cy - point.y}, fcol, {0.0f, 0.0f}};
     }
-    for (int i = 0; i < steps; ++i) {
-        const int i0 = i * 2;
-        idxs.push_back(i0);
-        idxs.push_back(i0 + 1);
-        idxs.push_back(i0 + 2);
-        idxs.push_back(i0 + 2);
-        idxs.push_back(i0 + 1);
-        idxs.push_back(i0 + 3);
-    }
+    for (std::size_t i = 0; i < idxs.size(); ++i)
+        idxs[i] = generator.getIndexData()[i];
     SDL_RenderGeometry(renderer, nullptr, verts.data(),
                        static_cast<int>(verts.size()), idxs.data(),
                        static_cast<int>(idxs.size()));
@@ -94,16 +109,35 @@ void draw_filled_disc(SDL_Renderer *renderer, float cx, float cy, float radius,
 
 namespace {
 
-class OwnedGeometryGenerator final : public GeometryGenerator {
-  public:
-    ~OwnedGeometryGenerator() { destroy(); }
-};
+void draw_donor_line(SDL_Renderer *renderer, GeometryGenerator &generator,
+                     const GeometryGenerator::Line2dParameters &line,
+                     SDL_FColor color) {
+    if (line.lineWidth <= 0.0f ||
+        (line.x0 == line.x1 && line.y0 == line.y1))
+        return;
+    generator.reset();
+    generator.startShape();
+    if (!generator.generateLine2d(line))
+        return;
+    GeometryGenerator::GeometryIndices shape;
+    generator.endShape(&shape);
+    std::array<SDL_Vertex, 4> vertices{};
+    std::array<int, 6> indices{};
+    for (std::size_t i = 0; i < vertices.size(); ++i) {
+        const auto &point = generator.getVertexData()[i].Pos;
+        vertices[i] = {{point.x, point.y}, color, {0.0f, 0.0f}};
+    }
+    for (std::size_t i = 0; i < indices.size(); ++i)
+        indices[i] = generator.getIndexData()[i];
+    SDL_RenderGeometry(renderer, nullptr, vertices.data(), 4, indices.data(), 6);
+}
 
 void draw_donor_trace(SDL_Renderer *renderer,
                       const std::vector<SDL_FPoint> &trace, SDL_Color color) {
     // The donor Oscilloscope builds a tapered path with GeometryGenerator.
     // Keep SDL's line path for oversized windows beyond 16-bit mesh indices.
     if (trace.size() > 5000) {
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
         SDL_RenderLines(renderer, trace.data(), static_cast<int>(trace.size()));
         return;
     }
@@ -130,11 +164,13 @@ void draw_donor_trace(SDL_Renderer *renderer,
     GeometryGenerator::PathParameters path{};
     path.p0 = points.data();
     path.n0 = static_cast<int>(points.size());
-    path.width = 1.4f;
+    path.width = oes::oscilloscope_path_width(0.0f);
     if (!generator.startPath(path))
         return;
     for (int index = 1; index < path.n0; ++index) {
         path.i = index;
+        const float s = static_cast<float>(index) / static_cast<float>(path.n0);
+        path.width = oes::oscilloscope_path_width(s);
         generator.generatePathSegment(path, false);
     }
     GeometryGenerator::GeometryIndices shape;
@@ -177,11 +213,15 @@ SDL_FRect analog_scope_plot_bounds(int width, int height, bool maximized) {
         return {24.0f, static_cast<float>(height) - panel_height + 30.0f,
                 static_cast<float>(width) - 48.0f, panel_height - 45.0f};
     const float left = 16.0f + 138.0f * scope_scale(width, height);
-    const float right = static_cast<float>(width) - 59.0f;
     const float preview_height = panel_height >= 360.0f ? 108.0f :
                                  panel_height >= 248.0f ? 56.0f : 0.0f;
+    const float plot_height = panel_height - 105.0f - preview_height;
+    const bool short_lanes = plot_height * 0.5f - 20.0f <
+                             28.0f * scope_scale(width, height);
+    const float right = static_cast<float>(width) -
+        (short_lanes ? 16.0f + 140.0f * scope_scale(width, height) : 59.0f);
     return {left, static_cast<float>(height) - panel_height + 30.0f,
-            right - left, panel_height - 105.0f - preview_height};
+            right - left, plot_height};
 }
 
 SDL_FRect analog_scope_group_rect(int index, int width, int height,
@@ -766,8 +806,6 @@ void draw_lab_scope(SDL_Renderer *renderer, FontRenderer &font, int width,
         }
         if (trace.size() > 1) {
             draw_donor_trace(renderer, trace, color);
-            SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
-            SDL_RenderLines(renderer, trace.data(), static_cast<int>(trace.size()));
         }
     }
     constexpr std::array<SDL_Color, 2> cursor_colors{
@@ -1170,6 +1208,7 @@ void draw_lab_analog_scope(
         }
     }
     const float band_height = plot.h * 0.5f;
+    const bool short_lanes = band_height - 20.0f < 28.0f * scale;
     for (std::size_t channel = 0; channel < specs.size(); ++channel) {
         const auto &spec = specs[channel];
         const float top = plot.y +
@@ -1207,13 +1246,20 @@ void draw_lab_analog_scope(
         }
         SDL_RenderLine(renderer, left, top, right, top);
         SDL_RenderLine(renderer, left, bottom, right, bottom);
-        char axis[16];
-        std::snprintf(axis, sizeof(axis), "%.1f", spec.maximum);
-        font.draw(renderer, right + 4.0f, top, axis,
-                  {145, 177, 190, 255}, scale);
-        std::snprintf(axis, sizeof(axis), "%.1f", spec.minimum);
-        font.draw(renderer, right + 4.0f, trace_bottom - 12.0f, axis,
-                  {145, 177, 190, 255}, scale);
+        char axis[48];
+        if (trace_bottom - top < 28.0f * scale) {
+            std::snprintf(axis, sizeof(axis), "%.1f..%.1f",
+                          spec.minimum, spec.maximum);
+            font.draw(renderer, right + 4.0f, top, axis,
+                      {145, 177, 190, 255}, scale);
+        } else {
+            std::snprintf(axis, sizeof(axis), "%.1f", spec.maximum);
+            font.draw(renderer, right + 4.0f, top, axis,
+                      {145, 177, 190, 255}, scale);
+            std::snprintf(axis, sizeof(axis), "%.1f", spec.minimum);
+            font.draw(renderer, right + 4.0f, trace_bottom - 14.0f * scale, axis,
+                      {145, 177, 190, 255}, scale);
+        }
         const std::size_t series_count = overlaid_group && channel == 0 ? 2 : 1;
         for (std::size_t series = 0; series < series_count; ++series) {
             const std::size_t signal =
@@ -1260,10 +1306,17 @@ void draw_lab_analog_scope(
             } else {
                 std::snprintf(label, sizeof(label), "%s --", short_label);
             }
-            font.draw(renderer, panel.x + 5.0f,
-                      top + (series_count == 2 ? 12.0f + 19.0f *
-                                                      static_cast<float>(series)
-                                               : 14.0f),
+            if (std::isfinite(current_value) && adc_channel < 0 &&
+                std::abs(current_value) >= 1000.0 &&
+                font.measure(label) * scale > left - panel.x - 10.0f)
+                std::snprintf(label, sizeof(label), "%s %.0f %s",
+                              short_label, current_value, series_spec.unit);
+            const float label_y = short_lanes
+                ? plot.y + static_cast<float>(signal) * 16.0f * scale
+                : top + (series_count == 2 ? 12.0f + 19.0f *
+                                                static_cast<float>(series)
+                                         : 14.0f);
+            font.draw(renderer, panel.x + 5.0f, label_y,
                       label, trace_color, scale);
             SDL_SetRenderDrawColor(renderer, trace_color.r, trace_color.g,
                                    trace_color.b, 255);
@@ -1420,7 +1473,8 @@ void draw_lab_analog_scope(
                 previous_contact_tick = sample.tick;
                 previous_valid = true;
             }
-            font.draw(renderer, panel.x + 5.0f, top + 33.0f,
+            font.draw(renderer, panel.x + 5.0f,
+                      short_lanes ? plot.y + 48.0f * scale : top + 33.0f,
                       thermal_group
                           ? (!readout || !readout->thermal_available ? "FAN -- SAMP"
                              : readout->radiator_fan_on ? "FAN ON SAMP"
@@ -1515,12 +1569,30 @@ void draw_lab_analog_scope(
                       static_cast<double>(last_sample_tick) / 990000.0);
     else
         std::snprintf(available_label, sizeof(available_label), "NO DATA");
-    font.draw(renderer, left + 54.0f * scale, footer_y,
-              available_label, {145, 177, 190, 255}, scale);
-    if (trigger_status)
+    const float gap = 10.0f * scale;
+    const float data_x = left + font.measure(start_label) * scale + gap;
+    const float zero_x = right - font.measure("0 s") * scale;
+    const float data_width = zero_x - gap - data_x;
+    if (font.measure(available_label) * scale > data_width && visible_samples > 0)
+        std::snprintf(available_label, sizeof(available_label), "%.2f..%.2f s",
+                      static_cast<double>(first_visible->tick) / 990000.0,
+                      static_cast<double>(last_sample_tick) / 990000.0);
+    if (font.measure(available_label) * scale <= data_width)
+        font.draw(renderer, data_x, footer_y,
+                  available_label, {145, 177, 190, 255}, scale);
+    if (trigger_status) {
+        std::string status = trigger_status;
+        const float status_width = left - gap - (panel.x + 5.0f);
+        if (font.measure(status) * scale > status_width) {
+            while (!status.empty() &&
+                   font.measure(status + "...") * scale > status_width)
+                status.pop_back();
+            status = status.empty() ? "" : status + "...";
+        }
         font.draw(renderer, panel.x + 5.0f, footer_y,
-                  trigger_status, {145, 177, 190, 255}, scale);
-    font.draw(renderer, right - 20.0f * scale, footer_y,
+                  status, {145, 177, 190, 255}, scale);
+    }
+    font.draw(renderer, zero_x, footer_y,
               "0 s", {145, 177, 190, 255}, scale);
 }
 
@@ -1622,16 +1694,28 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
 
     const float range = static_cast<float>(v_max - v_min);
     const float tick_scale = std::min(ui_scale, box.h / 136.0f);
+    OwnedGeometryGenerator line_generator;
+    line_generator.initialize(4, 6);
 
     for (const auto &b : bands) {
+        if (range <= 0.0f)
+            break;
         const float s0 = std::clamp(
             (static_cast<float>(b.start) - static_cast<float>(v_min)) / range,
             0.0f, 1.0f);
         const float s1 = std::clamp(
             (static_cast<float>(b.end) - static_cast<float>(v_min)) / range,
             0.0f, 1.0f);
-        draw_gauge_arc(renderer, cx, cy, radius - 3.0f * ui_scale, radius,
-                       theta_at(s0), theta_at(s1), b.color);
+        const float angle0 = theta_at(s0), angle1 = theta_at(s1);
+        // Literal Gauge::render band placement, with SDL pixel/DPI units.
+        const float start = std::min(angle0, angle1) + b.shorten_end;
+        const float end = std::max(angle0, angle1) - b.shorten_start;
+        if (end <= start)
+            continue;
+        draw_gauge_arc(renderer, cx, cy,
+                       radius + (b.radial_offset - b.width) * ui_scale,
+                       radius + b.radial_offset * ui_scale,
+                       start, end, b.color);
     }
 
     if (minor_step > 0.0 && range > 0.0f) {
@@ -1659,19 +1743,19 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
                 (geometry ? (is_major ? geometry->m_majorTickLength
                                       : geometry->m_minorTickLength)
                           : (is_major ? 10.0f : 5.0f)) * tick_scale;
-            const SDL_Color tcol = is_major ? SDL_Color{200, 208, 216, 255}
-                                            : SDL_Color{90, 98, 110, 255};
-            SDL_SetRenderDrawColor(renderer, tcol.r, tcol.g, tcol.b, 255);
-            SDL_RenderLine(renderer, cx + (radius - tick_len) * c,
-                           cy - (radius - tick_len) * s, cx + radius * c,
-                           cy - radius * s);
-            if (is_major) {
-                SDL_RenderLine(renderer,
-                               cx + (radius - tick_len) * c + s * tick_scale,
-                               cy - (radius - tick_len) * s + c * tick_scale,
-                               cx + radius * c + s * tick_scale,
-                               cy - radius * s + c * tick_scale);
-            }
+            const SDL_FColor tcol = is_major
+                ? SDL_FColor{200.0f / 255, 208.0f / 255, 216.0f / 255, 1.0f}
+                : SDL_FColor{90.0f / 255, 98.0f / 255, 110.0f / 255, 1.0f};
+            GeometryGenerator::Line2dParameters tick{};
+            tick.x0 = cx + (radius - tick_len) * c;
+            tick.y0 = cy - (radius - tick_len) * s;
+            tick.x1 = cx + radius * c;
+            tick.y1 = cy - radius * s;
+            tick.lineWidth = (geometry
+                ? (is_major ? geometry->m_majorTickWidth
+                            : geometry->m_minorTickWidth)
+                : (is_major ? 2.0f : 1.0f)) * tick_scale;
+            draw_donor_line(renderer, line_generator, tick, tcol);
         }
     }
 
@@ -1691,39 +1775,18 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     const float needle_th = theta_at(n_frac);
     const float nx = std::cos(needle_th);
     const float ny = -std::sin(needle_th);
-    const float px = -ny, py = nx;
     const float tip_len = layout.needle_outer_radius;
     const float tail_len = layout.needle_inner_radius;
-    const float base_w = geometry ? geometry->m_needleWidth * 0.5f
-                                  : 2.0f * ui_scale;
-
-    const SDL_FPoint tip{cx + nx * tip_len, cy + ny * tip_len};
-    const SDL_FPoint tail{cx - nx * tail_len, cy - ny * tail_len};
-    const SDL_FPoint p_l{cx + px * base_w, cy + py * base_w};
-    const SDL_FPoint p_r{cx - px * base_w, cy - py * base_w};
+    // Gauge::render from OES generates the needle as a constant-width line.
+    // Reuse its actual geometry generator rather than a separate SDL shape.
+    GeometryGenerator::Line2dParameters line{};
+    line.x0 = cx - nx * tail_len;
+    line.y0 = cy - ny * tail_len;
+    line.x1 = cx + nx * tip_len;
+    line.y1 = cy + ny * tip_len;
+    line.lineWidth = (geometry ? geometry->m_needleWidth : 4.0f) * ui_scale;
     const SDL_FColor needle_col{0.93f, 0.27f, 0.27f, 1.0f};
-    std::array<SDL_Vertex, 4> nverts{{
-        {tip, needle_col, {0.0f, 0.0f}},
-        {p_l, needle_col, {0.0f, 0.0f}},
-        {p_r, needle_col, {0.0f, 0.0f}},
-        {tail, needle_col, {0.0f, 0.0f}},
-    }};
-    if (geometry) {
-        nverts[0].position = {tip.x + px * base_w, tip.y + py * base_w};
-        nverts[1].position = {tip.x - px * base_w, tip.y - py * base_w};
-        nverts[2].position = {tail.x + px * base_w, tail.y + py * base_w};
-        nverts[3].position = {tail.x - px * base_w, tail.y - py * base_w};
-    }
-    std::array<int, 6> nidxs{0, 1, 2, 3, 2, 1};
-    SDL_RenderGeometry(renderer, nullptr, nverts.data(), 4, nidxs.data(), 6);
-
-    const float r_hub = 4.0f * ui_scale;
-    const SDL_FRect hub_rect{cx - r_hub, cy - r_hub, r_hub * 2.0f,
-                             r_hub * 2.0f};
-    SDL_SetRenderDrawColor(renderer, 28, 30, 36, 255);
-    SDL_RenderFillRect(renderer, &hub_rect);
-    SDL_SetRenderDrawColor(renderer, 70, 75, 88, 255);
-    SDL_RenderRect(renderer, &hub_rect);
+    draw_donor_line(renderer, line_generator, line, needle_col);
 
     const float val_w = font.measure(value_str) * val_scale;
     font.draw(renderer, box.x + (box.w - val_w) * 0.5f,
@@ -2073,13 +2136,20 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
 
 } // namespace
 
-void draw_unavailable_clutch(SDL_Renderer *renderer, FontRenderer &font,
-                             const SDL_FRect &bounds, long long tick,
-                             float ui_scale) {
+void draw_clutch(SDL_Renderer *renderer, FontRenderer &font,
+                 const SDL_FRect &bounds,
+                 const ma17::EmulatorSnapshot &snapshot,
+                 float ui_scale, bool stale) {
+    const bool available = snapshot.drivetrain_available &&
+        std::isfinite(snapshot.clutch_pressure) &&
+        snapshot.clutch_pressure >= 0.0 && snapshot.clutch_pressure <= 1.0;
+    const double percent = available ? snapshot.clutch_pressure * 100.0 : 0.0;
+    char value[24];
+    std::snprintf(value, sizeof(value), "%.0f %%", percent);
     draw_profile_dial(renderer, font, bounds, profile::clutch,
-                      0.0, "N/D", -1.0f, ui_scale, false);
+                      percent, value, -1.0f, ui_scale, available && !stale);
     draw_profile_tooltip(renderer, font, bounds, profile::clutch,
-                         tick, false, false, ui_scale);
+                         snapshot.tick, available, stale, ui_scale);
 }
 
 void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
@@ -2164,7 +2234,12 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
                   : snapshot.idle_contact_closed ? "IDLE CLOSED"
                                                  : "IDLE OPEN",
               {176, 218, 226, 255}, 0.70f * ui_scale);
-    if (selected_gear == 0)
+    if (snapshot.drivetrain_available) {
+        const char gear = selected_gear == -1 ? 'R' : selected_gear == 0 ? 'N'
+            : static_cast<char>('0' + selected_gear);
+        std::snprintf(value, sizeof(value), "GEAR %c  CLUTCH %.0f%%", gear,
+                      snapshot.clutch_pressure * 100.0);
+    } else if (selected_gear == 0)
         std::snprintf(value, sizeof(value), "GEAR N  REF --");
     else
         std::snprintf(value, sizeof(value), "GEAR %d  REF %.3f",
@@ -2250,7 +2325,9 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     SDL_RenderRect(renderer, &bounds);
 
     const auto coolant_spec = display_profile(profile::coolant, units);
-    const auto speed_spec = display_profile(profile::speed, units);
+    auto speed_spec = display_profile(profile::speed, units);
+    if (snapshot.drivetrain_available)
+        speed_spec.source = "physical drivetrain road speed (signed)";
     const auto pressure_spec =
         display_profile(profile::manifold_pressure, units);
     const double coolant_value =
@@ -2298,11 +2375,11 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
             const SDL_FRect lambda_box{content.x, content.y + 2.0f * row_h,
                                        content.w, row_h};
             char value[32];
-            std::snprintf(value, sizeof(value), "%.0f RPM", snapshot.rpm);
+            std::snprintf(value, sizeof(value), "%.0f RPM", snapshot.tachometer_rpm);
             draw_profile_dial(renderer, font, rpm_box, profile::rpm,
-                              snapshot.rpm, value,
+                              snapshot.tachometer_rpm, value,
                               gauges ? (*gauges)[0].needlePosition() : -1.0f,
-                              ui_scale, snapshot.crank_available);
+                              ui_scale, snapshot.tachometer_available);
             std::snprintf(value, sizeof(value), "%.1f %s", coolant_value,
                           coolant_spec.unit);
             draw_profile_dial(renderer, font, coolant_box, coolant_spec,
@@ -2318,7 +2395,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
             const std::array<const profile::Instrument *, 3> specs{
                 &profile::rpm, &coolant_spec, &profile::lambda};
             const std::array<bool, 3> valid{
-                snapshot.crank_available && std::isfinite(snapshot.rpm),
+                snapshot.tachometer_available && std::isfinite(snapshot.tachometer_rpm),
                 snapshot.thermal_available && std::isfinite(snapshot.coolant_c),
                 snapshot.crank_available && snapshot.exhaust_sample_available &&
                     std::isfinite(snapshot.lambda)};
@@ -2394,11 +2471,11 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     };
     const SDL_FRect tach_box = cell(layout.tachometer);
     char rpm_str[32];
-    std::snprintf(rpm_str, sizeof(rpm_str), "%.0f RPM", snapshot.rpm);
+    std::snprintf(rpm_str, sizeof(rpm_str), "%.0f RPM", snapshot.tachometer_rpm);
     const float tach_needle = gauges ? (*gauges)[0].needlePosition() : -1.0f;
-    draw_profile_dial(renderer, font, tach_box, profile::rpm, snapshot.rpm,
+    draw_profile_dial(renderer, font, tach_box, profile::rpm, snapshot.tachometer_rpm,
                       rpm_str, tach_needle, ui_scale,
-                      snapshot.crank_available,
+                      snapshot.tachometer_available,
                       gauges ? &(*gauges)[0] : nullptr);
 
     const SDL_FRect speed_box = cell(layout.speedometer);
@@ -2481,7 +2558,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                       profile::volumetric_efficiency, 0.0, "N/D", -1.0f,
                       ui_scale, false);
     draw_profile_tooltip(renderer, font, tach_box, profile::rpm, snapshot.tick,
-                         snapshot.crank_available && std::isfinite(snapshot.rpm),
+                         snapshot.tachometer_available && std::isfinite(snapshot.tachometer_rpm),
                          stale, ui_scale);
     draw_profile_tooltip(renderer, font, speed_box,
                          compact ? coolant_spec : speed_spec,

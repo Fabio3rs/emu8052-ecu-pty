@@ -4,6 +4,7 @@ struct CrankshaftSimulator;
 struct em8051;
 namespace engine {
 class CrankDynamics;
+class Drivetrain;
 }
 
 namespace ma17 {
@@ -22,6 +23,7 @@ void tick_physical_crank_input(em8051 *cpu, engine::CrankDynamics &crank,
                                PhysicalCrankInput &input, bool starter_engaged,
                                double combustion_torque_nm = 0.0,
                                double load_torque_nm = 0.0,
-                               bool sensor_connected = true);
+                               bool sensor_connected = true,
+                               engine::Drivetrain *drivetrain = nullptr);
 
 } // namespace ma17

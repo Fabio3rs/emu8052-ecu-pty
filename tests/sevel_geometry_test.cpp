@@ -1,6 +1,7 @@
 #include "lab/AnalogTrigger.hpp"
 #include "lab/DigitalPulseMeasurements.hpp"
 #include "lab/DigitalScopeExport.hpp"
+#include "lab/DrivetrainExport.hpp"
 #include "lab/ScopeCursor.hpp"
 #include "lab/SevelGeometry.hpp"
 #include "lab/SevelTransmission.hpp"
@@ -10,10 +11,45 @@
 
 #include <cmath>
 #include <limits>
+#include <sstream>
 
 namespace {
 
 constexpr double pi = 3.14159265358979323846;
+
+TEST(DrivetrainExport, PreservesReverseAndSignedTorqueWithExplicitAvailability) {
+    ma17::EmulatorSnapshot sample;
+    sample.drivetrain_available = true;
+    sample.vehicle_speed_available = true;
+    sample.vehicle_speed_kmh = -12.5;
+    sample.transmission_gear = -1;
+    sample.clutch_pressure = 0.25;
+    sample.clutch_crank_torque_nm = -45.5;
+    sample.clutch_heat_j = 123.75;
+    std::ostringstream row;
+    lab::write_drivetrain_csv_row(row, sample);
+    EXPECT_EQ(row.str(), ",1,-12.5,-1,0.25,-45.5,123.75");
+    std::ostringstream header;
+    lab::write_drivetrain_csv_header(header);
+    EXPECT_NE(header.str().find("physical_vehicle_speed_kmh"), std::string::npos);
+    EXPECT_NE(header.str().find("clutch_heat_J"), std::string::npos);
+}
+
+TEST(DrivetrainExport, MissingOrInvalidValuesRemainEmpty) {
+    ma17::EmulatorSnapshot sample;
+    sample.vehicle_speed_kmh = 100.0; // Scenario input is not physical evidence.
+    std::ostringstream missing;
+    lab::write_drivetrain_csv_row(missing, sample);
+    EXPECT_EQ(missing.str(), ",0,,,,,");
+    sample.drivetrain_available = true;
+    sample.transmission_gear = 6;
+    sample.clutch_pressure = 2.0;
+    sample.clutch_crank_torque_nm = std::numeric_limits<double>::quiet_NaN();
+    sample.clutch_heat_j = -1.0;
+    std::ostringstream invalid;
+    lab::write_drivetrain_csv_row(invalid, sample);
+    EXPECT_EQ(invalid.str(), ",1,,,,,");
+}
 
 TEST(SevelTransmission, RecomputesOverallRatiosFromGearAndFinalDrive) {
     constexpr std::array<double, 5> expected{
@@ -52,6 +88,64 @@ TEST(SevelTransmission, CalculatesEngagedClutchSpeedReference) {
         std::numeric_limits<double>::infinity(), 1, radius));
     EXPECT_FALSE(lab::transmission::ideal_speed_kmh(1000.0, 1,
         std::numeric_limits<double>::quiet_NaN()));
+}
+
+TEST(SevelTransmission, ReflectedInertiaPreservesVehicleEnergyAcrossGears) {
+    // Fixture mass, not a claimed Fiat curb weight. Preserve road speed
+    // during shifts by changing shaft speed along with reflected inertia.
+    constexpr double mass = 1000.0, radius = 0.29, speed = 20.0;
+    for (const int gear : {-1, 1, 2, 3, 4, 5}) {
+        const auto inertia = engine::transmission::reflected_inertia_kg_m2(
+            mass, gear, radius);
+        ASSERT_TRUE(inertia);
+        const double omega = speed *
+            engine::transmission::overall_ratio(gear) / radius;
+        EXPECT_NEAR(0.5 * *inertia * omega * omega,
+                    0.5 * mass * speed * speed, 1e-8);
+        for (const double force : {-1000.0, 0.0, 1000.0}) {
+            const auto torque = engine::transmission::reflected_torque_nm(
+                force, gear, radius);
+            ASSERT_TRUE(torque);
+            EXPECT_NEAR(*torque * omega, force * speed, 1e-9);
+        }
+    }
+}
+
+TEST(SevelTransmission, ReflectedLoadsRejectDisconnectedAndInvalidInputs) {
+    using engine::transmission::reflected_inertia_kg_m2;
+    using engine::transmission::reflected_torque_nm;
+    for (const int gear : {0, -2, 6}) {
+        EXPECT_FALSE(reflected_inertia_kg_m2(1000.0, gear, 0.29));
+        EXPECT_FALSE(reflected_torque_nm(1000.0, gear, 0.29));
+    }
+    for (const double invalid : {0.0, -1.0,
+             std::numeric_limits<double>::quiet_NaN(),
+             std::numeric_limits<double>::infinity()}) {
+        EXPECT_FALSE(reflected_inertia_kg_m2(invalid, 1, 0.29));
+        EXPECT_FALSE(reflected_inertia_kg_m2(1000.0, 1, invalid));
+        EXPECT_FALSE(reflected_torque_nm(1000.0, 1, invalid));
+    }
+    EXPECT_FALSE(reflected_torque_nm(
+        std::numeric_limits<double>::quiet_NaN(), 1, 0.29));
+    EXPECT_FALSE(reflected_torque_nm(
+        std::numeric_limits<double>::infinity(), 1, 0.29));
+}
+
+TEST(SevelTransmission, ReverseChangesDirectionWithoutNegativeInertia) {
+    using namespace engine::transmission;
+    EXPECT_DOUBLE_EQ(overall_ratio(-1), -15.3916875);
+    const auto forward = ideal_speed_kmh(1000.0, 1, 0.29);
+    const auto reverse = ideal_speed_kmh(1000.0, -1, 0.29);
+    ASSERT_TRUE(forward);
+    ASSERT_TRUE(reverse);
+    EXPECT_DOUBLE_EQ(*reverse, -*forward);
+    EXPECT_LT(*wheel_rpm(1000.0, -1), 0.0);
+    EXPECT_GT(*reflected_inertia_kg_m2(1000.0, -1, 0.29), 0.0);
+    // A positive road force brakes a reversing vehicle and opposes the
+    // positive engine shaft rotation through the negative ratio.
+    EXPECT_LT(*reflected_torque_nm(1000.0, -1, 0.29), 0.0);
+    EXPECT_FALSE(ideal_speed_kmh(std::numeric_limits<double>::max(), -1,
+                               std::numeric_limits<double>::max()));
 }
 
 TEST(ScopeCursor, SelectsRecordedSampleInsideVisibleWindow) {
@@ -240,6 +334,42 @@ TEST(AnalogTrigger, UsesSourceTicksAndRequiresValidAdjacentSamples) {
                                          std::numeric_limits<double>::quiet_NaN(),
                                          TriggerSlope::Rising, 0, 50),
               std::nullopt);
+}
+
+TEST(AnalogTrigger, SingleSelectsFirstEligibleCrossingAcrossFrameBatches) {
+    std::array<ma17::EmulatorSnapshot, 8> samples{};
+    std::array<ma17::EmulatorEvent, 4> events{};
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        samples[i].tick = static_cast<long long>(i + 1) * 10;
+        samples[i].tps_track1_v = i % 2 == 0 ? 0.0 : 2.0;
+    }
+    for (std::size_t i = 0; i < events.size(); ++i)
+        events[i] = {static_cast<long long>(i + 1) * 20,
+                     ma17::EmulatorEventType::IgnitionPin, 0, true};
+    const auto value = [](const ma17::EmulatorSnapshot &sample)
+        -> std::optional<double> { return sample.tps_track1_v; };
+    for (const long long frame_end : {40LL, 60LL, 80LL}) {
+        // Armed after tick 20: first eligible edge is 40 even if a slow
+        // renderer receives several crossings together in a later frame.
+        EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
+            lab::TriggerSlope::Rising, 21, frame_end, 247500,
+            lab::TriggerOccurrence::First), 40);
+        EXPECT_EQ(lab::find_event_trigger(events,
+            lab::EventTriggerSource::Ignition0, lab::TriggerSlope::Rising,
+            21, frame_end, lab::TriggerOccurrence::First), 40);
+        EXPECT_EQ(lab::latest_analog_trigger(samples, value, 1.0,
+            lab::TriggerSlope::Rising, 21, frame_end), frame_end);
+        EXPECT_EQ(lab::latest_event_trigger(events,
+            lab::EventTriggerSource::Ignition0, lab::TriggerSlope::Rising,
+            21, frame_end), frame_end);
+    }
+    samples[3].tps_track1_v = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
+        lab::TriggerSlope::Rising, 21, 80, 247500,
+        lab::TriggerOccurrence::First), 60);
+    EXPECT_EQ(lab::find_analog_trigger(samples, value, 1.0,
+        lab::TriggerSlope::Falling, 21, 80, 247500,
+        lab::TriggerOccurrence::First), 30);
 }
 
 TEST(AnalogTrigger, SelectsRecordedElectricalEdgesAndSparkPairs) {

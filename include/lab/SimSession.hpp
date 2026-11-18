@@ -35,6 +35,8 @@ enum class ControlType {
     StepCombustion,
     StepMisfire,
     StepLamp,
+    Gear,
+    ClutchPressure,
 };
 
 struct AppliedControl {
@@ -81,6 +83,8 @@ class SimSession {
     void set_pedal(double pull_m);
     void set_load(double torque_nm);
     void set_vehicle_speed(double kmh);
+    void set_gear(int gear);
+    void set_clutch_pressure(double pressure);
     void set_starter(bool engaged);
     void set_key(bool on);
     void schedule_control(AppliedControl control);

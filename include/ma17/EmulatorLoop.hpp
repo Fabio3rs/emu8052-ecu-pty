@@ -7,6 +7,7 @@
 #include "engine/IdleActuator.hpp"
 #include "ecu_hw/Ma17IgnitionStage.hpp"
 #include "ecu_hw/Ma17DiagnosticLamp.hpp"
+#include "ecu_hw/Ma17Tachometer.hpp"
 #include "ecu_hw/Ma17IdleBridge.hpp"
 #include "ecu_hw/Ma17LambdaHeater.hpp"
 #include "ma17/EmulatorSnapshot.hpp"
@@ -15,6 +16,7 @@
 struct em8051;
 struct CrankshaftSimulator;
 namespace engine { class CrankDynamics; }
+namespace engine { class Drivetrain; }
 namespace engine { class ThrottleAssembly; }
 namespace engine { class ThermalState; }
 namespace engine { class IntakeFuel; }
@@ -53,6 +55,7 @@ struct EmulatorLoopContext {
     ControlCallback on_control = nullptr;
     void *control_context = nullptr;
     engine::CrankDynamics *physical_crank = nullptr;
+    engine::Drivetrain *drivetrain = nullptr; // Owned by the runner/controller.
     bool physical_pty_realtime = false;
     PhysicalCrankInput *physical_input = nullptr;
     long long starter_stop_tick = 0;
@@ -79,7 +82,7 @@ struct EmulatorLoopContext {
     long long tps2_high_tick = 0;
     long long tps2_restore_tick = 0;
     engine::ThermalState *thermal = nullptr;
-    // Explicit road-speed scenario; drivetrain and gear ratio are not modeled.
+    // Scenario speed when drivetrain is null; physical speed otherwise.
     double vehicle_speed_kmh = 0.0;
     double vehicle_speed_target_kmh = 0.0;
     ecu_hw::Ma17SensorCircuit *sensor_circuit = nullptr;
@@ -96,6 +99,7 @@ struct EmulatorLoopContext {
     double exhaust_flow_kg_s = 0.0;
     ecu_hw::Ma17IgnitionStage ignition_stage{};
     ecu_hw::Ma17DiagnosticLamp diagnostic_lamp{};
+    ecu_hw::Ma17Tachometer tachometer{};
     ecu_hw::Ma17InjectorStage *injector_stage = nullptr;
     double injected_mass_pending_kg = 0.0;
     long long injector_disconnect_tick = 0;

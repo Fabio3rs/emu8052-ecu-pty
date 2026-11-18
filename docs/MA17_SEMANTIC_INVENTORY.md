@@ -698,7 +698,37 @@ em `35D1h` antes de ajustar `R2`; seu destino posterior ainda é aberto.
 | `P5.0/P5.1` | Vetor TF1 `001Bh→0090h`; escritas em `0090h..00AFh` e `0252h..027Bh` | Pulsos alternados a cada meia volta, compatíveis com os dois canais wasted spark | Identificar drivers, polaridade e ligação aos primários |
 | `P1.7/T2` | O manual SAB80C517 o define como entrada externa ou de habilitação do Timer 2 quando `T2I1=1`; o código classificado das seis ROMs inicia `T2CON=85h` e não contém escrita que ligue `T2I1` | A busca nos bytes das seis ROMs não encontrou `CLR/SETB/CPL/MOV bit,C` para `T2I1` (`C9h`). O aparente `JBC C9h` em `5690h` (G/S88) ou `5753h` (A/A+/S37/S36) atravessa `POP 10h; XCH A,R1`. As curvas guardadas por `T2I1=1` foram selecionadas apenas em execução isolada; não há sinal de `P1.7` medido na ECU | Verificar código ainda não classificado, outras formas de escrever `T2CON` e conexão do terminal físico antes de atribuir função |
 | `P1.3/CC3` | `058Eh..05DBh` programa `CCL3/CCH3` e comuta o latch; comparação Timer 2 modelada | Pulso separado de P5.0/1. No degrau TPS G a 3.000 RPM, doar `7520h=6Fh` mudou o pulso iniciado no tick 907.122 de 8.156 para 9.488 ticks; zerar `78h` em `1D4Bh` removeu essa diferença. A curva `7958h` alterou três pulsos iniciais a 1.000 RPM; fornecer os valores nativos de RAM 59h/5Ah nas leituras em 1C99h/1C9Bh restaurou os três. Candidato à temporização de outro atuador, possivelmente bico | Confirmar estágio de potência e terminal físico do injetor |
-| `P1.1` | `0352h` liga e `0433h` desliga o latch | Período de meia volta no perfil testado; função física indeterminada | Medir sinal elétrico e rastrear consumidores |
+| `P1.1` | `0352h` liga e `0433h` desliga o latch | Período de meia volta no perfil testado; candidato ao tacômetro, sem ligação à placa confirmada | Rastrear ligação ao terminal 24 e testar dependência de carga/combustível a RPM constante |
+
+**Tacômetro — esquema fornecido pelo proprietário (2026-11-18):** o
+diagrama identificado como “Tipo 1.6 ie” mostra explicitamente o terminal
+24 da UCE com a seta “Ao tacômetro”. Isso identifica o destino do terminal
+no esquema, mas não identifica o pino do microcontrolador nem o circuito
+intermediário. A associação `P1.1 → terminal 24` permanece hipótese.
+
+A revisão dos relatórios `output-timing-fixed-{750,1000,2000}/execution.json`
+confirma `RAM47=1Eh/28h/50h`, respectivamente (25 RPM por unidade nesses
+ensaios). P5.0 e P5.1 também variam de período com a rotação:
+79.200/59.400/29.700 ticks por canal. Portanto, P1.1 não pode ser chamado
+de única saída correlacionada com RPM. CC3 também tem cadência de meia
+volta nos ensaios descritos abaixo.
+
+No disassembly Fiat, `0352h` arma P1.1 ao final de um caminho IEX3.
+Em `042Bh..0435h`, a ROM lê IRAM indireta `A1h`, subtrai 6 e, quando
+não há empréstimo, baixa P1.1 e grava o resultado. O caminho anterior
+`0416h..042Ah` acumula `9Fh:A0h` em `A1h:A2h`, com saturação.
+Esses trechos não leem diretamente RAM47; sincronismo com a rotação não
+prova que a saída seja gerada a partir do byte de RPM. Falta rastrear os
+produtores desses acumuladores e variar carga/combustível com RPM fixa.
+Os logs antigos citados não contêm o marcador dedicado `P1.1-LATCH`;
+uma nova medição de todas as bordas exige trace atualizado.
+Por autorização do proprietário, a GUI agora usa essa hipótese no gauge
+`RPM P1.1?`: `Ma17Tachometer` observa as bordas do latch em cada passo
+do emulador e publica período convertido em RPM e contagem de pulsos no
+snapshot. A conversão assumida é `RPM = 30 × frequência em Hz`, com
+timeout de 500 ms. O RPM físico permanece independente no status/scopes.
+Isso não confirma a ligação elétrica ao terminal 24 nem uma dependência
+direta de RAM47; o sinal pode nascer antes do pós-processamento de RPM.
 
 No cenário físico Fiat com parada por carga, `P5.4` mudou em
 `317Ah` (alto, 572.953 ticks) e `3176h` (baixo, 35.686.123 ticks).

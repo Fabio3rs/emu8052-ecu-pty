@@ -1,6 +1,7 @@
 """Capture the live original-ROM session at a requested window size."""
 
 import csv
+import math
 import os
 from pathlib import Path
 import re
@@ -26,10 +27,10 @@ environment = os.environ.copy()
 environment["SDL_AUDIODRIVER"] = "dummy"
 inspect_scope = radial_mode.startswith("scope-freeze") or radial_mode == "scope-export-tps"
 stop_tick = ("8000000" if radial_mode in
-             ("scope-trigger-spark14", "scope-trigger-single-tps",
+             ("scope-trigger-spark14", "scope-trigger-single-tps", "scope-trigger-normal-tps",
               "scope-navigation", "digital-navigation") else
              "10000000" if radial_mode in
-             ("scope-card-tps", "scope-card-fuel", "layout-drag",
+             ("gear-physical", "scope-card-tps", "scope-card-fuel", "layout-drag",
               "scope-divider") else
              "6000000" if radial_mode in
              ("digital-zoom",) else
@@ -49,6 +50,10 @@ command = [binary, rom, "--live", "--auto-start", "--bench-preset",
            "--window-frames", "240000",
            "--capture-tick", stop_tick, "--stop-ticks", stop_tick,
            "--screenshot", str(image)]
+if radial_mode == "gear-physical":
+    command.extend(["--drivetrain", "--clutch-percent", "10"])
+if len(sys.argv) >= 8:
+    command.extend(["--ui-scale", sys.argv[7]])
 if radial_mode.startswith("ui-scale-"):
     command.extend(["--ui-scale",
                     radial_mode.removeprefix("ui-scale-").split("-", 1)[0]])
@@ -78,9 +83,10 @@ if radial_mode == "scope-battery":
 if radial_mode == "coolant-underrange":
     command.extend(["--coolant-c", "0"])
 
-with tempfile.TemporaryFile(mode="w+") as log:
+with tempfile.TemporaryFile(mode="w+") as log, \
+        tempfile.TemporaryFile(mode="w+") as diagnostics:
     process = subprocess.Popen(command, env=environment, stdout=log,
-                               stderr=subprocess.STDOUT)
+                               stderr=diagnostics)
     try:
         window = ""
         deadline = time.monotonic() + 4.0
@@ -221,7 +227,7 @@ with tempfile.TemporaryFile(mode="w+") as log:
             subprocess.run(["xdotool", "mousemove", "--window", window,
                             str(fit_x), str(fit_y), "click", "1"],
                            check=True, capture_output=True)
-        if (radial_mode in ("gear-shift", "gear-tooltip", "gear-compact-900",
+        if (radial_mode in ("gear-shift", "gear-physical", "gear-tooltip", "gear-compact-900",
                             "gear-compact-1000") or
                 radial_mode.endswith("-gear-shift")):
             assert ((width >= 1100 and height >= 700) or
@@ -229,7 +235,32 @@ with tempfile.TemporaryFile(mode="w+") as log:
                      (width, height) == (900, 620)) or
                     (radial_mode == "gear-compact-1000" and
                      (width, height) == (1000, 600)))
-            for _ in range(2):
+            if radial_mode == "gear-physical":
+                deadline = time.monotonic() + 2.0
+                tick = None
+                title = ""
+                while time.monotonic() < deadline and process.poll() is None:
+                    title = subprocess.run(["xdotool", "getwindowname", window],
+                                           text=True, capture_output=True,
+                                           check=True).stdout
+                    tick = re.search(r"\| tick (\d+)", title)
+                    if tick and int(tick.group(1)) > 0:
+                        break
+                    time.sleep(0.05)
+                assert tick and int(tick.group(1)) > 0, title
+                subprocess.run(["xdotool", "key", "--window", window, "q"],
+                               check=True, capture_output=True)
+                deadline = time.monotonic() + 2.0
+                title = ""
+                while time.monotonic() < deadline and process.poll() is None:
+                    title = subprocess.run(["xdotool", "getwindowname", window],
+                                           text=True, capture_output=True,
+                                           check=True).stdout
+                    if "| GEAR R |" in title:
+                        break
+                    time.sleep(0.05)
+                assert "| GEAR R |" in title, title
+            for _ in range(3 if radial_mode == "gear-physical" else 2):
                 subprocess.run(["xdotool", "key", "--window", window, "e"],
                                check=True, capture_output=True)
             if radial_mode == "gear-compact-900":
@@ -253,6 +284,13 @@ with tempfile.TemporaryFile(mode="w+") as log:
                 bottom = height - 340
                 if bottom - top < 64:
                     top, bottom = height - 92, height - 8
+                elif width >= 1800 and height >= 1000:
+                    aspect = (2048 / 9) / (816 / 6)
+                    gap = 8 * scale
+                    card_width = min((width * 0.24 - 32 * scale - gap) / 2,
+                                     (bottom - top) * aspect)
+                    click_x = round(width * 0.24 / 2 + gap / 2 + card_width / 2)
+                    bottom = top + card_width / aspect
                 click_y = round(top + (bottom - top) * 0.26)
             subprocess.run(["xdotool", "mousemove", "--window", window,
                             str(click_x), str(click_y), "click", "1"],
@@ -267,6 +305,25 @@ with tempfile.TemporaryFile(mode="w+") as log:
                     break
                 time.sleep(0.05)
             assert "| GEAR 3 |" in title, title
+            if radial_mode == "gear-physical":
+                # Confirm applied telemetry, including clamping at both limits.
+                for key, presses, expected in (("Next", 2, 0),
+                                                ("Prior", 12, 100),
+                                                ("Next", 9, 10)):
+                    subprocess.run(["xdotool", "key", "--window", window,
+                                    "--repeat", str(presses), "--delay", "20", key],
+                                   check=True, capture_output=True)
+                    deadline = time.monotonic() + 2.0
+                    while time.monotonic() < deadline and process.poll() is None:
+                        title = subprocess.run(["xdotool", "getwindowname", window],
+                                               text=True, capture_output=True,
+                                               check=True).stdout
+                        if f"| CLUTCH {expected}% |" in title:
+                            break
+                        time.sleep(0.05)
+                    assert f"| CLUTCH {expected}% |" in title, title
+                subprocess.run(["xdotool", "key", "--window", window, "c"],
+                               check=True, capture_output=True)
         if radial_mode in ("scope-card-tps", "scope-card-fuel"):
             assert width >= 1100, "Scope cards need the desktop layout"
             panel_height = max(248, height * 0.40)
@@ -411,7 +468,8 @@ with tempfile.TemporaryFile(mode="w+") as log:
                       "scope-idle": 10, "scope-fit-idle": 10,
                       "scope-freeze-tps": 1,
                       "scope-export-tps": 1, "scope-trigger-wait-tps": 1,
-                      "scope-trigger-single-tps": 1}
+                      "scope-trigger-single-tps": 1, "scope-trigger-normal-tps": 1,
+                      "scope-trigger-auto-tps": 1}
         if radial_mode in scope_keys:
             for _ in range(scope_keys[radial_mode]):
                 subprocess.run(["xdotool", "key", "--window", window, "g"],
@@ -466,12 +524,15 @@ with tempfile.TemporaryFile(mode="w+") as log:
                 for _ in range(2):
                     subprocess.run(["xdotool", "key", "--window", window, "t"],
                                    check=True, capture_output=True)
-            if radial_mode == "scope-trigger-single-tps":
+            if radial_mode == "scope-trigger-auto-tps":
+                subprocess.run(["xdotool", "key", "--window", window, "t"],
+                               check=True, capture_output=True)
+            if radial_mode in ("scope-trigger-single-tps", "scope-trigger-normal-tps"):
                 subprocess.run(["xdotool", "mousemove", "--window", window,
                                 "950", "900"], check=True, capture_output=True)
                 subprocess.run(["xdotool", "click", "4"],
                                check=True, capture_output=True)
-                for _ in range(3):
+                for _ in range(2 if radial_mode == "scope-trigger-normal-tps" else 3):
                     subprocess.run(["xdotool", "key", "--window", window, "t"],
                                    check=True, capture_output=True)
                 deadline = time.monotonic() + 3.0
@@ -495,7 +556,7 @@ with tempfile.TemporaryFile(mode="w+") as log:
             subprocess.run(["xdotool", "click", "4"],
                            check=True, capture_output=True)
             subprocess.run(["xdotool", "key", "--window", window,
-                            "t", "t", "t", "u", "u", "u", "u", "u"],
+                            "b", "t", "t", "t", "u", "u", "u", "u", "u"],
                            check=True, capture_output=True)
         navigation_live_tick = None
         if radial_mode in ("scope-navigation", "digital-navigation"):
@@ -627,7 +688,70 @@ with tempfile.TemporaryFile(mode="w+") as log:
                        check=True, capture_output=True)
         assert process.wait(timeout=60) == 0
         log.seek(0)
-        output = log.read()
+        diagnostics.seek(0)
+        # Separate C stdio buffers can split a stdout record around stderr
+        # writes when both descriptors share a file. Parse intact streams.
+        output = log.read() + "\n[TEST-STDERR]\n" + diagnostics.read()
+        if radial_mode.startswith("scope-trigger-"):
+            image.with_suffix(".log").write_text(output)
+        if radial_mode in ("scope-trigger-normal-tps", "scope-trigger-auto-tps"):
+            view = re.search(
+                r"\[LAB-TRIGGER-VIEW\] mode=(\d+) waiting=(\d+) trigger=(-?\d+) "
+                r"end=(\d+) samples=(\d+) first=(-?\d+) last=(-?\d+) live=(\d+)", output)
+            assert view, [line for line in output.splitlines() if "LAB-TRIGGER" in line]
+            mode, waiting, crossing, end, count, first, last, live = map(int, view.groups())
+            assert count > 0 and first <= end <= last and live == int(stop_tick), view.groups()
+            if radial_mode == "scope-trigger-normal-tps":
+                assert mode == 2 and waiting == 1 and crossing > 0, view.groups()
+                assert end - crossing == 742500, view.groups()
+                assert first <= end - 990000 and last < live - 2 * 990000, view.groups()
+                assert "[LAB-TRIGGER] single" not in output
+            else:
+                assert (mode, waiting, crossing, end) == (1, 0, -1, live), view.groups()
+                assert "[LAB-TRIGGER] waiting" not in output
+        if radial_mode == "gear-physical":
+            image.with_suffix(".log").write_text(output)
+            request = re.search(r"\[LAB-SCOPE-REQUEST\] tick=(\d+) group=0", output)
+            assert request, "GUI did not acknowledge the export key; see the full .log"
+            saved = re.search(r"\[LAB-SCOPE-CSV\] saved=(\S+) group=0 "
+                              r"first=(\d+) last=(\d+)", output)
+            assert saved, [line for line in output.splitlines()
+                           if "SCOPE-CSV" in line] or output[-2000:]
+            assert int(request[1]) <= int(saved[3]) < int(stop_tick)
+            csv_path = Path(saved[1])
+            lines = csv_path.read_text().splitlines()
+            metadata = dict(line[2:].split("=", 1) for line in lines
+                            if line.startswith("# ") and "=" in line)
+            data = list(csv.DictReader(line for line in lines
+                                       if not line.startswith("#")))
+            assert len(data) > 10
+            assert int(metadata["retained_sample_count"]) == len(data)
+            columns = {"physical_vehicle_speed_kmh", "transmission_gear",
+                       "clutch_pressure_fraction", "clutch_crank_torque_Nm",
+                       "clutch_heat_J"}
+            assert columns <= data[0].keys()
+            ticks = [int(row["tick"]) for row in data]
+            assert ticks == sorted(set(ticks))
+            assert int(saved[2]) <= ticks[0] <= ticks[-1] <= int(saved[3])
+            assert (ticks[0], ticks[-1]) == (
+                int(metadata["first_tick"]), int(metadata["last_tick"]))
+            assert (int(saved[2]), int(saved[3])) == (
+                int(metadata["selection_first_tick"]),
+                int(metadata["selection_last_tick"]))
+            valid = [row for row in data if row["drivetrain_available"] == "1"]
+            assert valid
+            for row in data:
+                if row["drivetrain_available"] == "0":
+                    assert all(row[column] == "" for column in columns)
+                    continue
+                assert all(math.isfinite(float(row[column])) for column in columns)
+                assert -1 <= int(row["transmission_gear"]) <= 5
+                assert 0 <= float(row["clutch_pressure_fraction"]) <= 1
+                assert float(row["clutch_heat_J"]) >= 0
+            assert int(valid[-1]["transmission_gear"]) == 3
+            assert abs(float(valid[-1]["clutch_pressure_fraction"]) - 0.1) < 1e-12
+            assert max(float(row["clutch_heat_J"]) for row in valid) > 0
+            print(f"[LAB-DRIVETRAIN-CSV] rows={len(data)} path={csv_path}")
         if radial_mode.startswith("matrix-"):
             image.with_suffix(".log").write_text(output)
         if radial_mode in ("layout-analysis", "layout-mechanics"):
@@ -678,6 +802,11 @@ with tempfile.TemporaryFile(mode="w+") as log:
         if radial_mode == "scope-trigger-wait-tps":
             assert "[LAB-TRIGGER] mode=2 group=1 channel=0" in output
             assert "[LAB-TRIGGER] waiting group=1 channel=0 level=2.500" in output
+            waiting = re.findall(
+                r"\[LAB-TRIGGER\] waiting group=1 channel=0 level=2.500 "
+                r"source=-1 shown_samples=(\d+)", output)
+            assert waiting and all(int(count) == 0 for count in waiting), waiting
+            assert "[LAB-TRIGGER] single" not in output
         if radial_mode == "scope-trigger-single-tps":
             armed = re.search(r"\[LAB-TRIGGER\] mode=[123] group=1 channel=0 "
                               r".*armed=(\d+)", output)
@@ -695,6 +824,23 @@ with tempfile.TemporaryFile(mode="w+") as log:
                                 r"group=0 channel=1 source=3", output)
             assert armed and matched, output[-1500:]
             assert int(armed[1]) <= int(matched[1]) < int(matched[2]) < int(stop_tick)
+        if radial_mode in ("scope-trigger-single-tps", "scope-trigger-spark14"):
+            image.with_suffix(".log").write_text(output)
+            captures = re.findall(
+                r"\[LAB-TRIGGER\] single tick=(\d+) end=(\d+) "
+                r"group=\d+ channel=\d+ source=-?\d+ span=(\d+) pre=(\d+) "
+                r"history_first=(\d+) available_end=(\d+)", output)
+            assert len(captures) == 1, (captures, [line for line in output.splitlines()
+                                                 if "[LAB-TRIGGER]" in line])
+            crossing, end, span, pre, first, available = map(int, captures[0])
+            # One wheel step selects a 1 s window at the ECU's 990 kHz tick.
+            # TPS uses 25%; the spark fixture changes B once to select 50%.
+            assert span == 990000, captures
+            expected_pre = span // (4 if radial_mode == "scope-trigger-single-tps" else 2)
+            assert pre == expected_pre, captures
+            assert end - crossing == span - pre, captures
+            assert end - span >= first, captures
+            assert end <= available, captures
         if radial_mode in ("scope-navigation", "digital-navigation"):
             saved = re.findall(r"\[LAB-SCOPE-CSV\] saved=(\S+)", output)
             assert len(saved) == (3 if radial_mode == "digital-navigation"
@@ -1223,4 +1369,6 @@ with tempfile.TemporaryFile(mode="w+") as log:
             process.wait(timeout=5)
         log.seek(0)
         print(log.read()[-3000:], file=sys.stderr)
+        diagnostics.seek(0)
+        print(diagnostics.read()[-3000:], file=sys.stderr)
         raise

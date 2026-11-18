@@ -1,6 +1,7 @@
 #include "lab/SimSession.hpp"
 
 #include "engine/ThrottleAssembly.hpp"
+#include "engine/Drivetrain.hpp"
 #include "lab/AcousticAdapter.hpp"
 #include "ma17/EmulatorLoop.hpp"
 #include "ma17/Runner.hpp"
@@ -32,7 +33,15 @@ void append_archive_extrema(
         bool ma17::EmulatorSnapshot::*available;
         bool requires_exhaust_sample = false;
     };
-    constexpr std::array<Field, 16> fields{{
+    constexpr std::array<Field, 20> fields{{
+        {&ma17::EmulatorSnapshot::vehicle_speed_kmh,
+         &ma17::EmulatorSnapshot::vehicle_speed_available},
+        {&ma17::EmulatorSnapshot::clutch_pressure,
+         &ma17::EmulatorSnapshot::drivetrain_available},
+        {&ma17::EmulatorSnapshot::clutch_crank_torque_nm,
+         &ma17::EmulatorSnapshot::drivetrain_available},
+        {&ma17::EmulatorSnapshot::clutch_heat_j,
+         &ma17::EmulatorSnapshot::drivetrain_available},
         {&ma17::EmulatorSnapshot::rpm, &ma17::EmulatorSnapshot::crank_available},
         {&ma17::EmulatorSnapshot::applied_load_nm,
          &ma17::EmulatorSnapshot::crank_available},
@@ -136,6 +145,14 @@ void append_archive_extrema(
             keep[index - 1] = true;
             keep[index] = true;
         }
+        if (pending[index].drivetrain_available !=
+                pending[index - 1].drivetrain_available ||
+            (pending[index].drivetrain_available &&
+             pending[index].transmission_gear !=
+                pending[index - 1].transmission_gear)) {
+            keep[index - 1] = true;
+            keep[index] = true;
+        }
         for (const std::size_t channel : adc_channels) {
             const auto &before = pending[index - 1].adc_last_conversion[channel];
             const auto &after = pending[index].adc_last_conversion[channel];
@@ -166,6 +183,10 @@ const char *control_name(ControlType type) {
         return "load";
     case ControlType::VehicleSpeed:
         return "vehicle_speed";
+    case ControlType::Gear:
+        return "gear";
+    case ControlType::ClutchPressure:
+        return "clutch_pressure";
     case ControlType::Starter:
         return "starter";
     case ControlType::Key:
@@ -200,7 +221,7 @@ bool parse_control_name(const std::string &name, ControlType &type) {
           ControlType::StepTicks, ControlType::StepIgnition,
           ControlType::StepInjector, ControlType::StepSpark,
           ControlType::StepCombustion, ControlType::StepMisfire,
-          ControlType::StepLamp}) {
+          ControlType::StepLamp, ControlType::Gear, ControlType::ClutchPressure}) {
         if (name == control_name(candidate)) {
             type = candidate;
             return true;
@@ -220,6 +241,11 @@ bool valid_control(const AppliedControl &control) {
         return control.value >= 0.0 && control.value <= 60.0;
     case ControlType::VehicleSpeed:
         return control.value >= 0.0 && control.value <= 200.0;
+    case ControlType::Gear:
+        return control.value >= -1.0 && control.value <= 5.0 &&
+               std::trunc(control.value) == control.value;
+    case ControlType::ClutchPressure:
+        return control.value >= 0.0 && control.value <= 1.0;
     case ControlType::Starter:
     case ControlType::Key:
         return control.value == 0.0 || control.value == 1.0;
@@ -481,6 +507,14 @@ void SimSession::set_vehicle_speed(double kmh) {
 
 void SimSession::set_starter(bool engaged) {
     schedule_control({0, ControlType::Starter, engaged ? 1.0 : 0.0});
+}
+
+void SimSession::set_gear(int gear) {
+    schedule_control({0, ControlType::Gear, static_cast<double>(gear)});
+}
+
+void SimSession::set_clutch_pressure(double pressure) {
+    schedule_control({0, ControlType::ClutchPressure, pressure});
 }
 
 void SimSession::set_key(bool on) {
@@ -769,6 +803,14 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
         case ControlType::VehicleSpeed:
             context.vehicle_speed_target_kmh = command->value;
             break;
+        case ControlType::Gear:
+            if (context.drivetrain)
+                context.drivetrain->set_gear(static_cast<int>(command->value));
+            break;
+        case ControlType::ClutchPressure:
+            if (context.drivetrain)
+                context.drivetrain->set_clutch_pressure(command->value);
+            break;
         case ControlType::Starter:
             self.starter_engaged_ = command->value != 0.0;
             self.starter_override_ = true;
@@ -834,6 +876,8 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
                 case ControlType::Pedal:
                 case ControlType::Load:
                 case ControlType::VehicleSpeed:
+                case ControlType::Gear:
+                case ControlType::ClutchPressure:
                 case ControlType::Starter:
                 case ControlType::Key:
                 case ControlType::Pause:
