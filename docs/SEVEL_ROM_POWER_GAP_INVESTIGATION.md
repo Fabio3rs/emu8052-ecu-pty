@@ -153,6 +153,9 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   (valor baixo = quente: 19 a 90 °C), o de 62h na faixa ambiente (114 a 24 °C).
 - Memória de falhas: XRAM F84Eh..F850h (24 bits), contadores F851h..F85Bh (confirma a falha ao chegar a 0Ah), tabela de
   registros em `6E27h` (3 bytes por falha) copiada para XRAM CDh..CFh, `515Bh` apaga F84Eh..F860h por comando 05h.
+- **Regra de falha do TPS (`1047h`..`1150h`, decodificação parcial).** Limiares por pista geram os bits B.0–B.7 (TPS2 ≥ F0h liga B.7 e `6Dh.0`; TPS1 é comparado com FAh e 07h); `RAM_28.1` = OR de B.0–B.4 e
+  `RAM_28.2` = OR de B.4–B.7; esses flags são debouncados por contadores (confirmação em 0Ah) para os bits de F84F e, ligados, selecionam o TPS de fallback `ROM[72A1h]` e zeram R2. A regra
+  exata de contradição entre as duas pistas (e o pull-up de sinal ausente) não foi decodificada além disso; o comportamento é caracterizado pelos testes P18 a P20.
 - **Salvar/restaurar da correção de longo prazo** (`1722h`..`176Dh`, IRAM A7h-ABh): quando `RAM_27.6` está ligado e `B.1` limpo, o byte XRAM F86Ch (correção de
   combustível de longo prazo, posição 5 da coleta F4) é copiado para a IRAM superior @AAh; após uma contagem regressiva em IRAM @97h (decrementada com
   `RAM_2D.5` e `.6`) e `RAM_29.5` ligado, o valor salvo é escrito de volta em F86Ch. É a única escrita direta de F86Ch na ROM, um mecanismo de
@@ -642,9 +645,56 @@ Pedido do proprietário: checar se ar e água estão trocados, via tabelas de DT
 - Limites medidos: IRAM 62h válido de 04h a F7h (0,1 V → 5, 4,8 V → 246 sem falha; 0 V e 5 V → falha e substituto 79h = 121);
   IRAM 63h: 0 V → falha de curto, 4,5 V e >= 4,8 V → falhas de circuito aberto/limite alto (bits distintos), 0,1–0,5 V → sem falha.
 - Os limiares das tabelas de calibração são coerentes com a identificação (água na faixa quente, ar na ambiente).
-- Cautela: minha primeira decodificação direta da tabela `6E27h` pelo índice do bit (R3 → 6E27h + 3·R3) previu DTC errado
+- **Tabela de DTC decodificada (`4329h`–`4431h`, `tools/dtc_table_decode.py`).** A entrada é `6E27h + 3·R3 + R7`, com R7 ∈ {0, 3, 6, 9} escolhido pela própria rotina:
+  R3 ≥ 12 → 9; R3 = 11 → 6 ou 9; R3 = 9 e 10 → 0, 3 ou 6; R3 ≤ 8 → 0 (R7 é a variante dentro do grupo, ligada ao contador em IRAM @A7h e aos bits de `89h`). Isso explica o
+  "deslocamento de 3 entradas" que medi. As seis pares falha → DTC transmitidos pela ROM conferem com a decodificação (tabela abaixo).
+
+| grupo R3 | bit XRAM | R7 (bytes) | entrada | DTC / status |
+|---:|---|---:|---|---|
+| 1 | F84E.0 | 0 | 6E2A | 0402/1D |
+| 2 | F84E.1 | 0 | 6E2D | 0402/1E |
+| 3 | F84E.2 | 0 | 6E30 | 0402/1E |
+| 4 | F84E.3 | 0 | 6E33 | 1A01/1B |
+| 5 | F84E.4 | 0 | 6E36 | 3102/0A |
+| 6 | F84E.5 | 0 | 6E39 | 3102/09 |
+| 7 | F84E.6 | 0 | 6E3C | 1902/0B |
+| 8 | F84E.7 | 0 | 6E3F | 1902/08 |
+| 9 | F84F.0 | 0 | 6E42 | 0602/1B |
+| 9 | F84F.0 | 3 | 6E45 | 0602/1B |
+| 9 | F84F.0 | 6 | 6E48 | 0602/1C |
+| 10 | F84F.1 | 0 | 6E45 | 0602/1B |
+| 10 | F84F.1 | 3 | 6E48 | 0602/1C |
+| 10 | F84F.1 | 6 | 6E4B | 0602/1F |
+| 11 | F84F.2 | 6 | 6E4E | 0602/1D |
+| 11 | F84F.2 | 9 | 6E51 | 0602/1E |
+| 12 | F84F.3 | 9 | 6E54 | 0A02/1E |
+| 13 | F84F.4 | 9 | 6E57 | 0A02/1D |
+| 14 | F84F.5 | 9 | 6E5A | 0A02/9E |
+| 15 | F84F.6 | 9 | 6E5D | 0B02/1E |
+| 16 | F84F.7 | 9 | 6E60 | 0B02/1D |
+| 17 | F850.0 | 9 | 6E63 | 0D02/03 |
+| 18 | F850.1 | 9 | 6E66 | 0302/03 |
+| 19 | F850.2 | 9 | 6E69 | FFFF/00 |
+| 20 | F850.3 | 9 | 6E6C | 0A02/1B |
+| 21 | F850.4 | 9 | 6E6F | 0D02/1D |
+| 22 | F850.5 | 9 | 6E72 | 0D02/1C |
+| 23 | F850.6 | 9 | 6E75 | 0303/03 |
+| 24 | F850.7 | 9 | 6E78 | 6300/00 |
+
+Validacao contra os DTC transmitidos pela ROM na K-line:
+
+| caso | R3 | R7 | decodificado | transmitido | confere |
+|---|---:|---:|---|---|---|
+| ECT aberto (ADC3 5 V) | 12 | 9 | 0A02/1E | 0A02/1E | sim |
+| ECT em curto (0 V) | 13 | 9 | 0A02/1D | 0A02/1D | sim |
+| ar aberto (ADC2 5 V) | 15 | 9 | 0B02/1E | 0B02/1E | sim |
+| ar em curto (0 V) | 16 | 9 | 0B02/1D | 0B02/1D | sim |
+| TPS2 alto (F84F.2) | 11 | 9 | 0602/1E | 0602/1E | sim |
+| TPS1 alto (F84E.3) | 4 | 0 | 1A01/1B | 1A01/1B | sim |
+
+- Cautela (superada pela decodificação acima): minha primeira decodificação direta da tabela `6E27h` pelo índice do bit (R3 → 6E27h + 3·R3) previu DTC errado
   para os bits de F84F (ECT aberto → F84F.3 que, lido assim, daria 0602); a ROM de fato transmite 0A02/1E. A indexação real
-  inclui o deslocamento R7 e não foi decodificada por completo. Vale o oráculo da K-line, não a leitura ingênua.
+  inclui R7, agora decodificado.
 - **Contrafactual de troca de canais (pedido do proprietário):** `--exp swap_ntc=1` faz o ADC2 ler o NTC da água e o ADC3 o do ar.
   A ROM **não entra em pane**: nenhum bit de falha (F84Eh..F850h = 0), sem estol, plena carga aceita (Tabelas P7 e P8).
   Com a troca, IRAM 62h vale 18–20 (ar "a 90–100 °C" fica dentro da faixa válida 04h..F7h, sem falha) e IRAM 63h vale ~70–74
@@ -688,7 +738,7 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 - Qual rotina consome IRAM 6Dh.0 para elevar o avanço (nexo medido, não rastreado instrução a instrução) e se há enriquecimento por TPS:
   nenhum foi observado até 100 % de pedal, mas só com TPS2 abaixo de F0h ou forçado a 5 V.
 - Janela 70–80 °C: a ROM precisa de arranque maior que 0,5 s para pegar (Tabela P15); o mecanismo de partida não foi decodificado. Não é pane nem limiar `721Dh`.
-- Decodificação completa do deslocamento R7 da tabela de DTC `6E27h`; polaridade física dos divisores NTC e curvas reais.
+- Polaridade física dos divisores NTC e curvas reais; o grupo R3 = 17–24 (F850) não teve gatilho de sensor exercitado, só decodificado da tabela.
 - Histórico de longa duração (horas) e carga parcial prolongada; a lógica de congelar/restaurar F86Ch (`1722h`) não teve suas condições (`27h.6`, `2Fh.1`) decodificadas.
 - Temperatura de admissão real do carro em plena carga (modelo térmico não validado).
 - Avanço real do motor (PMS físico) e MBT medido em dinamômetro.

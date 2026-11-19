@@ -6,14 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dyno_point import run_point, BASE_ARGS
 BIN, ROM, OUT = sys.argv[1:4]
 tmp = tempfile.mkdtemp(); st = os.path.join(tmp, 'long.bin')
-args = [BIN, ROM, '--physical-crank','--starter-ticks','495000','--stop-ticks','300000000','--adc7-mv','1232','--idle-bridge-p15-p16','--idle-contact-p46','--tps-bench-profile','--idle-motor-speed-mm-s','50','--idle-min-stop-mrad','5','--lambda-adc-gain','5','--dyno-scenario']
+args = [BIN, ROM, '--physical-crank','--starter-ticks','495000','--stop-ticks',os.environ.get('LONG_TICKS','300000000'),'--adc7-mv','1232','--idle-bridge-p15-p16','--idle-contact-p46','--tps-bench-profile','--idle-motor-speed-mm-s','50','--idle-min-stop-mrad','5','--lambda-adc-gain','5','--dyno-scenario']
 r = subprocess.run(args, env={'PATH': os.environ['PATH'], 'MA17_XRAM_STATE_FILE': st}, capture_output=True, text=True, timeout=7200)
 pl = [json.loads(l) for l in r.stdout.splitlines() if l.startswith('{"type":"plant"')]
 th = [json.loads(l) for l in r.stdout.splitlines() if l.startswith('{"type":"thermal"')]
 traj = []
-for a in range(0, 300000000, 50000000):
-    k = [x for x in pl if a < x['tick'] <= a + 50000000]
-    if k: traj.append(dict(window_M=f'{a//1000000}-{(a+50000000)//1000000}', rpm=round(sum(x['rpm'] for x in k)/len(k),1), spark=round(sum(x['spark_deg'] for x in k)/len(k),2), lam=round(sum(x['lambda_cyl'] for x in k)/len(k),3), fuel=round(sum(x['fuel_g_s'] for x in k)/len(k),4), coolant_c=round(th[min(len(th)-1,(a+50000000)//990000-1)]['coolant_c'],1)))
+for a in range(0, int(os.environ.get('LONG_TICKS','300000000')), int(os.environ.get('LONG_STEP','50000000'))):
+    k = [x for x in pl if a < x['tick'] <= a + int(os.environ.get('LONG_STEP','50000000'))]
+    if k: traj.append(dict(window_M=f'{a//1000000}-{(a+int(os.environ.get('LONG_STEP','50000000')))//1000000}', rpm=round(sum(x['rpm'] for x in k)/len(k),1), spark=round(sum(x['spark_deg'] for x in k)/len(k),2), lam=round(sum(x['lambda_cyl'] for x in k)/len(k),3), fuel=round(sum(x['fuel_g_s'] for x in k)/len(k),4), coolant_c=round(th[min(len(th)-1,(a+50000000)//990000-1)]['coolant_c'],1)))
 d = open(st,'rb').read()[8:]
 rows = []
 for rpm in (1500, 3000, 6000):
