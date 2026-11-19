@@ -8,8 +8,12 @@ import sys
 
 
 binary, firmware = sys.argv[1:3]
+# The held-ADC5 runs only diverge in CC3 interval once the lambda loop is
+# closed: first interval difference at 18.2 M ticks with friction/pumping drag
+# (earlier: before 12 M). The run is therefore 22 M ticks long.
+STOP_TICKS = 22000000
 base = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
-        "--stop-ticks", "12000000", "--adc7-mv", "1232",
+        "--stop-ticks", str(STOP_TICKS), "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
         "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
         "--load-step-tick", "800000", "--load-nm", "24",
@@ -31,7 +35,7 @@ def run(millivolts, trace):
                if line.startswith('{"type":"lambda"')]
     edges = [json.loads(line) for line in result.stdout.splitlines()
              if line.startswith('{"type":"cc3_pin"')]
-    assert len(samples) == 12
+    assert len(samples) == STOP_TICKS // 990000
     pulses = []
     start = None
     for edge in edges:
@@ -62,6 +66,9 @@ bound = [(int(match.group(1)), int(match.group(2), 16),
          if (match := re.search(
              r"\[LAMBDA-BOUND-XRAM\] tick=(\d+) addr=F8E8 "
              r"value=([0-9A-F]+)->([0-9A-F]+) source_PC=16EA", line))]
+# Table-bound steps inside the original 12 M window (the longer run keeps
+# stepping the bound further).
+bound = [entry for entry in bound if entry[0] < 12000000]
 assert [(old, new) for _, old, new in bound] == [(10, 9), (9, 8), (8, 7)]
 crossing_tick = bound[1][0]
 transition = [event for event in near
@@ -83,7 +90,9 @@ before = [(a, b) for a, b in zip(near_pulses, low_pulses)
 assert before and all(a[:3] == b[:3] for a, b in before)
 immediate = [(a, b) for a, b in zip(near_pulses, low_pulses)
              if transition[0]["tick"] < a[0] < 8500000]
-assert len(immediate) > 15
+# Pulses between the comparator transition (~7.73 M) and 8.5 M: 21+ before
+# ca6f99c, 12 now (pulse period follows engine speed). Require several.
+assert len(immediate) > 6
 assert all(a[2] == b[2] for a, b in immediate)
 assert all(a[3] == 8 and b[3] == 2 for a, b in immediate)
 late = [(a, b) for a, b in zip(near_pulses, low_pulses)

@@ -53,7 +53,10 @@ with tempfile.TemporaryFile(mode="w+") as log:
         xdotool("mousemove", "--window", window, "170", "470")
         xdotool("mousedown", "1")
         deadline = time.monotonic() + 12.0
-        while current_tick() < start_tick + 650000:
+        # The window title tick lags the simulation by a host-dependent amount
+        # (a 650 k request produced a real hold of only 175 k ticks), so hold
+        # generously and check the real hold from the saved trace, in ticks.
+        while current_tick() < start_tick + 1300000:
             assert time.monotonic() < deadline and process.poll() is None
             time.sleep(0.05)
         xdotool("mouseup", "1")
@@ -67,6 +70,11 @@ with tempfile.TemporaryFile(mode="w+") as log:
         saved = trace.read_text()
         assert " key 1\n" in saved and " starter 1\n" in saved
         assert " starter 0\n" in saved
+        press = int(re.search(r"^(\d+) starter 1$", saved, re.M)[1])
+        release = int(re.search(r"^(\d+) starter 0$", saved, re.M)[1])
+        # The series-motor starter needs a real crank to catch a hot engine;
+        # the old constant 50 N-m starter caught in 175 k ticks.
+        assert release - press >= 500000, (press, release)
         replay = subprocess.run(
             [binary, rom, "--headless", "--bench-preset", "--capture-tick",
              "4000000", "--capture-svg", str(svg), "--replay-controls",

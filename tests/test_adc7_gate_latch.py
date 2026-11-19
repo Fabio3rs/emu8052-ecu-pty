@@ -47,7 +47,10 @@ _, grounded_intake, grounded_gate = run([
     "--adc7-mv", "1260", "--adc7-step-mv", "0",
     "--adc7-step-tick", "3000000"])
 
-assert int(low_intake["cc3_pulses"]) > 100
+# Injection really ran. The count follows engine speed over the 4 M window
+# (>100 before ca6f99c, 55 with friction/pumping drag), so only the order of
+# magnitude is checked; the gate behaviour below is what the test is about.
+assert int(low_intake["cc3_pulses"]) > 20
 assert ground_crank == low_crank
 assert ground_intake == low_intake | {"ram67": "0"}
 assert ground_gate == {"ram67": "0", "f8dd": "170", "gate2b5": "0"}

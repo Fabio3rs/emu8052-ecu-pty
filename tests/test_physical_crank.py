@@ -11,10 +11,18 @@ binary, firmware = sys.argv[1:3]
 env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
+# The ROM only lets the engine catch with the ADC7 input at its normal level
+# (the value every other physical test uses). The pre-ca6f99c starter
+# (constant 50 N-m, no speed limit) cranked fast enough to catch without it;
+# the series-motor starter cranks at 400-520 rpm and honours the gate.
+ADC7_MV = "1232"
+
+
 def run(starter_ticks, stop_ticks=1485000):
     result = subprocess.run(
         [binary, firmware, "--physical-crank", "--starter-ticks",
-         str(starter_ticks), "--stop-ticks", str(stop_ticks)],
+         str(starter_ticks), "--stop-ticks", str(stop_ticks),
+         "--adc7-mv", ADC7_MV],
         env=env, text=True, capture_output=True, timeout=20,
         check=True,
     )
@@ -35,7 +43,9 @@ assert first == repeat, (first, repeat)
 ticks, rpm, angle, rising, falling, missing, ram47 = first
 assert int(ticks) == 1485000
 assert float(rpm) > 300 and float(angle) > 6.28
-assert int(rising) > 58 and rising == falling
+# A tooth can be mid-pulse at the stop tick, so the edge counts may differ by
+# one (947/946 measured); equality only held by coincidence of the stop tick.
+assert int(rising) > 58 and abs(int(rising) - int(falling)) <= 1
 assert int(ram47) > 0 and abs(int(ram47) * 25 - float(rpm)) < 50
 gaps = [json.loads(line) for line in log.splitlines()
         if line.startswith('{"type":"crank_gap"')]
@@ -52,5 +62,8 @@ assert int(no_starter[5]) == 0 and int(no_starter[6]) == 0
 coast, coast_log = run(198000, 3000000)
 assert float(coast[1]) == 0.0 and int(coast[6]) == 0
 assert int(coast[3]) > 58
-assert re.search(r"\[COSIM-RPM\] tick=\d+ physical_rpm=0\.000 "
-                 r"ram47=0 pc=", coast_log)
+# The ROM clears RAM47 when the last teeth stop arriving; the wheel may still
+# be creeping then (0.029 rpm measured), so require "stopped", not exactly 0.
+assert any(float(m.group(1)) < 5.0 for m in re.finditer(
+    r"\[COSIM-RPM\] tick=\d+ physical_rpm=([\d.]+) ram47=0 pc=",
+    coast_log)), coast_log[-2000:]

@@ -7,6 +7,7 @@
 #include "lab/SevelTransmission.hpp"
 #include "lab/SevelValves.hpp"
 
+#include "lab/CylinderLabels.hpp"
 #include "lab/SpeedReading.hpp"
 
 #include <gtest/gtest.h>
@@ -630,3 +631,30 @@ TEST(SevelValves, FollowsConfiguredPhysicalTdcReference) {
 }
 
 } // namespace
+
+TEST(CylinderLabels, FocusLabelNamesTheSelectedCylinderOnly) {
+    for (int cylinder = 1; cylinder <= 4; ++cylinder) {
+        EXPECT_EQ(lab::cylinder_focus_label(cylinder),
+                  "CYL " + std::to_string(cylinder) + " VIEW");
+        EXPECT_EQ(lab::cylinder_focus_label(cylinder, true),
+                  "CYL " + std::to_string(cylinder) + " VIEW | ");
+    }
+    for (const int none : {0, -1, 5, 99})
+        EXPECT_TRUE(lab::cylinder_focus_label(none).empty()) << none;
+}
+
+TEST(CylinderLabels, IgnitionPairsFollowTheFiringOrder1342) {
+    EXPECT_EQ(lab::firing_order, (std::array<int, 4>{1, 3, 4, 2}));
+    EXPECT_EQ(lab::ignition_pair_of_cylinder(1), 0);
+    EXPECT_EQ(lab::ignition_pair_of_cylinder(4), 0);
+    EXPECT_EQ(lab::ignition_pair_of_cylinder(2), 1);
+    EXPECT_EQ(lab::ignition_pair_of_cylinder(3), 1);
+    EXPECT_EQ(lab::ignition_pair_of_cylinder(0), -1);
+    EXPECT_STREQ(lab::ignition_pair_label(0), "1/4");
+    EXPECT_STREQ(lab::ignition_pair_label(1), "2/3");
+    // Wasted spark: consecutive cylinders in the firing order alternate coils.
+    for (std::size_t i = 0; i < lab::firing_order.size(); ++i)
+        EXPECT_NE(lab::ignition_pair_of_cylinder(lab::firing_order[i]),
+                  lab::ignition_pair_of_cylinder(
+                      lab::firing_order[(i + 1) % lab::firing_order.size()]));
+}

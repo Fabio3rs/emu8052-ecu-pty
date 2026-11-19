@@ -10,6 +10,7 @@
 #include "lab/ScopeDecimation.hpp"
 #include "lab/SevelInstrumentProfile.hpp"
 #include "lab/SevelTransmission.hpp"
+#include "lab/CylinderLabels.hpp"
 #include "lab/SpeedReading.hpp"
 #include "lab/TraceGeometry.hpp"
 #include "labeled_gauge_layout.h"
@@ -727,10 +728,8 @@ void draw_lab_scope(
                       frozen ? "FROZEN X:LIVE" : "LIVE X:FREEZE");
     font.draw(renderer, right - font.measure(zoom_label) * scale,
               panel.y + 2.0f, zoom_label, {145, 177, 190, 255}, scale);
-    if (focus_cylinder > 0) {
-        char focus_label[24];
-        std::snprintf(focus_label, sizeof(focus_label), "CYL %d VIEW",
-                      focus_cylinder);
+    if (const std::string focus_label = cylinder_focus_label(focus_cylinder);
+        !focus_label.empty()) {
         font.draw(renderer, panel.x + 5.0f, panel.y + 2.0f, focus_label,
                   {184, 210, 140, 255}, scale);
     }
@@ -1128,10 +1127,8 @@ void draw_lab_analog_scope(
         "IDLE STEM / CONTACT"};
     const char *group_title = group_titles[static_cast<std::size_t>(
         std::clamp(group, 0, static_cast<int>(group_titles.size()) - 1))];
-    char focus_label[24]{};
-    if (focus_cylinder > 0)
-        std::snprintf(focus_label, sizeof(focus_label), "CYL %d VIEW | ",
-                      focus_cylinder);
+    const std::string focus_text = cylinder_focus_label(focus_cylinder, true);
+    const char *focus_label = focus_text.c_str();
     if (panel.w < 620.0f)
         std::snprintf(heading, sizeof(heading), "%s%s | %.1fS %zuPTS %s%s | %s",
                       focus_label, group_title,
@@ -2230,7 +2227,7 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
     }
     for (std::size_t pair = 0; pair < spark_glows.size(); ++pair) {
         const float x = box.x + box.w * (pair == 0 ? 0.08f : 0.55f);
-        const char *pair_label = pair == 0 ? "1/4" : "2/3";
+        const char *pair_label = ignition_pair_label(static_cast<int>(pair));
         const float pin = pulses[pair].pin_strength;
         for (int row = 0; row < 2; ++row) {
             const float y =

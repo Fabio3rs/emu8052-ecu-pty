@@ -116,3 +116,19 @@ Diferente de sistemas com válvula de desvio de ar (IACV / atuador *stepper* em 
 | Microswitch de Batente | `IDLE SW: CLOSED / OPEN` | [src/lab/LabInstruments.cpp](file:///mnt/projects/Projects/emu8051-tty/src/lab/LabInstruments.cpp) |
 | Cilindrada | $1.581\text{ L}$ (modelo usa `displacement_m3 = 0.001580`, 1,580 L — divergência de 1 cm³ da especificação, pendente de decisão; não é mais fórmula de GUI) | [include/engine/IntakeFuel.hpp](file:///mnt/projects/Projects/emu8051-tty/include/engine/IntakeFuel.hpp) |
 | Vazão de Ar | canal `air_in_kg_s` do modelo de admissão, convertido para g/s pela GUI (sem a antiga aproximação $0.0279 \times \text{RPM} \times \eta_v$) | [docs/SEVEL_LAB_CHANNEL_MAP.md](file:///mnt/projects/Projects/emu8051-tty/docs/SEVEL_LAB_CHANNEL_MAP.md) |
+
+## Motor de partida (manual Tipo, "Dados Técnicos" 00.55, págs. 28–30, VIII/93)
+
+Transcrição das páginas fornecidas (imagens do proprietário). Motor de partida **Magneti Marelli E80-12V-1 kW** (versão Monomotronic: E80-1/12). 12 V, 4 pólos, **enrolamento em série**, engate **a roda livre**, comando eletromagnético, rotação do lado do pinhão: direita. Dados obtidos a 20 °C, **medidos no eixo do motor de partida (lado do pinhão)**.
+
+| Prova | Corrente | Tensão | Velocidade (eixo do motor) | Torque desenvolvido |
+| --- | ---: | ---: | ---: | ---: |
+| Funcionamento | 200 A | 9,8–10 V | 2200 rpm | 0,38 daNm = **3,8 N·m** |
+| Arranque (rotor bloqueado) | 440 A | 7,6 V | 0 | ≥ 1,25 daNm = **≥ 12,5 N·m** |
+| A vazio | 44–48 A | 11,4–11,5 V | 11 400–12 300 rpm | ≈ 0 |
+
+Bateria: 12 V 55 Ah 255 A (60 Ah 320 A com ar-condicionado). Curvas características (P3F083A04, eixo X = corrente 0–500 A): rotação decrescente, torque crescente até ~12–13 N·m a ~440 A, potência com pico de ~1 kW perto de 250 A, tensão decrescente de ~11,5 V para ~7,6 V.
+
+**Lacunas (não estão neste material):** relação coroa/pinhão (Z coroa/Z pinhão) do conjunto 1581 cm³; resistência interna e estado da bateria no modelo; temperatura (dados só a 20 °C). Sem a relação, o torque e a rotação do virabrequim **não** podem ser derivados destes números.
+
+**Implementado em 2026-11-18** (ver `docs/SEVEL_STARTER_IDLE_CALIBRATION.md`). Estado anterior ao ajuste — **Implicação para o modelo (`CrankDynamics`):** o torque de partida atual é constante (50 N·m no virabrequim, sem depender da rotação e sem roda livre). O motor série do manual tem torque decrescente com a rotação e a roda livre impede que o arranque acelere o motor acima da rotação do pinhão. Com torque constante, manter o arranque acionado faz a rotação subir sem limite (medido: 5788 rpm em 5 s).

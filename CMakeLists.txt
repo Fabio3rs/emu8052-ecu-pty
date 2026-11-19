@@ -341,6 +341,10 @@ if(ENABLE_SEVEL_MA17_LAB)
                         ${CMAKE_CURRENT_BINARY_DIR})
                 set_tests_properties(LabCapture.HardwareGpu PROPERTIES
                     TIMEOUT 120 SKIP_RETURN_CODE 77 RESOURCE_LOCK sevel_gpu)
+                add_test(NAME LabInspector.CandidateLabelsAreMarked
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_inspector_labels.py
+                        ${CMAKE_CURRENT_SOURCE_DIR}/apps/sevel-ma17-lab/SdlDisplay.cpp)
                 add_test(NAME LabCapture.SvgExport
                     COMMAND python3
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_svg_export.py
@@ -1109,6 +1113,19 @@ if(ENABLE_SEVEL_MA17_LAB)
                 ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
         set_tests_properties(LabSession.ModelExceptionStopsSessionWithoutTerminate
             PROPERTIES TIMEOUT 120)
+        add_executable(lab_session_retention tests/lab_session_retention_test.cpp
+            src/lab/SimSession.cpp)
+        target_link_libraries(lab_session_retention PRIVATE emu8051-tty_lib)
+        add_test(NAME LabSession.RetentionCoversLongWindowsWithoutGaps
+            COMMAND lab_session_retention
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        set_tests_properties(LabSession.RetentionCoversLongWindowsWithoutGaps
+            PROPERTIES TIMEOUT 180)
+        add_test(NAME LabSession.Retention300sThermalWindow
+            COMMAND lab_session_retention
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin 300)
+        set_tests_properties(LabSession.Retention300sThermalWindow
+            PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
         add_executable(lab_live_determinism
             tests/lab_live_determinism.cpp src/lab/SimSession.cpp)
         target_link_libraries(lab_live_determinism PRIVATE emu8051-tty_lib)

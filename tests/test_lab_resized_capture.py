@@ -1248,6 +1248,7 @@ with tempfile.TemporaryFile(mode="w+") as log, \
             previous = bytearray(width * 4)
             status_text = 0
             status_overflow = 0
+            key_row_border = 0
             for row in range(341):
                 kind = scanlines[row * stride]
                 encoded = scanlines[row * stride + 1:(row + 1) * stride]
@@ -1264,18 +1265,30 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                         assert kind < 4
                         predictor = (0, left, above, (left + above) // 2)[kind]
                     pixels[index] = (byte + predictor) & 255
-                if 43 <= row < 55:
+                # Compact inspector panel (rows 215..300, x 10..584 in the
+                # current layout; the status used to sit in the header band).
+                if 215 <= row < 300:
                     status_text += sum(min(pixels[4 * x:4 * x + 3]) > 100
-                                       for x in range(500, 570))
-                    status_overflow += sum(min(pixels[4 * x:4 * x + 3]) > 100
-                                           for x in range(580, 594))
+                                       for x in range(10, 584))
+                # Gap between the inspector and the gauge column.
+                status_overflow += sum(min(pixels[4 * x:4 * x + 3]) > 100
+                                       for x in range(586, 594))
+                # The inspector's cyan border must not reach the KEY row.
+                if 305 <= row < 341:
+                    key_row_border += sum(
+                        tuple(pixels[4 * x:4 * x + 3]) == (99, 211, 220)
+                        for x in range(8, 70))
                 previous = pixels
-            assert status_text > 20 and status_overflow == 0, (
+            assert status_text > 200 and status_overflow == 0, (
                 "compact status crosses into gauges", status_text,
                 status_overflow)
-            assert tuple(previous[25 * 4:25 * 4 + 3]) == (58, 93, 104), (
+            # KEY button visible and un-obscured: its fill is the light
+            # button colour of the current theme (was dark teal 58,93,104),
+            # and no inspector border pixels fall in the KEY row.
+            assert tuple(previous[25 * 4:25 * 4 + 3]) == (235, 241, 246), (
                 "KEY button obscured by compact inspector",
                 tuple(previous[25 * 4:25 * 4 + 3]))
+            assert key_row_border == 0, key_row_border
         if frozen_tick is not None or radial_mode in (
                 "scope-trigger-single-tps", "scope-trigger-spark14",
                 "digital-events", "digital-cursors", "digital-idle-cursors"):

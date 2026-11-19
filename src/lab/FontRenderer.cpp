@@ -312,8 +312,9 @@ FontRenderer::FontRenderer(const std::string &path, const FontSpec &spec,
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
             "/usr/share/fonts/truetype/ubuntu/UbuntuMono-B.ttf",
-            "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/"
-            "Roboto-Bold.ttf",
+            // clang-format off
+            "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
+            // clang-format on
             "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf"};
         for (const char *candidate : kSystemFonts) {
             g_system_probes.fetch_add(1);

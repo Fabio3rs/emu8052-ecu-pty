@@ -292,3 +292,23 @@ pins both readings so that the decision is visible in tests.
 **Reverse presentation.** A negative road speed is shown as `|v|` with an `R`
 marker, never as the `LOW` under-range arrow of a 0–200 dial (`vehicle_speed`
 keeps its signed value in telemetry and CSV).
+
+## Inspetor de debug: campos e estado de evidência (UI-37, 2026-11-18)
+
+Auditado em `apps/sevel-ma17-lab/SdlDisplay.cpp`; `LabInspector.CandidateLabelsAreMarked`
+(`tests/test_lab_inspector_labels.py`) exige os marcadores abaixo.
+
+| Campo (rótulo) | Origem | Evidência | Marcação na tela |
+| --- | --- | --- | --- |
+| `KEY` | entrada de controle da sessão | validada | — |
+| `INJ PULSES` | estágio de injeção publicado (`injector_pulses`) | modelo físico; `--` sem `injector_available` | — |
+| `BURNS` | modelo de combustão (`burns`) | modelo físico; `--` sem `crank_available` | — |
+| `RAM27/28` | bytes de falha retidos da ROM | brutos, sem fresh capture | rótulo = endereço RAM |
+| `LOST` | overflow do buffer de eventos da sessão | validada; `--` sem sessão | — |
+| `SOUND` | estado do áudio | validada | — |
+| `tick` / `PC` | relógio e contador de programa do emulador | validados | — |
+| `phase? …/720` | `crank_angle_rad − tdc_phase_rad` | **candidata** (referência de PMS) | `?` (antes `~`, que não avisava) |
+| `CC3`, `P5.0`, `P5.1` | níveis dos pinos da porta/CC3 | níveis reais; função elétrica candidata | nomes de porta, não de função |
+| `lamp candidate` | saída candidata da lâmpada | **candidata** | `candidate` |
+| `RPM PHY` / `RAM47` / `IDLE46` | RPM físico; bytes brutos da ROM | físico validado; RAM brutos | rótulo = endereço RAM |
+| `P1.1? … pulses` | período do latch P1.1 | **candidata** (E.2: razão variável) | `?` |

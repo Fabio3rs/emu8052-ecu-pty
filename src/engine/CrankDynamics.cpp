@@ -19,6 +19,16 @@ CrankDynamics::CrankDynamics(CrankParameters parameters)
         parameters.wheel_offset_rad >= position_rad ||
         !std::isfinite(parameters.starter_torque_nm) ||
         parameters.starter_torque_nm < 0.0 ||
+        !std::isfinite(parameters.starter_ratio) ||
+        parameters.starter_ratio <= 0.0 ||
+        !std::isfinite(parameters.starter_stall_nm) ||
+        !std::isfinite(parameters.starter_bench_nm) ||
+        !std::isfinite(parameters.starter_bench_rpm) ||
+        !std::isfinite(parameters.starter_noload_rpm) ||
+        !(parameters.starter_stall_nm >= parameters.starter_bench_nm) ||
+        !(parameters.starter_bench_nm >= 0.0) ||
+        !(parameters.starter_bench_rpm > 0.0) ||
+        !(parameters.starter_noload_rpm > parameters.starter_bench_rpm) ||
         !std::isfinite(parameters.breakaway_torque_nm) ||
         parameters.breakaway_torque_nm < 0.0 ||
         !std::isfinite(parameters.running_friction_nm) ||
@@ -38,7 +48,7 @@ bool CrankDynamics::step(bool starter_engaged, double combustion_torque_nm,
 
     const double drive_nm =
         combustion_torque_nm +
-        (starter_engaged ? parameters_.starter_torque_nm : 0.0) -
+        (starter_engaged ? starter_torque_at_crank_nm() : 0.0) -
         load_torque_nm + transmission_torque_nm;
     if (!drivetrain && speed_rad_s_ == 0.0 &&
         drive_nm <= parameters_.breakaway_torque_nm)
@@ -67,6 +77,30 @@ bool CrankDynamics::step(bool starter_engaged, double combustion_torque_nm,
 }
 
 double CrankDynamics::rpm() const { return speed_rad_s_ * 30.0 / pi; }
+
+double CrankDynamics::starter_torque_at_crank_nm() const {
+    if (!parameters_.starter_series_motor)
+        return parameters_.starter_torque_nm;
+    // Piecewise-linear interpolation of the three bench points on the
+    // starter shaft; beyond no-load speed the freewheel disengages.
+    const double motor_rpm =
+        speed_rad_s_ * 30.0 / pi * parameters_.starter_ratio;
+    double motor_nm = 0.0;
+    if (motor_rpm <= 0.0) {
+        motor_nm = parameters_.starter_stall_nm;
+    } else if (motor_rpm < parameters_.starter_bench_rpm) {
+        motor_nm = parameters_.starter_stall_nm +
+                   (parameters_.starter_bench_nm -
+                    parameters_.starter_stall_nm) *
+                       motor_rpm / parameters_.starter_bench_rpm;
+    } else if (motor_rpm < parameters_.starter_noload_rpm) {
+        motor_nm = parameters_.starter_bench_nm *
+                   (parameters_.starter_noload_rpm - motor_rpm) /
+                   (parameters_.starter_noload_rpm -
+                    parameters_.starter_bench_rpm);
+    }
+    return parameters_.starter_ratio * motor_nm;
+}
 
 double CrankDynamics::friction_torque_nm() const {
     return parameters_.running_friction_nm +

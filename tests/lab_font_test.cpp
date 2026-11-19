@@ -1,4 +1,5 @@
 #include "lab/FontRenderer.hpp"
+#include "lab/HeaderText.hpp"
 
 #include <gtest/gtest.h>
 
@@ -142,4 +143,28 @@ TEST_F(LabFont, EllipsisKeepsTitlesReadableAndNeverSplitsUtf8) {
     // The legibility floor maps to a positive scale for any size factor.
     EXPECT_GT(font.scale_for_px(12.0f), 0.0f);
     EXPECT_NEAR(font.text_px(font.scale_for_px(12.0f)), 12.0f, 1e-4f);
+}
+
+TEST_F(LabFont, HeaderTitleFallsBackToShortFormThenEllipsis) {
+    lab::FontRenderer font(kSilk);
+    ASSERT_TRUE(font.ready());
+    const float px = 14.0f;
+    const std::string full = "FIAT TIPO 1.6 i.e. | SEVEL 1581 CM3 | SOHC 8V / 4 CIL / SPI";
+    const std::string shortened = "FIAT TIPO | SEVEL MA1.7";
+    const float full_w = font.measure_px(full, px);
+    const float short_w = font.measure_px(shortened, px);
+    ASSERT_GT(full_w, short_w);
+    // Fits: unchanged.
+    EXPECT_EQ(lab::fit_header_title(font, full, shortened, px, full_w + 1.0f), full);
+    // Too narrow for the full title but not for the short one: short form.
+    EXPECT_EQ(lab::fit_header_title(font, full, shortened, px, (full_w + short_w) * 0.5f),
+              shortened);
+    // Narrower than the short title: ellipsis, never wider than the room.
+    const float room = short_w * 0.6f;
+    const std::string cut = lab::fit_header_title(font, full, shortened, px, room);
+    EXPECT_LE(font.measure_px(cut, px), room);
+    EXPECT_EQ(cut.substr(cut.size() - 3), "...");
+    // No short form given: the full title is ellipsized.
+    const std::string only = lab::fit_header_title(font, full, "", px, full_w * 0.5f);
+    EXPECT_LE(font.measure_px(only, px), full_w * 0.5f);
 }

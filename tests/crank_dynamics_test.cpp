@@ -145,6 +145,7 @@ TEST(Drivetrain, RollingResistanceHoldsWeakDriveAndAllowsLaunch) {
 TEST(CrankDynamics, StarterAcceleratesFromRestByTorqueBalance) {
     engine::CrankParameters parameters;
     parameters.inertia_kg_m2 = 0.20;
+    parameters.starter_series_motor = false;
     parameters.starter_torque_nm = 30.0;
     parameters.breakaway_torque_nm = 0.0;
     parameters.running_friction_nm = 0.0;
@@ -158,6 +159,74 @@ TEST(CrankDynamics, StarterAcceleratesFromRestByTorqueBalance) {
     EXPECT_NEAR(crank.speed_rad_s(), 75.0, 1e-8);
     EXPECT_NEAR(crank.angle_rad(), 18.75, 1e-8);
     EXPECT_NEAR(crank.rpm(), 75.0 * 30.0 / std::acos(-1.0), 1e-7);
+}
+
+// Marelli E80 series starter, ring 122 / pinion 9 (docs/SEVEL_TIPO_16_SPECS.md).
+engine::CrankParameters starter_only_parameters() {
+    engine::CrankParameters parameters;
+    parameters.inertia_kg_m2 = 0.20;
+    parameters.breakaway_torque_nm = 0.0;
+    parameters.running_friction_nm = 0.0;
+    parameters.viscous_friction_nm_per_rad_s = 0.0;
+    return parameters;
+}
+
+// Spin the crank to a speed by applying a constant torque for exactly 1 s.
+void spin_to(engine::CrankDynamics &crank, double speed_rad_s) {
+    const double torque_nm = crank.inertia_kg_m2() * speed_rad_s;
+    for (int tick = 0; tick < 990000; ++tick)
+        crank.step(false, torque_nm);
+}
+
+TEST(CrankDynamicsStarter, StalledTorqueMatchesBenchStallTimesRatio) {
+    engine::CrankDynamics crank(starter_only_parameters());
+    const double expected_nm = 12.5 * 122.0 / 9.0; // ~169 N.m at the crank
+    EXPECT_NEAR(crank.starter_torque_at_crank_nm(), expected_nm, 1e-9);
+    crank.step(true);
+    EXPECT_NEAR(crank.speed_rad_s(),
+                expected_nm / 0.20 / engine::CrankDynamics::ticks_per_second,
+                1e-12);
+}
+
+TEST(CrankDynamicsStarter, TorqueAtBenchSpeedMatchesFunctionalTest) {
+    engine::CrankDynamics crank(starter_only_parameters());
+    const double pi = std::acos(-1.0);
+    const double bench_crank_rad_s = 2200.0 * 9.0 / 122.0 * pi / 30.0;
+    spin_to(crank, bench_crank_rad_s);
+    EXPECT_NEAR(crank.speed_rad_s(), bench_crank_rad_s, 1e-6);
+    // 0.38 daNm = 3.8 N.m at 2200 rpm on the starter shaft -> 51.5 N.m.
+    EXPECT_NEAR(crank.starter_torque_at_crank_nm(), 3.8 * 122.0 / 9.0, 1e-3);
+}
+
+TEST(CrankDynamicsStarter, FreewheelStopsDrivingAboveNoLoadSpeed) {
+    engine::CrankDynamics crank(starter_only_parameters());
+    const double pi = std::acos(-1.0);
+    // 11850 rpm at the starter is about 874 rpm at the crank.
+    spin_to(crank, 1000.0 * pi / 30.0);
+    EXPECT_DOUBLE_EQ(crank.starter_torque_at_crank_nm(), 0.0);
+}
+
+TEST(CrankDynamicsStarter, HeldStarterSettlesInsteadOfRunningAway) {
+    engine::CrankParameters parameters = starter_only_parameters();
+    parameters.running_friction_nm = 12.5;
+    engine::CrankDynamics crank(parameters);
+    for (int tick = 0; tick < 5 * 990000; ++tick)
+        crank.step(true);
+    // Bounded by the no-load speed (~874 rpm at the crank), not by time.
+    EXPECT_GT(crank.rpm(), 300.0);
+    EXPECT_LT(crank.rpm(), 874.0);
+}
+
+TEST(CrankDynamicsStarter, RejectsInconsistentStarterData) {
+    engine::CrankParameters parameters;
+    parameters.starter_ratio = 0.0;
+    EXPECT_THROW(engine::CrankDynamics{parameters}, std::invalid_argument);
+    parameters = engine::CrankParameters{};
+    parameters.starter_noload_rpm = parameters.starter_bench_rpm;
+    EXPECT_THROW(engine::CrankDynamics{parameters}, std::invalid_argument);
+    parameters = engine::CrankParameters{};
+    parameters.starter_stall_nm = 1.0; // below the bench torque
+    EXPECT_THROW(engine::CrankDynamics{parameters}, std::invalid_argument);
 }
 
 TEST(CrankDynamics, WheelHasTwoMissingPositionsAndStopsWithoutDrive) {

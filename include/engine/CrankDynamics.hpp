@@ -7,6 +7,19 @@ class Drivetrain;
 // Estimated equivalent crank/flywheel parameters; SI units throughout.
 struct CrankParameters {
     double inertia_kg_m2 = 0.20;
+    // Starter: Marelli E80-12V-1kW series motor with freewheel engagement,
+    // bench data at 20 C (Tipo manual 00.55 p.29, docs/SEVEL_TIPO_16_SPECS.md):
+    // 12.5 N.m stalled, 3.8 N.m at 2200 rpm, ~0 N.m at ~11850 rpm no load.
+    // Ring gear 122 / pinion 9 teeth (reported by the owner; confirm against
+    // the part number stamped on the starter). Bench voltage, not in-car.
+    bool starter_series_motor = true;
+    double starter_ratio = 122.0 / 9.0;
+    double starter_stall_nm = 12.5;      // at the starter shaft
+    double starter_bench_nm = 3.8;       // at starter_bench_rpm
+    double starter_bench_rpm = 2200.0;   // starter shaft
+    double starter_noload_rpm = 11850.0; // starter shaft, mid of 11400-12300
+    // Constant-torque starter at the crank, used only when
+    // starter_series_motor is false (unit-test and legacy comparisons).
     double starter_torque_nm = 50.0;
     double breakaway_torque_nm = 4.0;
     // ~1.1 bar FMEP near 900 rpm for a 1.58 L four-stroke engine.
@@ -37,6 +50,9 @@ class CrankDynamics {
     double inertia_kg_m2() const { return parameters_.inertia_kg_m2; }
     double rpm() const;
     double friction_torque_nm() const;
+    // Starter torque at the crank for the current speed; zero once the
+    // freewheel overruns (crank faster than the pinion could drive it).
+    double starter_torque_at_crank_nm() const;
     int wheel_position() const;
     double wheel_phase_rad() const;
 

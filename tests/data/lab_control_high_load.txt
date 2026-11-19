@@ -2,6 +2,6 @@ sevel-ma17-controls-v1
 0 key 0
 50000 key 1
 50000 starter 1
-400000 starter 0
-500000 pedal 0.025
-700000 load 60
+700000 starter 0
+800000 pedal 0.025
+1000000 load 60

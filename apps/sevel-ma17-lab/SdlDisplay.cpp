@@ -11,6 +11,7 @@
 #include "lab/LabUiPreferences.hpp"
 #include "lab/LiveAudio.hpp"
 #include "lab/MeshAsset.hpp"
+#include "lab/HeaderText.hpp"
 #include "lab/PixelSnap.hpp"
 #include "lab/RecordingRenderer.hpp"
 #include "lab/SceneCameraFit.hpp"
@@ -897,7 +898,7 @@ void draw_gear_widget(const LayoutState &layout_state, SDL_Renderer *screen,
         const float text_scale = 0.68f * scale;
         font.draw(screen,
                   inner.x + (inner.w - font.measure(label) * text_scale) * 0.5f,
-                  inner.y + (inner.h - 14.0f * text_scale) * 0.5f, label,
+                  inner.y + (inner.h - font.line_height(font.text_px(text_scale))) * 0.5f, label,
                   {235, 241, 246, 255}, text_scale);
         SDL_SetRenderDrawColor(screen, 235, 241, 246, 255);
         const float cy = inner.y + inner.h * 0.5f;
@@ -919,7 +920,7 @@ void draw_gear_widget(const LayoutState &layout_state, SDL_Renderer *screen,
                               float text_scale) {
         font.draw(screen,
                   inner.x + (inner.w - font.measure(label) * text_scale) * 0.5f,
-                  center_y - 7.0f * text_scale, label, {235, 241, 246, 255},
+                  center_y - 0.5f * font.line_height(font.text_px(text_scale)), label, {235, 241, 246, 255},
                   text_scale);
     };
     const float title_scale =
@@ -1113,7 +1114,7 @@ void draw_lab_buttons(const LayoutState &layout_state, SDL_Renderer *screen,
         font.draw(screen,
                   bounds.x +
                       (bounds.width - font.measure(label) * text_scale) / 2.0f,
-                  bounds.y + (bounds.height - 14.0f * text_scale) / 2.0f - 1.0f,
+                  bounds.y + (bounds.height - font.line_height(font.text_px(text_scale))) / 2.0f - 1.0f,
                   label, label_color, text_scale);
     }
 }
@@ -2953,11 +2954,18 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         axial_camera.pan_y = std::clamp(
             axial_camera.pan_y, -scene_height * 0.5f, scene_height * 0.5f);
         const bool compact_view = width < 1100;
-        const float fit_top =
-            (compact_view
-                 ? (height < 620 ? (width < 900 ? 166.0f : 150.0f) : 130.0f)
-                 : 108.0f) *
-            ui_scale;
+        // Top of the fitted scene: the header row plus the button/selector
+        // rows that sit above the mechanical view in each layout.
+        constexpr float kFitGapDesktop = 18.0f;
+        constexpr float kFitGapCompact = 40.0f;
+        constexpr float kFitGapCompactShort = 60.0f;
+        constexpr float kFitGapNarrowShort = 76.0f;
+        const float fit_gap =
+            !compact_view ? kFitGapDesktop
+            : height >= 620 ? kFitGapCompact
+            : width < 900 ? kFitGapNarrowShort
+                          : kFitGapCompactShort;
+        const float fit_top = (kHeaderHeight + fit_gap) * ui_scale;
         float fit_bottom = scene_height - 16.0f * ui_scale;
         if (compact_view && height >= 620 && lab_buttons_visible(width, height))
             fit_bottom = std::min(fit_bottom,
@@ -3585,10 +3593,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             // face: fall back to the short title, then to an ellipsis.
             const float title_px = font.text_px(ui_scale);
             const float title_max = debug_x - 24.0f - 8.0f * ui_scale;
-            std::string header_title = status;
-            if (font.measure_px(header_title, title_px) > title_max)
-                header_title = "FIAT TIPO | SEVEL MA1.7";
-            header_title = font.ellipsize(header_title, title_px, title_max);
+            const std::string header_title = fit_header_title(
+                font, status, "FIAT TIPO | SEVEL MA1.7", title_px, title_max);
             draw_status(0, header_title.c_str());
         }
         font.draw(screen, help_x, 24.0f, help_hint, {99, 211, 220, 255},
@@ -3695,7 +3701,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             }
             std::snprintf(
                 status, sizeof(status),
-                "tick %lld  phase~%s/720  PC %04X  CC3 %u  "
+                "tick %lld  phase? %s/720  PC %04X  CC3 %u  "
                 "P5.0 %u  P5.1 %u  "
                 "lamp candidate %s",
                 displayed.tick, phase, static_cast<unsigned>(displayed.pc),

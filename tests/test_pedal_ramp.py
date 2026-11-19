@@ -50,8 +50,14 @@ assert ramp_events[2]["contact"]
 assert any(event["f84e"] == 10 for event in step_diag)
 assert step_diag[-1]["f85e"] == 10
 assert all(event["f84e"] == event["f85e"] == 0 for event in ramp_diag)
-assert int(step_intake["cc3_pulses"]) > 500
-assert int(ramp_intake["cc3_pulses"]) > 500
+# The lambda closed loop is active when the CC3 output keeps toggling. Its
+# limit-cycle rate follows intake dynamics (pumping work, manifold pressure,
+# transport delay): measured 593 pulses before pumping torque was modelled
+# (ca6f99c^), 462 at ca6f99c/HEAD, 457 with the series-motor starter. The old
+# ">500" encoded the pre-pumping rate; require a clearly active loop instead.
+MIN_CC3_PULSES = 300
+assert int(step_intake["cc3_pulses"]) > MIN_CC3_PULSES, step_intake["cc3_pulses"]
+assert int(ramp_intake["cc3_pulses"]) > MIN_CC3_PULSES, ramp_intake["cc3_pulses"]
 
 # A stronger physical cable pull still reaches the ROM's guarded lambda path.
 strong = base.copy()
@@ -75,9 +81,14 @@ blocked = [entry for index, entry in enumerate(route[:-1])
            if entry[0] >= 12000000 and entry[1] == "1810" and
            (route[index + 1][1] != "186D" or
             route[index + 1][0] - entry[0] > 10)]
-assert len(blocked) > 50
+# The guarded path (PC 0x1810 not followed by 0x186D) is what this test is
+# about: it must be reached right after the pedal release. How often it recurs
+# afterwards follows the lambda limit cycle, which depends on intake/pumping
+# dynamics: 108 hits through 19.7 Ms before pumping torque (ca6f99c^), 2 hits
+# (first 12.73 Ms, last 15.55 Ms) with pumping torque + series-motor starter.
+# Counting recurrences encoded the old dynamics, so only the entry is required.
+assert len(blocked) >= 1
 assert 12000000 < blocked[0][0] < 13000000
-assert blocked[-1][0] > 18000000
 assert all(event["f84e"] == event["f85e"] == 0 for event in strong_diag)
 assert any(event["tick"] > 12000000 and event["physical"] < 0.8
            for event in strong_lambda)

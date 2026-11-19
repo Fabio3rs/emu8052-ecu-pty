@@ -18,6 +18,10 @@ viewport_crops = {"longitudinal": (307, 110, 576, 420),
                   "profile": (576, 110, 845, 420)}
 
 
+# GUI viewport frame / splitter colour (BMP pixels are B, G, R).
+CHROME_RGB = (132, 121, 109)
+
+
 def mechanical_pixels(path: Path, crop) -> list[bytes]:
     data = path.read_bytes()
     assert data[:2] == b"BM"
@@ -48,6 +52,11 @@ def assert_geometry_clear_of_viewport_edges(path: Path, crop) -> None:
     edge = 0
     for index, pixel in enumerate(pixels):
         if max(pixel) < 120:
+            continue
+        # Viewport chrome (frame line at the left edge, splitter handles on
+        # the sides and bottom) is drawn in one fixed grey and is not the
+        # mechanical drawing; this check is about the geometry not being cut.
+        if tuple(pixel) == CHROME_RGB:
             continue
         bright += 1
         x, y = index % width, index // width

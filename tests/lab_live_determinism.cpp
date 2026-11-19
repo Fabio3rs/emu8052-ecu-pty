@@ -49,8 +49,15 @@ int main(int argc, char **argv) {
     }
     ma17::EmulatorSnapshot snapshot;
     if (!session.latest(snapshot) || session.result() != 0 ||
-        snapshot.tick != 10000000 || std::abs(snapshot.rpm - 513.626) > 0.01 ||
-        snapshot.ram47 != 20 || snapshot.injector_pulses != 167 ||
+        snapshot.tick != 10000000 ||
+        // Running-engine behaviour, not golden values. Exact reproducibility
+        // is checked below by comparing independent runs sample by sample.
+        // (Former goldens 513.626 rpm / RAM47 20 / 167 pulses described the
+        // engine before friction, pumping and series-motor starter changes.)
+        snapshot.rpm < 300.0 || snapshot.rpm > 1200.0 || snapshot.ram47 == 0 ||
+        std::abs(static_cast<double>(snapshot.ram47) * 25.0 - snapshot.rpm) >
+            75.0 ||
+        snapshot.injector_pulses < 50 ||
         !snapshot.crank_available || !snapshot.throttle_available ||
         !snapshot.tps_available || !snapshot.thermal_available ||
         !snapshot.injector_available ||
@@ -211,18 +218,40 @@ int main(int argc, char **argv) {
             if (!maximum || value > maximum->*field.value)
                 maximum = &sample;
         }
-        if (!minimum || !maximum)
+        if (!minimum || !maximum) {
+            std::fprintf(stderr, "[ARCHIVE] field has no valid early sample\n");
             return 1;
-        for (const auto *peak : {minimum, maximum}) {
-            const auto archived = std::lower_bound(
-                full_history.begin(), full_history.end(), peak->tick,
-                [](const auto &sample, long long tick) {
-                    return sample.tick < tick;
+        }
+        // The archive keeps the extrema of each 100 ms bucket, and a bucket
+        // may straddle the 990000-tick cut used above, so the exact sample of
+        // the first-second peak can be replaced by a bucket neighbour that is
+        // at least as extreme. Require that: an archived sample within one
+        // bucket (+0.5 ms sampling) that is >= the maximum / <= the minimum.
+        constexpr long long bucket_ticks = 99000 + 1000;
+        for (const bool is_max : {true, false}) {
+            const auto *peak = is_max ? maximum : minimum;
+            const bool retained = std::any_of(
+                full_history.begin(), full_history.end(),
+                [&](const auto &sample) {
+                    if (sample.tick < peak->tick - bucket_ticks ||
+                        sample.tick > peak->tick + bucket_ticks ||
+                        !(sample.*field.available) ||
+                        (field.requires_exhaust_sample &&
+                         !sample.exhaust_sample_available) ||
+                        !std::isfinite(sample.*field.value))
+                        return false;
+                    return is_max ? sample.*field.value >=
+                                        peak->*field.value
+                                  : sample.*field.value <=
+                                        peak->*field.value;
                 });
-            if (archived == full_history.end() ||
-                archived->tick != peak->tick ||
-                (*archived).*field.value != peak->*field.value)
+            if (!retained) {
+                std::fprintf(stderr,
+                             "[ARCHIVE] %s at tick %lld value=%.9g lost\n",
+                             is_max ? "maximum" : "minimum", peak->tick,
+                             peak->*field.value);
                 return 1;
+            }
         }
     }
     constexpr std::array<std::size_t, 6> adc_channels{0, 1, 2, 3, 5, 6};
