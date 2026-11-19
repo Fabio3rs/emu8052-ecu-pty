@@ -164,7 +164,10 @@ TEST(PhysicsVolumetric, WotCurveShape) {
         if (e > best) { best = e; best_n = n; }
     }
     EXPECT_GT(best_n, 2500.0);
-    EXPECT_LT(best_n, 5200.0);
+    // Manifold-referenced peak (the ambient-referenced VE peaks near 3000 because the
+    // WOT MAP falls with flow). Old bound 5200 for the first calibration; the refit with
+    // exhaust back-pressure peaks at 5250.
+    EXPECT_LT(best_n, 5500.0);
     EXPECT_LT(p::eta_v_wot(g, v, 6500, 293.15), p::eta_v_wot(g, v, 5500, 293.15));
 }
 

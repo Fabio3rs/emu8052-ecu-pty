@@ -68,6 +68,7 @@ Row run_point(const Options &o, double rpm) {
     ip.ambient_temperature_c = o.ambient_c;
     ip.throttle_leak_area_m2 = o.leak_mm2 * 1e-6;
     ip.ve_map = !o.legacy;
+    if (!o.legacy) ip.exhaust_back_pressure_k = 3.78e6; // calibrado: 15 kPa a 63 g/s (F-41)
     engine::CombustionParameters cparams;
     for (const auto &[k, v] : o.overrides) {
         if (k == "eta_max") ip.ve_curve.eta_max = v;
@@ -121,7 +122,7 @@ Row run_point(const Options &o, double rpm) {
             intake.step(dt, rpm, o.throttle_rad, temp_c, 90.0, inj);
         last_air_cyl = step.air_to_cylinders_kg;
         comb.admit(step, theta);
-        comb.set_operating_point(rpm, intake.pressure_pa(), ip.exhaust_pressure_pa);
+        comb.set_operating_point(rpm, intake.pressure_pa(), intake.exhaust_pressure_pa());
         const double new_theta = theta + omega * dt;
         // Spark when the crank passes (TDC + k*pi - advance).
         for (;;) {

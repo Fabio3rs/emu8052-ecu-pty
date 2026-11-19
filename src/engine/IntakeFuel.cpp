@@ -18,7 +18,8 @@ IntakeFuel::IntakeFuel(IntakeFuelParameters parameters)
           parameters.ambient_pressure_pa * parameters.manifold_volume_m3 /
           (gas_constant_j_per_kg_k *
            (parameters.ambient_temperature_c + kelvin_offset))),
-      air_mass_kg_(initial_air_mass_kg_) {
+      air_mass_kg_(initial_air_mass_kg_),
+      exhaust_pressure_pa_(parameters.exhaust_pressure_pa) {
     if (!(parameters.displacement_m3 > 0.0) ||
         !(parameters.manifold_volume_m3 > 0.0) ||
         !(parameters.ambient_pressure_pa > 0.0) ||
@@ -39,8 +40,11 @@ double IntakeFuel::pressure_pa() const {
 }
 
 double IntakeFuel::pumping_torque_nm() const {
-    const double intake_pressure_drop_pa =
-        std::max(0.0, parameters_.ambient_pressure_pa - pressure_pa());
+    // F-40: PMEP = p_e - p_m (p_e = p_amb in the legacy plant).
+    const double intake_pressure_drop_pa = std::max(
+        0.0, (parameters_.exhaust_back_pressure_k > 0.0 ? exhaust_pressure_pa_
+                                                        : parameters_.ambient_pressure_pa) -
+                 pressure_pa());
     return intake_pressure_drop_pa * parameters_.displacement_m3 / (4.0 * pi);
 }
 
@@ -80,7 +84,7 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
         const double p_m = std::max(1000.0, pressure_pa());
         const double r_c = parameters_.geometry.compression_ratio;
         eta_vm = physics::eta_v_wot(parameters_.geometry, parameters_.ve_curve, rpm, t_k) *
-                 physics::residual_correction(parameters_.exhaust_pressure_pa, p_m, r_c) /
+                 physics::residual_correction(exhaust_pressure_pa_, p_m, r_c) /
                  physics::residual_correction(parameters_.exhaust_pressure_pa,
                                               parameters_.wot_manifold_pressure_pa, r_c);
         eta_vm = std::clamp(eta_vm, 0.0, 1.2);
@@ -102,6 +106,11 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
         old_air_mass_kg + result.air_in_kg - result.air_to_cylinders_kg;
     last_air_in_kg_s_ = result.air_in_kg / dt_s;
     last_air_cyl_kg_s_ = result.air_to_cylinders_kg / dt_s;
+    if (parameters_.exhaust_back_pressure_k > 0.0) {
+        const double m_exh = last_air_cyl_kg_s_ + result.fuel_to_cylinders_kg / dt_s;
+        exhaust_pressure_pa_ = parameters_.exhaust_pressure_pa +
+                               parameters_.exhaust_back_pressure_k * m_exh * m_exh;
+    }
     air_in_total_kg_ += result.air_in_kg;
     air_delivered_total_kg_ += result.air_to_cylinders_kg;
 

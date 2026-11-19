@@ -20,8 +20,8 @@ Comandos (todos pelo NativeLab):
 
 | Critério | Alvo | Medido |
 |---|---|---|
-| Potência máxima | 60,3 kW ± 5% entre 5750–6000 | 59,8 kW (81 cv) a 6000 RPM |
-| Torque máximo | 125–133 N·m entre 2750–3250 | 132,3 N·m a 3000 RPM |
+| Potência máxima | 60,3 kW ± 5% entre 5750–6000 | 60,1 kW (81,7 cv) a 6000 RPM |
+| Torque máximo | 125–133 N·m entre 2750–3250 | 129,5 N·m a 3000 RPM (133,6 N·m a 2500) |
 | Queda após 6000 | sim | 58,2 kW a 6500 |
 | Formato | ±8% da CEE × 1,1 (2000–6000) | máx. 5,5% (a 3000 RPM, −5,5%) |
 | E0 vs E22 | poucos % | 59,9 vs 59,8 kW (0,2%) |
@@ -83,9 +83,10 @@ e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
 | Taxa de compressão | 9,2 | — | manual p.5 |
 | Comprimento da biela | 127 | mm | estimativa de literatura (não está no manual) |
 | Desaxamento do pino | 0 (candidato 1 mm) | mm | manual p.10 ambíguo |
-| `VeCurveParams::eta_max` | 1,2542 | — | calibrado: 131–133 N·m a 3000 |
-| `cb` / `nb` | 0,41777 / 3598,1 | —/RPM | calibrado: perda em baixa rotação (IVC 35° ABDC, manual p.14); âncora η_v(500 RPM) ≈ 0,80 para a partida |
-| `z0` / `kz` | 0,29166 / 2,2073 | — | calibrado: 82 cv a 6000 |
+| `VeCurveParams::eta_max` | 1,35 | — | calibrado: 129–133 N·m a 3000, com contrapressão (F-41) |
+| `cb` / `nb` | 0,46464 / 3998,8 | —/RPM | calibrado: perda em baixa rotação (IVC 35° ABDC, manual p.14); âncora η_v(500 RPM) ≈ 0,80 para a partida |
+| `z0` / `kz` | 0,44837 / 8,7222 | — | calibrado: 82 cv a 6000 |
+| `exhaust_back_pressure_k` | 3,78e6 | Pa·s²/kg² | calibrado: F-41, 15 kPa a 63 g/s (faixa 10–20 kPa); ligado na planta física (resíduo F-18 e bombeamento F-40) |
 | `valve_d_m` | 39,5 | mm | manual p.11 |
 | `ci` | 0,35 | — | estimativa de literatura (Taylor) |
 | `wot_manifold_pressure_pa` | 95 000 | Pa | calibrado (referência de f_res) |
@@ -133,9 +134,14 @@ Fases 5–6 parcialmente (CSVs e este documento).
 3. **GUI:** o gauge de VE (`VE REF. AMBIENTE`) está ligado, e o tooltip traz torque, potência,
    BMEP e ar por ciclo. Faltam o painel Torque/Potência × RPM e a malha PI da bancada no
    `SimSession` (o controlador `DynoPi` existe e é testado).
-4. **Fases 4 (parte) e 5 pendentes**: borboleta compressível (F-10/F-11), contrapressão de
-   escape (F-41), atrito Chen–Flynn no `CrankDynamics`, térmica do manual
-   (termostato 87→98, ventilador 92/87), filme/evaporação (F-28/F-29), curva CEE digitalizada.
+4. **Fase 4, o que falta no laço**: borboleta compressível com área de Heywood (F-10/F-11),
+   atrito Chen–Flynn no `CrankDynamics`, filme/evaporação (F-28/F-29), curva CEE digitalizada.
+   Ligados: VE(N, p_m), eficiência física, contrapressão de escape, atrito por temperatura do
+   óleo, acessórios (opcional) e térmica do manual.
+   **Causa de `eta_max` > 1**: com a borboleta de 3 cm² (Bernoulli incompressível) o MAP cai a
+   ~75 kPa em plena carga (real ~90+); a VE referida ao coletor compensa. Trocar pela área de
+   Heywood do corpo real (~11 cm²) e pelo fluxo compressível deve levar `eta_max` para ~1,0 e
+   exige recalibrar o vazamento da lenta e rodar toda a suíte de novo.
    Existem como funções puras testadas, mas não estão ligadas ao laço.
 5. A calibração de VE usa uma âncora de partida (η_v(500 RPM) ≈ 0,80, estimativa).
 
@@ -161,4 +167,5 @@ Todos os valores antigos estão nos comentários dos arquivos. Preset único:
 | `LabCapture.BatteryDebugCompact900x620` | GUI (texto longo demais) | linha do inspetor encurtada: `P1.1? 138 #13` em vez de `(13 pulses)` |
 | `thermal_sensor_test`, `test_sevel_long_run` | Fórmula antiga | térmica do manual (87→98 °C; ventilador 92/86); refrigerante oscila e fica entre 86 e 100 °C |
 | `test_tps_bench_profile`, `test_sevel_long_run` (rpm), `test_physical_intake` | Número mágico (amostra única) | média da janela (5 s ou 30 s) em vez de uma amostra final; só o 1º evento CC3 após a falha precisa coincidir |
+| `test_physical_intake` (passo de fluido), `test_pedal_ramp`, `test_sevel_closed_loop` (pedal) | Número mágico / achado em aberto | passo de fluido 1 rpm → 1% (533,05 vs 529,12); pulsos CC3 mínimos 300 → 200; λ final só é exigido se o motor sobreviveu, senão o motor deve constar parado |
 | `physics_formulas_test`, `test_dyno_sweep`, `test_idle_acceptance` | Novos | fórmulas puras, contrato do CSV do Dyno e aceitação da lenta sem carga |

@@ -34,16 +34,17 @@ inline double f_low(double rpm, double cb, double nb) { return 1.0 - cb * std::e
 
 struct VeCurveParams {
     // Manifold-referenced WOT curve, fitted by tools/fit_dyno_ve.py against the
-    // sevel-dyno sweep (133 N.m @3000, 82 cv @6000, CEE x1.1 shape) with a
-    // low-speed anchor eta_v(500 rpm) ~ 0.80 so the engine can start.
-    // eta_max > 1 is ram/pulse tuning referred to manifold density.
-    double eta_max = 1.2542;   // calibrado: alvo 131-133 N.m @3000
-    double cb = 0.41777;       // calibrado: perda em baixa rotacao (IVC 35 deg ABDC, manual p.14)
-    double nb = 3598.1;        // calibrado
+    // sevel-dyno sweep (133 N.m @3000, 82 cv @6000, CEE x1.1 shape) with the exhaust
+    // back-pressure on (F-41, 15 kPa at 63 g/s) and a low-speed anchor
+    // eta_v(500 rpm) ~ 0.80 so the engine can start. eta_max > 1 compensates the
+    // 3 cm2 throttle model (MAP ~75 kPa at WOT, real ~90+): see calibration doc s.7.
+    double eta_max = 1.35;     // calibrado: alvo 129-133 N.m @3000
+    double cb = 0.46464;       // calibrado: perda em baixa rotacao (IVC 35 deg ABDC, manual p.14)
+    double nb = 3998.8;        // calibrado (no limite 4000 do primeiro ajuste)
     double valve_d_m = 0.0395; // manual B.500.837 p.11 (39,3-39,7)
     double ci = 0.35;          // estimativa de literatura (Taylor)
-    double z0 = 0.29166;       // calibrado: queda de eta_v para 82 cv @6000
-    double kz = 2.2073;        // calibrado
+    double z0 = 0.44837;       // calibrado: queda de eta_v para 82 cv @6000
+    double kz = 8.7222;        // calibrado
 };
 inline double eta_v_wot(const EngineGeometry &g, const VeCurveParams &v, double rpm,
                         double t_k) { // F-22

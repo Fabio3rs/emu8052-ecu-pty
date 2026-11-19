@@ -1134,7 +1134,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                          context.physical_crank->angle_rad());
                 context.combustion.set_operating_point(
                     context.physical_crank->rpm(), context.intake->pressure_pa(),
-                    context.intake->parameters().exhaust_pressure_pa);
+                    context.intake->exhaust_pressure_pa());
                 const double fluid_dt_s =
                     static_cast<double>(context.fluid_step_ticks) / 990000.0;
                 context.exhaust_flow_kg_s = charge.air_to_cylinders_kg /

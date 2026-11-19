@@ -20,7 +20,10 @@ struct IntakeFuelParameters {
     physics::EngineGeometry geometry{};
     physics::VeCurveParams ve_curve{};
     double wot_manifold_pressure_pa = 95000.0; // calibrado: MAP medio em plena carga
-    double exhaust_pressure_pa = 100000.0;     // p_e (F-41 ligado na fase de contrapressao)
+    double exhaust_pressure_pa = 100000.0;     // p_e at zero flow (ambient)
+    // F-41: p_e = p_amb + k_e * mdot_exh^2 (catalisador + silenciador). 0 = legacy.
+    // calibrado: ~15 kPa na vazao maxima (63 g/s de ar + combustivel), faixa F-41 10-20 kPa.
+    double exhaust_back_pressure_k = 0.0;
 };
 
 struct IntakeStep {
@@ -53,6 +56,8 @@ class IntakeFuel {
     double last_air_to_cylinders_kg_s() const { return last_air_cyl_kg_s_; }
     double last_ve_manifold() const { return last_ve_manifold_; }
     double last_ve_ambient() const { return last_ve_ambient_; }
+    // Current exhaust back-pressure (F-41), used for residual gas and pumping.
+    double exhaust_pressure_pa() const { return exhaust_pressure_pa_; }
     double air_temperature_c() const { return air_temperature_c_; }
     const IntakeFuelParameters &parameters() const { return parameters_; }
 
@@ -71,6 +76,7 @@ class IntakeFuel {
     double last_air_cyl_kg_s_ = 0.0;
     double last_ve_manifold_ = 0.0;
     double last_ve_ambient_ = 0.0;
+    double exhaust_pressure_pa_ = 100000.0;
 };
 
 } // namespace engine
