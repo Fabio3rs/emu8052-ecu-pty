@@ -2839,11 +2839,11 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     const auto &pw = snapshot.plant_window;
     std::snprintf(ve_note, sizeof(ve_note),
                   plant_ok
-                      ? "T_b %.1f N.m  P %.1f kW (%.0f cv)  BMEP %.1f bar  "
+                      ? "T_shaft %.1f N.m  P %.1f kW (%.0f cv)  BMEP %.1f bar  "
                         "air %.0f mg/cyl  window %.2f s"
                       : "no plant window yet",
-                  pw.brake_torque_nm, pw.brake_power_kw,
-                  pw.brake_power_kw / 0.7355, pw.bmep_bar,
+                  pw.shaft_torque_nm, pw.shaft_power_kw,
+                  pw.shaft_power_kw / 0.7355, pw.bmep_bar,
                   pw.air_mg_per_cyl_cycle, pw.window_s);
     const std::string tach_note = p11_note(snapshot);
     draw_profile_tooltip(renderer, font, tach_box, profile::rpm, snapshot.tick,

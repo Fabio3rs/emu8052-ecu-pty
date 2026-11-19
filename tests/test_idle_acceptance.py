@@ -39,8 +39,11 @@ def mean(key):
 
 
 rpm, lam, adv = mean("rpm"), mean("lambda_cyl"), mean("spark_deg")
-brake, acc = mean("brake_nm"), mean("accessory_nm")
-print(f"[IDLE] rpm={rpm:.1f} lambda={lam:.3f} advance={adv:.2f} brake={brake:.3f} "
+acc = mean("accessory_nm")
+residual = statistics.mean(abs(w["energy_residual_rel"]) for w in late)
+shaft_kw = mean("shaft_kw")
+print(f"[IDLE] rpm={rpm:.1f} lambda={lam:.3f} advance={adv:.2f} residual={residual:.2e} "
+      f"shaft={shaft_kw:.3f} kW "
       f"acc={acc:.2f} ram46*25={ram46 * 25} ram47*25={ram47 * 25}")
 # Manual B.500.837 p.18: 850 +/- 50 rpm, widened by one ROM count (25 rpm).
 assert 800.0 <= rpm <= 925.0, rpm
@@ -48,7 +51,9 @@ assert 800.0 <= rpm <= 925.0, rpm
 assert abs(rpm - ram46 * 25) <= 50.0 and abs(ram47 * 25 - rpm) <= 50.0
 assert 0.97 <= lam <= 1.03, lam                       # criterion 1
 assert 4.0 <= adv <= 8.0, adv                         # manual p.18: 6 +/- 2 deg
-assert abs(brake) < 0.5, brake                        # torque balance at steady idle
+# Energy ledger (replaces the old tautological "brake torque ~ 0", GOAL_DYNO_ROM 3.5):
+assert residual < 0.005, residual                     # |energy_residual_rel| < 0.5 %
+assert abs(shaft_kw) < 0.3, shaft_kw                  # free idle: no power leaves the shaft
 assert 2.0 < acc < 5.0, acc                           # accessories on (F-45)
 assert max(w["rpm"] for w in late) - min(w["rpm"] for w in late) < 60.0
 print("idle acceptance ok")

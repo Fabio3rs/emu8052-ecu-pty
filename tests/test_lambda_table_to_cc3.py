@@ -121,7 +121,7 @@ flips = [(tick, direction) for index, (tick, direction) in
          enumerate(directions) if index and direction != directions[index - 1][1]]
 fast_writes = [int(match[1]) for match in re.finditer(
     r"\[LAMBDA-BOUND-XRAM\] tick=(\d+) addr=F8E9 ", natural.stderr)]
-assert len(flips) >= 6 and len(fast_writes) > 100
+assert len(flips) >= 6 and len(fast_writes) > 100, (len(flips), len(fast_writes))
 for tick, _ in flips:
     prior_class = max(event["tick"] for event in natural_classes
                       if event["tick"] <= tick)

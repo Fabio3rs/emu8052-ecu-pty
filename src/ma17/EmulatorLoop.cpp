@@ -46,7 +46,9 @@ static void print_plant_line(const EmulatorLoopContext &context) {
                     "{\"type\":\"plant\",\"tick\":%lld,\"rpm\":%.1f,"
                     "\"indicated_nm\":%.3f,\"friction_nm\":%.3f,"
                     "\"pumping_nm\":%.3f,\"accessory_nm\":%.3f,"
-                    "\"brake_nm\":%.3f,\"brake_kw\":%.4f,"
+                    "\"shaft_nm\":%.3f,\"brake_absorbed_nm\":%.3f,\"net_nm\":%.4f,"
+                    "\"shaft_kw\":%.4f,\"kinetic_j\":%.4f,\"energy_residual_rel\":%.3e,"
+                    "\"window_id\":%llu,\"tick_start\":%lld,\"tick_end\":%lld,"
                     "\"imep_bar\":%.3f,\"bmep_bar\":%.3f,"
                     "\"work_cycle_j\":%.2f,\"ve_ambient\":%.4f,"
                     "\"ve_manifold\":%.4f,\"air_mg_cyl_cycle\":%.2f,"
@@ -56,7 +58,9 @@ static void print_plant_line(const EmulatorLoopContext &context) {
                     "\"air_throttle_kg_s\":%.6f,\"air_cyl_kg_s\":%.6f}\n",
                     context.ticks, w.mean_rpm, w.indicated_torque_nm,
                     w.friction_torque_nm, w.pumping_torque_nm,
-                    w.accessory_torque_nm, w.brake_torque_nm, w.brake_power_kw,
+                    w.accessory_torque_nm, w.shaft_torque_nm, w.brake_absorbed_nm,
+                    w.net_torque_nm, w.shaft_power_kw, w.kinetic_j, w.energy_residual_rel,
+                    w.window_id, w.tick_start, w.tick_end,
                     w.imep_bar, w.bmep_bar, w.work_per_cycle_j, w.ve_ambient,
                     context.intake->last_ve_manifold(), w.air_mg_per_cyl_cycle,
                     w.fuel_g_s, w.bsfc_g_kwh, w.lambda_cylinders,
@@ -707,6 +711,10 @@ static void run_tick_batch(EmulatorLoopContext &context,
                         engine::physics::OilFrictionParams{},
                         context.thermal->coolant_c()));
             const double plant_angle_before = context.physical_crank->angle_rad();
+            const double plant_omega_before = context.physical_crank->speed_rad_s();
+            const bool plant_starter_on = context.ticks <= context.starter_stop_tick;
+            const double plant_starter_nm =
+                plant_starter_on ? context.physical_crank->starter_torque_at_crank_nm() : 0.0;
             const double plant_friction_nm =
                 context.physical_crank->friction_torque_nm();
             const double plant_comb_nm = context.combustion.torque_nm(plant_angle_before);
@@ -746,11 +754,20 @@ static void run_tick_batch(EmulatorLoopContext &context,
             context.combustion_integrated_j +=
                 plant_comb_nm * (context.physical_crank->angle_rad() - plant_angle_before);
             if (context.intake) {
+                engine::TickTorques torques;
+                torques.combustion_nm = plant_comb_nm;
+                torques.friction_nm = plant_friction_nm;
+                torques.pumping_nm = plant_pump_nm;
+                torques.accessory_nm = plant_acc_nm;
+                torques.brake_nm = plant_load_nm;
+                torques.starter_nm = plant_starter_nm;
+                torques.drivetrain_nm =
+                    context.drivetrain ? context.drivetrain->crank_torque_nm() : 0.0;
+                context.plant_window.set_inertia(context.physical_crank->inertia_kg_m2());
                 context.plant_window.accumulate(
-                    1.0 / 990000.0,
+                    context.ticks, 1.0 / 990000.0,
                     context.physical_crank->angle_rad() - plant_angle_before,
-                    plant_comb_nm, plant_friction_nm, plant_pump_nm,
-                    plant_load_nm + plant_acc_nm);
+                    plant_omega_before, context.physical_crank->speed_rad_s(), torques);
                 const auto &ip = context.intake->parameters();
                 const double rho_ref = ip.ambient_pressure_pa /
                     (287.05 * (ip.ambient_temperature_c + 273.15));

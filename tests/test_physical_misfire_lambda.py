@@ -61,6 +61,6 @@ assert exhaust["ram65"] < normal_lambda[16830000]["ram65"]
 assert fault_fire[17820000]["rpm"] > fault_fire[16830000]["rpm"] + 300
 assert fault_fire[17820000]["missed"] == fault_fire[21780000]["missed"]
 assert fault_lambda[17820000]["oxygen_equivalent"] < 1.0
-assert fault_lambda[17820000]["voltage_v"] > 0.7
+assert fault_lambda[17820000]["voltage_v"] > 0.7, fault_lambda[17820000]
 assert all(event["f84e"] == event["f84f"] == 0 for event in events
            if event["type"] == "diagnostic" and event["tick"] >= 17820000)

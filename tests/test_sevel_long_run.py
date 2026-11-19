@@ -118,6 +118,10 @@ assert abs(float(state["INTAKE"]["injected_kg"]) -
 assert abs(int(state["INTAKE"]["cc3_pulses"]) -
            int(fine["INTAKE"]["cc3_pulses"])) < 0.03 * int(
                state["INTAKE"]["cc3_pulses"]), (state["INTAKE"]["cc3_pulses"], fine["INTAKE"]["cc3_pulses"])
-assert abs(events["lambda"][-1]["physical"] -
-           fine_events["lambda"][-1]["physical"]) < 0.03
+# Old: the last single lambda sample of both runs within 0.03. A dithering closed loop makes
+# one sample a poor metric; same 0.03 on the mean of the last 10 one-second samples.
+def lambda_tail(series):
+    return sum(s["physical"] for s in series[-10:]) / 10.0
+assert abs(lambda_tail(events["lambda"]) - lambda_tail(fine_events["lambda"])) < 0.03, (
+    lambda_tail(events["lambda"]), lambda_tail(fine_events["lambda"]))
 assert fine_events["combustion"][-1]["missed"] == 0

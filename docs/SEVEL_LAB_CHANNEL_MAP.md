@@ -220,10 +220,12 @@ first window closes (`plant_window.valid == false`) the channels are `N/D`:
 |---|---|---|
 | VE (ambient reference) | `plant_window.ve_ambient` | sum(air to cylinders) / (rho_ref * Vd * cycles); rho_ref = ambient of the scenario (100 kPa, 20 C) |
 | VE (manifold coefficient) | `ve_manifold_coefficient` | instantaneous eta_v,m |
-| Indicated / friction / pumping / load / brake torque | `plant_window.*_torque_nm` | T_b = T_i - T_f - T_p - T_load |
-| Brake power | `plant_window.brake_power_kw` | P = T_b * omega |
-| IMEP / BMEP | `plant_window.imep_bar`, `bmep_bar` | |
-| BSFC | `plant_window.bsfc_g_kwh` | 0 (N/D) below 0.5 kW brake power |
+| Indicated / friction / pumping / accessory torque | `plant_window.indicated_torque_nm`, `friction_torque_nm`, `pumping_torque_nm`, `accessory_torque_nm` | angle-averaged over the window; accessories = alternator + pump only |
+| Shaft torque, external brake, net torque | `plant_window.shaft_torque_nm`, `brake_absorbed_nm`, `net_torque_nm` | shaft = indicated - friction - pumping - accessory; brake = W_brake/dtheta; net (the old `brake_torque_nm`) = J d(omega)/dt averaged by angle |
+| Shaft power, kinetic energy, ledger residual | `plant_window.shaft_power_kw`, `kinetic_j`, `energy_residual_rel` | P = (W_brake + dE_kin - W_starter - W_drivetrain)/dt; residual = (W_ind + W_start + W_drv - W_fric - W_pump - W_acc - W_brake - dE_kin)/W_ind |
+| Window identity | `plant_window.window_id`, `tick_start`, `tick_end` | a republished line is recognised by `window_id` |
+| IMEP / BMEP | `plant_window.imep_bar`, `bmep_bar` | BMEP from the shaft torque |
+| BSFC | `plant_window.bsfc_g_kwh` | from the shaft power; 0 (N/D) below 0.5 kW |
 | Air per cylinder-cycle | `plant_window.air_mg_per_cyl_cycle` | |
 | Fuel | `plant_window.fuel_g_s`, `fuel_l_h` | |
 | Air through TBI / to cylinders | `air_throttle_kg_s` (legacy `air_in_kg_s`), `air_to_cylinders_kg_s` | TBI flow is signed |
@@ -231,7 +233,7 @@ first window closes (`plant_window.valid == false`) the channels are `N/D`:
 | Spark advance, MBT, spark efficiency, residual | `spark_advance_deg`, `mbt_deg`, `spark_efficiency`, `residual_fraction` | advance is deg BTDC measured from the spark event; depends on the candidate `tdc_phase_rad` |
 
 The **VE gauge** ("VE REF. AMBIENTE") is live from `plant_window.ve_ambient`; its
-tooltip shows brake torque, brake power (kW and cv), BMEP, air per cylinder-cycle and
+tooltip shows shaft torque, shaft power (kW and cv), BMEP, air per cylinder-cycle and
 the window length. It is `N/D` until the first window closes or below 50 rpm. The
 Torque/Power x RPM panel (Oscilloscope) is not wired yet; use `sevel-dyno` CSVs. Intake AFR, tank level, cylinder
 pressure and exhaust flow are not published; their gauges must show `N/D` or
