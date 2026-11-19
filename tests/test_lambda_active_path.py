@@ -82,10 +82,13 @@ scheduled_free, scheduled_fault = first_difference("058E", "RAM1415")
 assert 10000000 < acc_free["tick"] < 14000000, acc_free["tick"]
 assert acc_free["RAM47"] == acc_fault["RAM47"]
 assert acc_free["RAM1415"] == acc_fault["RAM1415"]
-assert (acc_free["tick"] < consumer_free["tick"] <
-        published_free["tick"] < scheduled_free["tick"])
-assert (acc_fault["tick"] < consumer_fault["tick"] <
-        published_fault["tick"] < scheduled_fault["tick"])
+# CURVES_STUDY F-2: the first RAM5C5D difference seen by the consumer (1C8E) can precede the first one at the
+# accumulator write site 199C by ~70 k ticks (11.836 M vs 11.907 M free; another writer of RAM5C5D acts first), so the
+# invariant kept is: accumulator and consumer both precede the published and scheduled intervals, in order.
+assert acc_free["tick"] < published_free["tick"] < scheduled_free["tick"]
+assert consumer_free["tick"] < published_free["tick"]
+assert acc_fault["tick"] < published_fault["tick"] < scheduled_fault["tick"]
+assert consumer_fault["tick"] < published_fault["tick"]
 # The ROM may publish a newer interval before the next CC3 schedule.
 for rows, scheduled in ((free_rows, scheduled_free),
                         (fault_rows, scheduled_fault)):

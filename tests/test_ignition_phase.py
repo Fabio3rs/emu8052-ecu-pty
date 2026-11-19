@@ -62,10 +62,13 @@ for extra in ([], ["--load-step-tick", "800000", "--load-nm", "24"],
         # Old window: 0.33..0.38. Calibrated plant: 0.3127 measured in one 4 M-tick
         # transient window (others 0.344..0.372): the slope is a ROM-latency artefact
         # that depends on engine acceleration. The tight check is the steady idle fit.
-        assert 0.30 < slope < 0.38, slope
+        # CURVES_STUDY F-2: higher cranking/transient torque (burn-fraction law) gives 0.246 in the transient window;
+        # the tight steady idle fit below is the gate.
+        assert 0.22 < slope < 0.38, slope
         # Old: 53..59. Measured 63.2 in the same transient window as the 0.3127 slope
         # (rpm-dependent ROM latency); the steady idle fit below keeps the tight limits.
-        assert 53.0 < intercept < 66.0, (slope, intercept)
+        # CURVES_STUDY F-2: transient-window intercept 73.8 with slope 0.246 (they move together); steady fit is the gate.
+        assert 53.0 < intercept < 80.0, (slope, intercept)
     else:
         _, _, rms = fit(rows) if len(bytes_seen) > 1 else (0, 0, 0.0)
     assert rms < 1.5

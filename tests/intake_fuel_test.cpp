@@ -250,10 +250,12 @@ TEST(Combustion, WeakSparkLeavesFuelAndOxygenForExhaust) {
     EXPECT_DOUBLE_EQ(weak_event.fuel_kg, full_event.fuel_kg);
     EXPECT_GT(weak_event.burned_fuel_kg, 0.5 * full_event.burned_fuel_kg);
     EXPECT_LT(weak_event.burned_fuel_kg, full_event.burned_fuel_kg);
-    EXPECT_NEAR(weak.torque_nm(tdc), 0.5 * full.torque_nm(tdc), 1e-12);
+    // Pulse torque follows the burn fraction (strength / 0.8, capped at 1; CURVES_STUDY F-2): a weak 0.5 charge burns
+    // 62.5 % of the fuel, a coil charged above the ignition threshold burns it all.
+    EXPECT_NEAR(weak.torque_nm(tdc), (0.5 / 0.8) * full.torque_nm(tdc), 1e-12);
     EXPECT_DOUBLE_EQ(weak.burned_fuel_kg(), weak_event.burned_fuel_kg);
     EXPECT_DOUBLE_EQ(normal_event.burned_fuel_kg, full_event.burned_fuel_kg);
-    EXPECT_LT(normal.torque_nm(tdc), full.torque_nm(tdc));
+    EXPECT_DOUBLE_EQ(normal.torque_nm(tdc), full.torque_nm(tdc)); // above the ignition threshold: full torque
 
     engine::ExhaustLambda full_exhaust;
     engine::ExhaustLambda weak_exhaust;

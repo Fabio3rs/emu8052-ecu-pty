@@ -6,7 +6,7 @@ from pathlib import Path
 
 D = Path(__file__).resolve().parent.parent / "docs/dyno/investigation"
 m = {}
-for r in csv.DictReader(open(D / "matrix.csv")):
+for r in csv.DictReader(open(D / "matrix_pre_fix.csv")):
     m[(r["experiment"], int(float(r["target_rpm"])))] = r
 iso = {t: {int(float(r["rpm"])): r for r in csv.DictReader(open(D / f"isolated_amb{t}.csv"))} for t in (20, 36)}
 rpms = [1500, 3000, 4500, 6000]
@@ -66,5 +66,5 @@ out += ["", "### Tabela 7 - sensibilidade ao avanco (retardo a partir do MBT, kW
 for n in rpms:
     out.append(f"| {n} | " + " | ".join(f"{f(e, n, 'shaft_power_kw'):.2f}" for e in
                ("E0_original", "I1_mbt", "I2_mbt-5", "I3_mbt-10")) + " |")
-(D / "decomposition.md").write_text("\n".join(out) + "\n")
+(D / "decomposition_pre_fix.md").write_text("\n".join(out) + "\n")
 print("\n".join(out))

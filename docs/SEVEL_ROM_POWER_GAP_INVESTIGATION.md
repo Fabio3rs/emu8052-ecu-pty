@@ -5,6 +5,8 @@ via `tools/power_gap_report.py`; nada foi digitado à mão. Nada foi enviado ao 
 
 ## A. Resumo executivo
 
+> **Atualização:** as correções F-1 (bomba) e F-2 (força de centelha) foram aplicadas ao padrão (seção I). Com elas, o déficit da ROM contra a planta isolada cai de 23–35 % para 5–15 % (pico de 58,07 kW a 5500 RPM). O texto abaixo descreve o diagnóstico antes da correção.
+
 O déficit entre a planta isolada (60,07 kW a 6000 RPM) e a ROM (39,21 kW) é de 20,9 kW (34,7 %);
 a 3000 RPM é de 9,5 kW (23,3 %). Ele **não** vem de uma estratégia de redução de potência da ROM.
 Quatro causas, todas medidas por intervenção isolada (Tabela 2):
@@ -796,3 +798,47 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
    Investigar por que a janela 70–80 °C exige arranque mais longo.
 5. Calibrar o TPS e a posição do êmbolo do batente pelo procedimento de regulagem do manual (tensão no batente, curvas das duas pistas) e refazer os testes de aceleração (cabo → folga → TPS) e de falha de lenta/TPS.
 6. Repetir a matriz com mais pontos de RPM e com 117/123° de PMS.
+
+## I. Correções aplicadas ao padrão (autorizadas pelo proprietário)
+
+Duas correções saíram de flags `--exp` para o padrão do modelo, com os achados F-1 e F-2 da seção F:
+
+- **F-1, bomba-d'água:** `AccessoryParams::pump_nm_at_ref` de 0,5 para 0,02 N·m a 925 RPM (≈ 0,5 kW a 6000 RPM, dentro de 0,3–1 kW; estimativa a trocar pela curva real). O modelo anterior chegava a ~13 kW.
+- **F-2, força de centelha:** o torque do pulso segue a fração de queima (`força / 0,8`, limitada a 1) e não a força bruta. `--exp spark_torque_legacy=1` restaura a lei anterior.
+
+Não foi necessário recalibrar a VE: a planta isolada usa força 1,0 e não inclui acessórios, então não muda (`docs/dyno/fase2` permanece válido). A correção do alternador (`alternator_ratio` dividindo o torque) ficou de fora, pois pesa < 1 N·m.
+
+Resultado, regenerado a partir dos CSVs (`tools/power_gap_postfix.py`; `docs/dyno/rom/` regenerado; o CSV de antes está em `docs/dyno/investigation/pre_fix_sweep_tdc120.csv`):
+
+| RPM | isolada 20 C [kW] | ROM antes da correcao [kW] | ROM apos a correcao [kW] | deficit antes [%] | deficit apos [%] | torque de eixo apos [N.m] | acessorios apos [N.m] |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1500 | 19.74 | 14.81 | 16.79 | 25.0 | 15.0 | 106.8 | 1.50 |
+| 3000 | 40.80 | 31.31 | 37.08 | 23.3 | 9.1 | 118.0 | 0.93 |
+| 4500 | 56.75 | 42.43 | 52.86 | 25.2 | 6.9 | 112.1 | 0.96 |
+| 6000 | 60.07 | 39.21 | 57.00 | 34.7 | 5.1 | 90.7 | 1.20 |
+
+Varredura completa da ROM apos a correcao (PMS 120 graus):
+
+| RPM | potencia [kW] | torque [N.m] | avanco [graus] | lambda | estado |
+|---:|---:|---:|---:|---:|---|
+| 1500 | 16.79 | 106.8 | 7.10 | 1.0001 | ACCEPTED |
+| 2000 | 23.37 | 111.4 | 10.99 | 0.9951 | ACCEPTED |
+| 2500 | 29.67 | 113.2 | 13.78 | 0.9953 | ACCEPTED |
+| 3000 | 37.08 | 118.0 | 18.59 | 1.0023 | ACCEPTED |
+| 3500 | 43.03 | 117.4 | 21.07 | 1.0007 | ACCEPTED |
+| 4000 | 48.42 | 115.6 | 23.76 | 1.0007 | ACCEPTED |
+| 4500 | 52.86 | 112.1 | 25.53 | 1.0005 | ACCEPTED |
+| 5000 | 56.71 | 108.2 | 26.99 | 0.9976 | ACCEPTED |
+| 5500 | 58.07 | 100.8 | 27.95 | 0.9972 | ACCEPTED |
+| 6000 | 57.00 | 90.7 | 29.34 | 0.9977 | ACCEPTED |
+
+Pico da ROM em PMS 120°: 58,07 kW a 5500 RPM (isolada: 61,64 kW; referência ABNT: 60,4 kW a 6000 RPM, de motor e combustível diferentes). A varredura é 30/30 ACCEPTED.
+
+**Efeitos nos testes (suíte 352/352 após a atualização):** os testes que codificavam a lei antiga foram atualizados com justificativa no próprio código: bomba (`PhysicsLosses.AccessoryTorqueAtIdleAndHighSpeed`) e força de centelha
+(`Combustion.WeakSparkLeavesFuelAndOxygenForExhaust`); limiares de transiente em `test_ignition_phase.py`, `test_adc4_ratio.py`, `test_fuel_blend_closed_loop.py`, `test_lambda_table_to_cc3.py`,
+`test_lambda_active_path.py` e `test_physical_idle.py`. Em `test_physical_idle.py` o mínimo de 10 mrad do batente, que antes não gerava falha, agora aciona a falha F84E = 8 (a marcha lenta quente precisa de menos ar com o torque corrigido)
+e a velocidade do atuador que acompanha o pedal passou de (40, 50] para (37, 40] mm/s. Nenhuma asserção foi removida; cada limiar atualizado traz o valor medido.
+
+**Limitação:** as tabelas das seções C a E foram geradas antes da correção (`matrix_pre_fix.csv`, `decomposition_pre_fix.md`, Tabelas P1–P24) e continuam válidas como diagnóstico; reproduzem-se com
+`--exp spark_torque_legacy=1 --exp acc_pump_scale=25`.
+

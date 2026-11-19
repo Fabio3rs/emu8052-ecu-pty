@@ -378,8 +378,8 @@ TEST(PhysicsLosses, OilFrictionScaleFollowsViscosity) { // F-43
 TEST(PhysicsLosses, AccessoryTorqueAtIdleAndHighSpeed) { // F-45
     p::AccessoryParams a;
     const double idle = p::accessory_torque_nm(a, 14.2, 96.9);          // 925 rpm
-    EXPECT_NEAR(idle, 14.2 * 20.0 / (0.55 * 2.0 * 96.9) + 0.5, 1e-9);
-    EXPECT_GT(idle, 3.0);
+    EXPECT_NEAR(idle, 14.2 * 20.0 / (0.55 * 2.0 * 96.9) + 0.02, 1e-9); // pump 0.02 N.m at 925 rpm (CURVES_STUDY F-1)
+    EXPECT_GT(idle, 2.5);
     EXPECT_LT(idle, 5.0);
     EXPECT_DOUBLE_EQ(p::accessory_torque_nm(a, 14.2, 0.0), 0.0);
     // alternator part falls with speed (constant power), pump part rises with w^2

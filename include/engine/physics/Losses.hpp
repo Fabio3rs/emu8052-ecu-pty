@@ -57,7 +57,10 @@ struct AccessoryParams {
     double electrical_current_a = 20.0; // estimativa F-45 (ECU + bomba + injetor + bobina, 15-20 A)
     double alternator_efficiency = 0.55; // F-45 (0,5-0,6)
     double alternator_ratio = 2.0;       // estimativa: relacao de polias desconhecida
-    double pump_nm_at_ref = 0.5;         // estimativa: bomba d'agua a rotacao de referencia
+    // Water pump: torque ~ omega^2 (power ~ omega^3). 0.02 N.m at 925 rpm gives ~0.5 kW at 6000 rpm, inside the
+    // 0.3-1 kW range expected for an automotive pump (estimativa; the previous 0.5 N.m extrapolated to ~13 kW at
+    // 6000 rpm, CURVES_STUDY finding F-1). Replace with the real pump curve when it is measured.
+    double pump_nm_at_ref = 0.02;
     double pump_ref_rad_s = 96.9;        // 925 rpm
     // Alternator starts charging at 1050-1150 alternator rpm (manual p.18); below
     // that the battery feeds the loads and the crank sees no electrical torque.

@@ -46,9 +46,10 @@ struct CombustionParameters {
     // (+offset) instead of the ROM advance. Pulse timing in crank angle is NOT moved. Off by default.
     bool exp_force_mbt = false;
     double exp_adv_offset_deg = 0.0;
-    // --exp spark_torque_saturate=1: pulse torque scales with burn_fraction (strength/0.8, capped
-    // at 1) instead of raw strength, consistent with the burn-fraction rule above.
-    bool exp_torque_saturate = false;
+    // Pulse torque scales with burn_fraction (strength / full_burn_strength, capped at 1), consistent with the
+    // burn-fraction rule: a coil charged above the ignition threshold burns the whole charge (CURVES_STUDY F-2).
+    // --exp spark_torque_legacy=1 restores the earlier proportional-to-raw-strength law for comparison.
+    bool exp_legacy_strength_scaling = false;
 };
 
 // Provisional four-cylinder, wasted-spark event model. Coil 0 serves 1/4,
@@ -154,7 +155,7 @@ class Combustion {
         pulse_torque_nm_ =
             fuel_kg * fuel_.lower_heating_value_j_kg() *
             efficiency *
-            (parameters_.exp_torque_saturate ? burn_fraction : std::min(1.0, spark_strength)) /
+            (parameters_.exp_legacy_strength_scaling ? std::min(1.0, spark_strength) : burn_fraction) /
             expansion_rad;
         pulse_start_rad_ = crank_angle_rad;
         pulse_end_rad_ = crank_angle_rad + expansion_rad;

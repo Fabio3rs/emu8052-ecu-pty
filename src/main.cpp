@@ -574,7 +574,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
             parameters.swap_coil_channels = config->swap_ignition_coils;
             parameters.physical_efficiency = config->physical_plant;
             parameters.exp_force_mbt = experiment("adv_force_mbt", 0.0) != 0.0;
-            parameters.exp_torque_saturate = experiment("spark_torque_saturate", 0.0) != 0.0;
+            parameters.exp_legacy_strength_scaling = experiment("spark_torque_legacy", 0.0) != 0.0;
             parameters.exp_adv_offset_deg = experiment("adv_offset_deg", 0.0);
             loop.combustion = engine::Combustion{parameters, fuel};
         }

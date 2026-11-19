@@ -286,3 +286,9 @@ Todos os valores antigos estão nos comentários dos arquivos. Preset único:
 | `test_physical_lambda_cooldown`, `test_physical_misfire_lambda`, `test_lambda_table_threshold` | Número mágico / ROM | sensor frio lido em 29,7 M (era 19,8 M); coil cortado exige O₂ pobre (>1,2) e λ ≈ 1 ±0,1; ±1 pulso na borda da janela |
 | `test_lab_kline_live` | Condição de corrida do teste | leitura por regex: linha JSON truncada por trace do stderr no mesmo cano |
 | `physics_formulas_test`, `test_dyno_sweep`, `test_idle_acceptance` | Novos | fórmulas puras, contrato do CSV do Dyno e aceitação da lenta sem carga |
+
+## Atualização CURVES_STUDY (2026-11-19): bomba-d'água e força de centelha
+
+- **Bomba-d'água (F-45):** `pump_nm_at_ref` 0,5 → 0,02 N·m a 925 RPM de virabrequim; lei ω² mantida. A potência a 6000 RPM passa de ~13 kW para ~0,5 kW (estimativa; trocar pela curva real da bomba).
+- **Força de centelha (`Combustion::spark`):** o torque do pulso segue a fração de queima (`força / full_burn_strength`, limitada a 1) e não a força bruta de carga da bobina; `--exp spark_torque_legacy=1` restaura a lei anterior.
+- Planta isolada e VE inalteradas. ROM + planta: déficit contra a isolada de 23–35 % para 5–15 %; ver `docs/SEVEL_ROM_POWER_GAP_INVESTIGATION.md` (seção I) e `docs/SEVEL_DYNO_ROM.md`.

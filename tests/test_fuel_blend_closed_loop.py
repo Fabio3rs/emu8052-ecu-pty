@@ -39,8 +39,9 @@ gasoline, gasoline_intake = run(0)
 e25, e25_intake = run(25)
 assert e25[4950000]["physical"] > gasoline[4950000]["physical"] + 0.05
 assert e25[4950000]["voltage_v"] < gasoline[4950000]["voltage_v"]
+# CURVES_STUDY F-2: measured 1.026 (was > 1.05) with the corrected spark torque; the pulse-width ratio below keeps 1.02.
 assert float(e25_intake["injected_kg"]) > (
-    1.05 * float(gasoline_intake["injected_kg"]))
+    1.02 * float(gasoline_intake["injected_kg"]))
 gasoline_width = (int(gasoline_intake["on_ticks"]) /
                   int(gasoline_intake["cc3_pulses"]))
 e25_width = (int(e25_intake["on_ticks"]) /

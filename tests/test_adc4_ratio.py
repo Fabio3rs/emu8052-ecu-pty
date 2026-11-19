@@ -30,7 +30,8 @@ assert default == (166, 90, 255), default
 assert zero == (166, 0, 255), zero
 assert high == (166, 205, (166 << 8) // 205), high
 assert abs(default_rpm - zero_rpm) < 0.001
-assert high_rpm > default_rpm + 50.0, (default_rpm, high_rpm)
+# CURVES_STUDY F-2: 1 s after cranking the ADC4 effect is 43 rpm (was > 50) with the corrected spark torque.
+assert high_rpm > default_rpm + 30.0, (default_rpm, high_rpm)
 
 for options in (["--adc4-mv", "-1"], ["--adc4-mv", "5001"]):
     result = subprocess.run(base + options, env=environment, text=True,

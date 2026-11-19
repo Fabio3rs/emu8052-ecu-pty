@@ -25,8 +25,9 @@ TEST(PowerGap, WaterPumpTorqueIsQuadraticAndItsPowerCubicInSpeed) {
     const double t3 = accessory_torque_nm(a, 14.0, omega_of(3000.0));
     const double t6 = accessory_torque_nm(a, 14.0, omega_of(6000.0));
     EXPECT_NEAR(t6 / t3, 4.0, 1e-9);
-    // Documented finding: the current pump constants absorb > 10 kW at 6000 rpm.
-    EXPECT_GT(t6 * omega_of(6000.0), 10e3);
+    // Corrected pump (CURVES_STUDY F-1): 0.3-1 kW at 6000 rpm instead of ~13 kW.
+    EXPECT_GT(t6 * omega_of(6000.0), 300.0);
+    EXPECT_LT(t6 * omega_of(6000.0), 1000.0);
 }
 
 TEST(PowerGap, AccessoryScalesAreIndependent) {
@@ -55,11 +56,12 @@ double fire_torque(const engine::CombustionParameters &p, double strength) {
 TEST(PowerGap, TorqueSaturationRemovesTheCoilStrengthScalingAboveTheBurnThreshold) {
     engine::CombustionParameters orig;
     orig.physical_efficiency = true;
+    orig.exp_legacy_strength_scaling = true; // the earlier law
     engine::CombustionParameters sat = orig;
-    sat.exp_torque_saturate = true;
+    sat.exp_legacy_strength_scaling = false;
     const double full = fire_torque(orig, 1.0);
     ASSERT_GT(full, 0.0);
-    EXPECT_NEAR(fire_torque(orig, 0.9) / full, 0.9, 1e-9);        // original: proportional
-    EXPECT_NEAR(fire_torque(sat, 0.9) / fire_torque(sat, 1.0), 1.0, 1e-9); // experiment: saturated
+    EXPECT_NEAR(fire_torque(orig, 0.9) / full, 0.9, 1e-9);        // legacy: proportional
+    EXPECT_NEAR(fire_torque(sat, 0.9) / fire_torque(sat, 1.0), 1.0, 1e-9); // default: saturated
     EXPECT_NEAR(fire_torque(sat, 0.4) / fire_torque(sat, 1.0), 0.5, 1e-9); // below 0.8: partial
 }

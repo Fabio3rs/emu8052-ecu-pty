@@ -31,10 +31,10 @@ EXPERIMENTS = {
     "I1_mbt": exp("adv_force_mbt=1"),
     "I2_mbt-5": exp("adv_force_mbt=1", "adv_offset_deg=5"),
     "I3_mbt-10": exp("adv_force_mbt=1", "adv_offset_deg=10"),
-    "S1_strength_sat": exp("spark_torque_saturate=1"),
+    "L1_legacy_spark": exp("spark_torque_legacy=1"),
     "H1_settle_6M": exp("dyno_settle_ticks=6000000"),
     "H2_settle_24M": exp("dyno_settle_ticks=24000000"),
-    "C2_pump04_sat_mbt": exp("acc_pump_scale=0.04", "spark_torque_saturate=1", "adv_force_mbt=1"),
+    "C2_legacy_pump_and_spark": exp("acc_pump_scale=25", "spark_torque_legacy=1"),
     "C1_acc_off_mbt": exp("acc_alt_scale=0", "acc_pump_scale=0", "adv_force_mbt=1"),
 }
 
