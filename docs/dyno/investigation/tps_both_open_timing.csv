@@ -1,0 +1,6 @@
+label,tick,state,reason,shaft_power_kw,adv_mean_deg,lambda,iram66_tps1,iram60_tps2,faults
+"both 5V from idle, contact closed (8 M)",8000000,ACCEPTED,none,28.09,26.046,1.2753,255,255,00 06 00
+both 5V at ramp start (12.0 M),12000000,INVALID,stall,0.0,0.0,0.0,0,0,00 06 00
+both 5V mid ramp (12.1 M),12100000,ACCEPTED,none,37.0727,18.563,1.0034,255,255,00 00 00
+"both 5V after ramp, contact open (12.5 M)",12500000,ACCEPTED,none,37.0767,18.587,1.0023,255,255,00 00 00
+both 5V steady WOT (13.5 M),13500000,ACCEPTED,none,37.0772,18.588,1.0023,255,255,00 00 00

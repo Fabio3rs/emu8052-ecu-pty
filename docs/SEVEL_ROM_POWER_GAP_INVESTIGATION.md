@@ -170,8 +170,10 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   - TPS2 > TPS1 − 5 na faixa intermediária: `B.4` (pistas fora de proporção).
   Agregação: `RAM_28.1` = OR(B.0..B.4), `RAM_28.2` = OR(B.4..B.7), depois debounce (confirmação em 0Ah).
   Confirmações dinâmicas: TPS2 em 5 V com a pista 1 baixa liga F84F.2 (regra B.1/B.5); TPS1 em 5 V com a pista 2 baixa liga F84F.1 (B.2/B.6); curvas contínuas com TPS1 ≥ DFh e
-  TPS2 até 5 V não ligam falha (Tabelas P18–P20). **Não explicado por essas regras:** os dois canais abertos em 5 V ou em 2,5 V a partir de ocioso ligam F84F = 06h (bits 1 e 2; o caso 2,5 V é coerente com B.4, o de 5 V
-  exigiria também a condição do interruptor de lenta, não decodificada), e o pull-up de sinal ausente em si. A regra fica caracterizada, não provada.
+  TPS2 até 5 V não ligam falha (Tabelas P18–P20). **Caso dos dois canais em 5 V, resolvido por experimento** (`tps_both_open_timing.csv`, 3000 RPM): aplicados com a borboleta fechada (interruptor de lenta fechado, ocioso a 8 M ticks ou início da
+  rampa a 12,0 M) ligam F84F = 06h (bits 1 e 2) e levam ao fallback (avanço 26,05°, λ 1,275, 28,09 kW); aplicados depois que a borboleta abriu (rampa a 12,1 M, 12,5 M ou 13,5 M ticks) **não** ligam
+  falha e deixam avanço (18,56–18,59°), λ (1,002–1,003) e potência (37,07–37,08 kW) normais. A falha depende, portanto, de os valores do TPS contradizerem o estado real da borboleta/interruptor de lenta,
+  e não só dos valores das duas pistas entre si; o caso de 2,5 V é coerente com a regra de pistas fora de proporção (B.4). O pull-up de sinal ausente em si não foi decodificado. A regra fica caracterizada, não provada.
 - **Salvar/restaurar da correção de longo prazo** (`1722h`..`176Dh`, IRAM A7h-ABh): quando `RAM_27.6` está ligado e `B.1` limpo, o byte XRAM F86Ch (correção de
   combustível de longo prazo, posição 5 da coleta F4) é copiado para a IRAM superior @AAh; após uma contagem regressiva em IRAM @97h (decrementada com
   `RAM_2D.5` e `.6`) e `RAM_29.5` ligado, o valor salvo é escrito de volta em F86Ch. É a única escrita direta de F86Ch na ROM, um mecanismo de
