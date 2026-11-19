@@ -81,6 +81,9 @@ Row run_point(const Options &o, double rpm) {
         else if (k == "nb") ip.ve_curve.nb = v;
         else if (k == "z0") ip.ve_curve.z0 = v;
         else if (k == "kz") ip.ve_curve.kz = v;
+        else if (k == "hs_gain") ip.ve_curve.hs_gain = v;
+        else if (k == "hs_n0") ip.ve_curve.hs_n0 = v;
+        else if (k == "hs_n1") ip.ve_curve.hs_n1 = v;
         else if (k == "ci") ip.ve_curve.ci = v;
         else if (k == "wot_map_pa") ip.wot_manifold_pressure_pa = v;
         else if (k == "eta_ref") cparams.eta_ref = v;

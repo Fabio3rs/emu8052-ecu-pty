@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fit the F-22 volumetric-efficiency curve parameters so the sevel-dyno WOT
+"""Fit the high-speed VE correction (hs_gain, base curve fixed) so the sevel-dyno WOT
 sweep meets the goal targets (133 N.m @3000, 82 cv @5750-6000, CEE x1.1 shape).
 Calibration helper, run inside the NativeLab. LLM-written (Claude)."""
 import csv, io, subprocess, sys
@@ -7,10 +7,16 @@ import numpy as np
 from scipy.optimize import minimize
 
 dyno = sys.argv[1]
-extra = sys.argv[2:]
-names = ["eta_max", "cb", "nb", "z0", "kz"]
-x0 = np.array([1.0, 0.30, 1800.0, 0.40, 9.0])
-lo = np.array([0.8, 0.0, 500.0, 0.2, 1.0]); hi = np.array([1.6, 0.9, 9000.0, 0.7, 60.0])
+rest = sys.argv[2:]
+out_dir = None
+if "--out" in rest:  # --out DIR writes fit_result.json (before/after, cost, per-point deviation)
+    i = rest.index("--out")
+    out_dir = rest[i + 1]
+    rest = rest[:i] + rest[i + 2:]
+extra = rest
+names = ["hs_gain"]  # single-parameter high-speed correction (base curve held fixed)
+x0 = np.array([0.0])  # defaults before the refit
+lo = np.array([-0.2]); hi = np.array([0.3])
 TARGET = {1500: 115, 2000: 126, 2500: 134, 3000: 133, 3500: 132, 4000: 126,
           4500: 117, 5000: 109, 5500: 102, 6000: 96.3, 6500: 84}
 W = {3000: 4.0, 6000: 4.0, 5500: 2.0}
@@ -30,17 +36,28 @@ def cost(x):
     for r in rows:
         n = int(float(r["rpm"]))
         c += W.get(n, 1.0) * ((float(r["torque_nm"]) - TARGET[n]) / TARGET[n]) ** 2
-    # Low-speed anchor: manifold-referenced eta_v at cranking speed stays near the
-    # legacy 0.75 (estimativa; real VE at 400-500 rpm is 0.7-0.85). Without it the
-    # WOT-only fit starves the engine during start (ctest LabRunner.Drivetrain*).
-    n = 500.0
-    eta500 = x[0] * (1.0 - x[1] * np.exp(-n / x[2]))
-    c += 25.0 * (eta500 / 0.80 - 1.0) ** 2
     return c
 
-res = minimize(cost, x0, method="Nelder-Mead", options={"maxiter": 600, "xatol": 1e-3, "fatol": 1e-7})
+res = minimize(cost, x0, method="Nelder-Mead", options={"maxiter": 200, "xatol": 1e-5, "fatol": 1e-9})
 x = np.clip(res.x, lo, hi)
 print("cost", res.fun)
+if out_dir:
+    import json, os
+    os.makedirs(out_dir, exist_ok=True)
+    rows = run(x)
+    result = {
+        "parameters_before": dict(zip(names, [float(v) for v in x0])),
+        "parameters_after": dict(zip(names, [float(v) for v in x])),
+        "cost_final": float(res.fun),
+        "note": "VE is unknown: this is a fit to the targets, not a validation",
+        "points": [{"rpm": int(float(r["rpm"])), "torque_nm": float(r["torque_nm"]),
+                    "target_nm": TARGET[int(float(r["rpm"]))],
+                    "deviation_pct": 100.0 * (float(r["torque_nm"]) / TARGET[int(float(r["rpm"]))] - 1.0),
+                    "power_kw": float(r["power_kw"]), "ve_ambient": float(r["ve_ambient"])}
+                   for r in rows],
+    }
+    with open(os.path.join(out_dir, "fit_result.json"), "w") as handle:
+        json.dump(result, handle, indent=2)
 for k, v in zip(names, x):
     print(f"{k}={v:.5g}")
 for r in run(x):

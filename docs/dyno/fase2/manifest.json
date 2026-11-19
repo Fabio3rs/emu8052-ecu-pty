@@ -1,0 +1,24 @@
+{
+  "accessories": false,
+  "ambient": "100 kPa / 20 C",
+  "args": [
+    "--preset",
+    "acceptance",
+    "--out-dir",
+    "/mnt/projects/Projects/emu8051-tty/docs",
+    "--throttle-leak-mm2",
+    "9"
+  ],
+  "binary": "build-lab/sevel-dyno",
+  "code": {
+    "commit": "",
+    "dirty_files": []
+  },
+  "cycles": 40,
+  "dt_us": 100,
+  "fuel": "E22 and E0 (both files)",
+  "leak_mm2": 9,
+  "note": "VE curve is a fit (fase2/fit_result.json), not a validation",
+  "tdc_reference_deg": 120,
+  "tool": "tools/dyno_acceptance.py"
+}

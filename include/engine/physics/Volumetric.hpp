@@ -33,23 +33,32 @@ inline double f_z(double z, double z0, double kz) { // F-20
 inline double f_low(double rpm, double cb, double nb) { return 1.0 - cb * std::exp(-rpm / nb); } // F-21
 
 struct VeCurveParams {
-    // Manifold-referenced WOT curve, fitted by tools/fit_dyno_ve.py against the
-    // sevel-dyno sweep (133 N.m @3000, 82 cv @6000, CEE x1.1 shape) with the Heywood
-    // throttle + compressible flow (F-10/F-11, WOT MAP 89-99 kPa), the exhaust
-    // back-pressure (F-41, 15 kPa at 63 g/s) and a low-speed anchor
-    // eta_v(500 rpm) ~ 0.80 so the engine can start. eta_max ~ 1.0: physical.
-    double eta_max = 1.0204;   // calibrado: alvo 129-133 N.m @3000
+    // Manifold-referenced WOT curve. THE VE IS UNKNOWN: this is a fit, not a validation.
+    // Base curve (below hs_n0 the ROM idle/transient range, kept BIT-IDENTICAL to the curve fitted
+    // before the exact pulse integration, because the ROM tests are chaotic to ~1e-4 changes of
+    // VE: quantised rpm, filters, limit cycles) plus a high-speed correction
+    // (1 + hs_gain * smoothstep((N - hs_n0) / (hs_n1 - hs_n0))) fitted on the corrected dyno
+    // (tools/fit_dyno_ve.py, docs/dyno/fase2/fit_result.json).
+    double eta_max = 1.0204;   // calibrado: curva base (1db2639)
     double cb = 0.28677;       // calibrado: perda em baixa rotacao (IVC 35 deg ABDC, manual p.14)
     double nb = 1800.7;        // calibrado
     double valve_d_m = 0.0395; // manual B.500.837 p.11 (39,3-39,7)
     double ci = 0.35;          // estimativa de literatura (Taylor)
-    double z0 = 0.42254;       // calibrado: queda de eta_v para 82 cv @6000
+    double z0 = 0.42254;       // calibrado
     double kz = 8.9186;        // calibrado
+    double hs_gain = 0.01941;  // ajuste (GOAL_DYNO_ROM fase 2): correcao de alta rotacao (antes 0)
+    double hs_n0 = 2500.0;     // rpm: inicio da rampa (abaixo, a curva base e usada sem alteracao)
+    double hs_n1 = 3500.0;     // rpm: fim da rampa
 };
 inline double eta_v_wot(const EngineGeometry &g, const VeCurveParams &v, double rpm,
                         double t_k) { // F-22
     const double z = mach_index(g, v.valve_d_m, rpm, v.ci, t_k);
-    return v.eta_max * f_low(rpm, v.cb, v.nb) * f_z(z, v.z0, v.kz);
+    double ramp = 0.0;
+    if (rpm > v.hs_n0) {
+        const double t = std::min(1.0, (rpm - v.hs_n0) / (v.hs_n1 - v.hs_n0));
+        ramp = t * t * (3.0 - 2.0 * t); // smoothstep
+    }
+    return v.eta_max * f_low(rpm, v.cb, v.nb) * f_z(z, v.z0, v.kz) * (1.0 + v.hs_gain * ramp);
 }
 inline double curtain_area_m2(double valve_d_m, double lift_m) { return pi * valve_d_m * lift_m; } // F-23
 inline double valve_mean_velocity(const EngineGeometry &g, double valve_d_m, double rpm) {
