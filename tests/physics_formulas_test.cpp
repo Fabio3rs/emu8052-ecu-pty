@@ -80,6 +80,20 @@ TEST(PhysicsFlow, ThrottleAreaHeywoodLimits) {
     }
 }
 
+TEST(PhysicsFlow, ThrottleAreaZeroWhenClosedAndSmallAngleReference) {
+    const double d = 0.030, full = p::pi * d * d / 4.0;
+    for (double a_s : {0.0, 0.10, 0.15, 0.25}) {
+        EXPECT_NEAR(p::throttle_area_m2(d, a_s, 1e-9, 0.0) / full, 0.0, 1e-6) << a_s;
+        // small angle: A/A_bore ~ 1 - cos(psi) (shaft term cancels to first order)
+        const double psi = 0.09;
+        EXPECT_NEAR(p::throttle_area_m2(d, a_s, psi, 0.0) / full, 1.0 - std::cos(psi), 2e-3) << a_s;
+    }
+    // Fully open with a shaft: below the bore area, above 60 % of it.
+    const double open = p::throttle_area_m2(d, 0.15, p::pi / 2, 0.0) / full;
+    EXPECT_LT(open, 0.85);
+    EXPECT_GT(open, 0.60);
+}
+
 TEST(PhysicsFlow, CriticalRatioAndChokedPsi) {
     const double pr_cr = std::pow(2.0 / 2.4, 1.4 / 0.4);
     EXPECT_NEAR(pr_cr, 0.5283, 1e-4);

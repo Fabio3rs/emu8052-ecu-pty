@@ -20,7 +20,7 @@ binary, firmware = sys.argv[1:3]
 args = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
         "--stop-ticks", "40000000", "--adc7-mv", "1232", "--idle-bridge-p15-p16",
         "--idle-contact-p46", "--tps-bench-profile", "--idle-motor-speed-mm-s", "50",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "5",
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
         "--lambda-adc-gain", "5", "--coolant-c", "90", "--tdc-reference-deg", "117",
         "--accessory-load"]
 result = subprocess.run(args, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},

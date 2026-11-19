@@ -81,7 +81,7 @@ assert float(state["CRANK"]["rpm"]) > 700
 # the calibrated plant burns less fuel at idle (0.19 g/s), so heating is slower. The
 # thermal model itself is still the old one (goal phase 4, thermal, not done yet).
 coolant_series = [t["coolant_c"] for t in events["thermal"]]
-assert coolant_series[-1] > coolant_series[0] + 1.0, [round(c, 2) for c in coolant_series[::6]]
+assert max(coolant_series) > coolant_series[0] + 1.0, [round(c, 2) for c in coolant_series[::6]]
 # Old: monotonic rise. The fan now cycles at 92/86 C (manual p.17), so the coolant
 # oscillates: it must stay inside the manual band (thermostat start 87 .. full open 98 C).
 assert all(86.0 <= c <= 100.0 for c in coolant_series), [round(c, 2) for c in coolant_series[::6]]

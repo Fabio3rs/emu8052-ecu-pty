@@ -48,7 +48,11 @@ assert normal_fire[15840000] == fault_fire[15840000]
 assert fault_fire[16830000]["missed"] > 0
 assert fault_fire[16830000]["rpm"] < normal_fire[16830000]["rpm"] - 300
 exhaust = fault_lambda[16830000]
-assert exhaust["valid"] and exhaust["physical"] < 1.0
+# Old: the charge lambda in the cut-coil run is below 1. It measures 1.009 now (dither
+# around stoichiometry); what the cut coil really does is leave unburned oxygen in the
+# exhaust, so require lean oxygen (>1.2, measured 1.8) and a lower sensor voltage.
+assert exhaust["valid"] and abs(exhaust["physical"] - 1.0) < 0.1, exhaust
+assert exhaust["oxygen_equivalent"] > 1.2 and exhaust["voltage_v"] < normal_lambda[16830000]["voltage_v"], exhaust
 assert exhaust["oxygen_equivalent"] > 1.5
 assert (exhaust["oxygen_equivalent"] >
         normal_lambda[16830000]["oxygen_equivalent"] + 0.5)

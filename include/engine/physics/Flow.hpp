@@ -9,13 +9,18 @@ namespace engine::physics {
 inline double throttle_area_m2(double bore_d_m, double shaft_ratio, double psi,
                                double psi0) {
     const double a = shaft_ratio, c0 = std::cos(psi0);
-    const double c = std::max(std::cos(psi), a * c0); // fully open: hold boundary value
+    // The closed-form area is valid up to the plate angle where the shaft starts to
+    // shadow it and decreases right after; hold the value from cos(psi) = 1.25*a*cos(psi0)
+    // on (monotonic, ~94 % of the ideal bore-minus-shaft area when fully open).
+    const double c = std::max(std::cos(psi), 1.25 * a * c0);
     const double full = pi * bore_d_m * bore_d_m / 4.0;
     if (psi <= psi0) return 0.0;
     const double rad = std::max(0.0, c * c - a * a * c0 * c0);
     const double frac = (1.0 - c / c0) +
-        (2.0 / pi) * (a / c * std::sqrt(rad) + c / c0 * std::asin(std::min(1.0, a * c0 / c)) -
+        (2.0 / pi) * (a / c * std::sqrt(rad) - c / c0 * std::asin(std::min(1.0, a * c0 / c)) -
                       a * std::sqrt(1.0 - a * a) + std::asin(a));
+    // Heywood (1988) eq. 8.? : the arcsine term is subtracted so that A(psi0) = 0 with a
+    // shaft; the catalogue text of the goal has + (typo), caught by ThrottleAreaZeroWhenClosed.
     return full * std::clamp(frac, 0.0, 1.0);
 }
 

@@ -11,8 +11,8 @@ with a 900-975 rpm hot idle tracking the ROM target (925) and lambda 0.95-1.03,
 The 24 N.m scenario load already stands in for load + accessories, so these tests do
 not use --accessory-load; the no-load hot idle of the Lab (accessories on) is 5 mm2
 with --tdc-reference-deg 117 (tests/test_idle_acceptance.py).
-The old simplified plant used 8-9 mm2.
+Values above were measured with the incompressible throttle. With the Heywood area and\ncompressible (choked) flow of the calibrated plant the closed-throttle air is ~0.6x for\nthe same area, so the 24 N.m scenario uses 14 mm2 (12 mm2 stalls, 16 mm2 does not catch;\nlambda closes by ~2 M ticks, ~900 rpm) and the no-load Lab idle uses 9 mm2.\nThe old simplified plant used 8-9 mm2.
 Keep equal to the value in apps/sevel-ma17-lab/main.cpp.
 LLM-written (Claude).
 """
-BENCH_LEAK_MM2 = 8
+BENCH_LEAK_MM2 = 14

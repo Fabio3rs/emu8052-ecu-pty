@@ -283,6 +283,8 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         intake_parameters.throttle_leak_area_m2 =
             static_cast<double>(config->throttle_leak_mm2) * 1e-6;
     intake_parameters.ve_map = config->physical_plant;
+    intake_parameters.compressible_throttle =
+        config->physical_plant && !config->legacy_throttle;
     if (config->physical_plant)
         intake_parameters.exhaust_back_pressure_k = 3.78e6; // calibrado: 15 kPa a 63 g/s (F-41)
     engine::IntakeFuel intake{intake_parameters};

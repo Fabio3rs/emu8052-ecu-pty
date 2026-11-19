@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/physics/Flow.hpp"
 #include "engine/physics/Volumetric.hpp"
 
 namespace engine {
@@ -21,6 +22,12 @@ struct IntakeFuelParameters {
     physics::VeCurveParams ve_curve{};
     double wot_manifold_pressure_pa = 95000.0; // calibrado: MAP medio em plena carga
     double exhaust_pressure_pa = 100000.0;     // p_e at zero flow (ambient)
+    // F-10/F-11: Heywood plate area and compressible (choked) orifice flow instead of
+    // the A_leak + A_max sin^2 Bernoulli model. Off = legacy.
+    bool compressible_throttle = false;
+    double throttle_bore_m = 0.034;   // calibrado: area parcial ~ modelo antigo (+17%) e MAP ~90 kPa em plena carga; medir o corpo real
+    double throttle_shaft_ratio = 0.15; // estimativa de literatura (eixo/diametro)
+    double throttle_discharge_cd = 0.75; // F-10: Cd 0,6-0,85, calibravel
     // F-41: p_e = p_amb + k_e * mdot_exh^2 (catalisador + silenciador). 0 = legacy.
     // calibrado: ~15 kPa na vazao maxima (63 g/s de ar + combustivel), faixa F-41 10-20 kPa.
     double exhaust_back_pressure_k = 0.0;

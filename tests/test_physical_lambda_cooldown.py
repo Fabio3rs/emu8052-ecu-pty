@@ -47,15 +47,18 @@ by_type = {kind: {event["tick"]: event for event in events
            for kind in ("combustion", "lambda", "diagnostic")}
 before = by_type["lambda"][9900000]
 stopped = by_type["lambda"][10890000]
-cooled = by_type["lambda"][19800000]
+# Old: the sample 9 s after the stall (19.8 M) already had the sensor below 300 C. The
+# calibrated plant stalls slightly differently and the ROM keeps the heater relay on
+# longer (438 C at 19.8 M), so the cooled state is read at 29.7 M instead.
+cooled = by_type["lambda"][29700000]
 late = by_type["lambda"][49500000]
 
 assert by_type["combustion"][9900000]["rpm"] > 700
 assert all(by_type["combustion"][tick]["rpm"] == 0
-           for tick in (10890000, 19800000, 49500000))
+           for tick in (10890000, 19800000, 29700000, 49500000))
 assert before["valid"] and before["temperature_c"] > 300
 assert stopped["valid"] and stopped["temperature_c"] > 300
-assert not cooled["valid"] and cooled["temperature_c"] < 300
+assert not cooled["valid"] and cooled["temperature_c"] < 300, (before, stopped, cooled)
 assert not late["valid"] and late["temperature_c"] < 50
 assert abs(cooled["voltage_v"] - 0.45) < 1e-6
 assert abs(cooled["adc5_pin_v"] - 2.25) < 0.001

@@ -18,11 +18,12 @@ env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 ADC7_MV = "1232"
 
 
-def run(starter_ticks, stop_ticks=1485000):
+def run(starter_ticks, stop_ticks=1485000, leak="9"):
     result = subprocess.run(
         [binary, firmware, "--physical-crank", "--starter-ticks",
          str(starter_ticks), "--stop-ticks", str(stop_ticks),
-         "--adc7-mv", ADC7_MV],
+         "--adc7-mv", ADC7_MV, "--throttle-leak-mm2", leak],  # compressible plant: 1 mm2 default
+        # gives no air for a cold start (see tests/sevel_preset.py)
         env=env, text=True, capture_output=True, timeout=20,
         check=True,
     )
@@ -66,7 +67,7 @@ assert int(no_starter[5]) == 0 and int(no_starter[6]) == 0
 # (x1.56 at 20 C, F-43), so 0.2 s of starter no longer spins the wheel enough for the
 # ROM to latch a speed (RAM47 never becomes non-zero, so there is nothing to clear).
 # 300000 ticks (measured: RAM47 set, then cleared at tick 2.198 M) keeps the scenario.
-coast, coast_log = run(300000, 3000000)
+coast, coast_log = run(300000, 3000000, "1")  # leak 1: the 9 mm2 start leak lets it idle
 assert float(coast[1]) == 0.0 and int(coast[6]) == 0
 assert int(coast[3]) > 58
 # The ROM clears RAM47 when the last teeth stop arriving; the wheel may still

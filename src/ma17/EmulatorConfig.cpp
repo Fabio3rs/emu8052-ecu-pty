@@ -163,6 +163,10 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
             config.physical_plant = true;
             continue;
         }
+        if (strcmp(argv[index], "--legacy-throttle") == 0) {
+            config.legacy_throttle = true;
+            continue;
+        }
         if (strcmp(argv[index], "--accessory-load") == 0) {
             config.accessory_load = true;
             continue;
@@ -607,7 +611,7 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                config.idle_motor_reconnect_tick ||
                config.idle_motor_speed_mm_s > 0 ||
                config.idle_min_stop_mrad >= 0 ||
-               config.throttle_leak_mm2 >= 0 || config.accessory_load ||
+               config.throttle_leak_mm2 >= 0 || config.accessory_load || config.legacy_throttle ||
                config.load_step_tick || config.load_torque_nm != 0.0 ||
                config.tps1_high_tick || config.tps1_restore_tick ||
                config.tps2_high_tick || config.tps2_restore_tick ||

@@ -20,11 +20,11 @@ Comandos (todos pelo NativeLab):
 
 | Critério | Alvo | Medido |
 |---|---|---|
-| Potência máxima | 60,3 kW ± 5% entre 5750–6000 | 60,1 kW (81,7 cv) a 6000 RPM |
-| Torque máximo | 125–133 N·m entre 2750–3250 | 129,5 N·m a 3000 RPM (133,6 N·m a 2500) |
-| Queda após 6000 | sim | 58,2 kW a 6500 |
-| Formato | ±8% da CEE × 1,1 (2000–6000) | máx. 5,5% (a 3000 RPM, −5,5%) |
-| E0 vs E22 | poucos % | 59,9 vs 59,8 kW (0,2%) |
+| Potência máxima | 60,3 kW ± 5% entre 5750–6000 | 62,5 kW (5750) e 61,9 kW (84,2 cv, 6000), +3,7% e +2,6% |
+| Torque máximo | 125–133 N·m entre 2750–3250 | 130,4 N·m a 3000 RPM |
+| Queda após 6000 | sim | 56,8 kW a 6500 |
+| Formato | ±8% da CEE × 1,1 (2000–6000) | máx. 7,7% (`dyno_summary.csv`) |
+| E0 vs E22 | poucos % | 62,9 vs 62,8 kW (0,1%) |
 | Antes (planta antiga) | — | 57 N·m a 3000, 35 cv a 6000 |
 
 BSFC: E22 282–321 g/kWh; E0 257–292 g/kWh (faixa de F-38 para E0: 270–340; o ponto
@@ -39,7 +39,7 @@ e a calibração mudaram.
 
 **Cenário de aceitação** (`tests/test_idle_acceptance.py`): 90 °C, **sem carga externa,
 acessórios ligados** (`--accessory-load`: alternador 20 A + bomba d'água, F-45, ~2,9 N·m
-a 925 RPM, rampa de carga do alternador 550–750 RPM do virabrequim), vazamento 5 mm²,
+a 925 RPM, rampa de carga do alternador 550–750 RPM do virabrequim), vazamento 9 mm² (borboleta compressível),
 `--tdc-reference-deg 117`. Média das janelas de 20 ciclos após 25 M ticks:
 
 | Grandeza | Medido | Alvo do manual (p.18) |
@@ -68,12 +68,24 @@ O que continua fora do alcance da planta:
 
 Varredura do vazamento (cenário com carga de 24 N·m dos testes, planta sem acessórios):
 3 mm² → 899–914 RPM, mas falha em cenários sem perfil de bancada; 6 mm² → a malha de λ
-só fecha após ~12 M ticks; **8 mm² → fecha em ~2–3 M ticks**, λ 0,95–1,03, 900–975 RPM.
+só fecha após ~12 M ticks; **8 mm² → fecha em ~2–3 M ticks**, λ 0,95–1,03, 900–975 RPM
+(todos estes valores com a borboleta incompressível antiga; veja o parágrafo da borboleta compressível abaixo).
 **Sem carga e sem acessórios**, 8 mm² dá λ 1,2–1,3 (pobre) e 920 RPM à deriva: é o
 sintoma original do goal. A carga de 24 N·m dos testes já representa "carga + acessórios".
 
 Regra do preset do Lab (`--bench-preset`): se o cenário define `--load-nm`, vazamento 8 mm²
 e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
+
+**Borboleta compressível (F-10/F-11, ligada no padrão; `--legacy-throttle` volta à antiga).** A área é a de
+Heywood (furo 34 mm, eixo 0,15, Cd 0,75, estimativas a medir no corpo real) e o fluxo é compressível com
+estrangulamento. A lenta fica estrangulada (MAP 33 kPa < 53 kPa), o que dá ~0,6× o ar do Bernoulli para a mesma
+área. Novos presets (varredura 3–26 mm², janela de partida estreita: 12 mm² estola, 16 mm² não pega com carga de
+24 N·m): **sem carga, com acessórios, 9 mm²** → 908,6 RPM, λ 1,00, avanço 5,7°, freio ≈ 0; **com carga de 24 N·m,
+14 mm²** → λ ≈ 1 em ~2 M ticks, ~900 RPM; partida a frio dos testes 9 mm²; lenta quente sem perfil de bancada
+(`PhysicalIdle`) 11 mm² (902 RPM; 12 → 961, 13 → 1030).
+**Bug encontrado:** a fórmula de Heywood do catálogo do goal (F-10) tem o termo do arco-seno com sinal errado: a
+area não zerava com a placa fechada (19% do furo a 5°). Corrigido (`ThrottleAreaZeroWhenClosedAndSmallAngleReference`).
+A área também é mantida a partir de cos ψ = 1,25·a·cos ψ₀ para ficar monotônica quando quase aberta.
 
 ## 4. Tabela de parâmetros
 
@@ -83,9 +95,10 @@ e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
 | Taxa de compressão | 9,2 | — | manual p.5 |
 | Comprimento da biela | 127 | mm | estimativa de literatura (não está no manual) |
 | Desaxamento do pino | 0 (candidato 1 mm) | mm | manual p.10 ambíguo |
-| `VeCurveParams::eta_max` | 1,35 | — | calibrado: 129–133 N·m a 3000, com contrapressão (F-41) |
-| `cb` / `nb` | 0,46464 / 3998,8 | —/RPM | calibrado: perda em baixa rotação (IVC 35° ABDC, manual p.14); âncora η_v(500 RPM) ≈ 0,80 para a partida |
-| `z0` / `kz` | 0,44837 / 8,7222 | — | calibrado: 82 cv a 6000 |
+| `VeCurveParams::eta_max` | 1,0204 | — | calibrado: ~130 N·m a 3000 com borboleta compressível e contrapressão (F-41); valor físico (< 1,05) |
+| `cb` / `nb` | 0,28677 / 1800,7 | —/RPM | calibrado: perda em baixa rotação (IVC 35° ABDC, manual p.14); âncora η_v(500 RPM) ≈ 0,80 para a partida |
+| `z0` / `kz` | 0,42254 / 8,9186 | — | calibrado: 82 cv a 6000 |
+| Borboleta: furo / eixo / Cd | 34 mm / 0,15 / 0,75 | mm / — / — | estimativas de literatura + calibração: área parcial ≈ modelo antigo (+17%) e MAP ≈ 90 kPa em plena carga; **medir o corpo real** |
 | `exhaust_back_pressure_k` | 3,78e6 | Pa·s²/kg² | calibrado: F-41, 15 kPa a 63 g/s (faixa 10–20 kPa); ligado na planta física (resíduo F-18 e bombeamento F-40) |
 | `valve_d_m` | 39,5 | mm | manual p.11 |
 | `ci` | 0,35 | — | estimativa de literatura (Taylor) |
@@ -105,7 +118,7 @@ e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
 | Item | Estado | Medição que resolveria |
 |---|---|---|
 | Biela, desaxamento | estimativa | medir o motor |
-| `eta_max` > 1 | η_v referido à densidade do coletor; ram/pulso | dinamômetro real com MAP e ar |
+| Diâmetro, eixo e Cd da borboleta | estimativas (furo 34 mm) | medir o corpo Mono-Motronic |
 | Curva CEE | leitura manual de PNG, ± poucos % | digitalizar `PhotosECU/curva_potencia.png` com script |
 | Fase do PMS | candidato (`tdc_phase_rad`) | osciloscópio no cabo de vela e sensor de rotação |
 | Setpoint de lenta 925 vs 850 | calibração da ROM álcool | scanner na ECU real |
@@ -134,25 +147,20 @@ Fases 5–6 parcialmente (CSVs e este documento).
 3. **GUI:** o gauge de VE (`VE REF. AMBIENTE`) está ligado, e o tooltip traz torque, potência,
    BMEP e ar por ciclo. Faltam o painel Torque/Potência × RPM e a malha PI da bancada no
    `SimSession` (o controlador `DynoPi` existe e é testado).
-4. **Fase 4, o que falta no laço**: borboleta compressível com área de Heywood (F-10/F-11),
-   atrito Chen–Flynn no `CrankDynamics`, filme/evaporação (F-28/F-29), curva CEE digitalizada.
-   Ligados: VE(N, p_m), eficiência física, contrapressão de escape, atrito por temperatura do
-   óleo, acessórios (opcional) e térmica do manual.
-   **Causa de `eta_max` > 1**: com a borboleta de 3 cm² (Bernoulli incompressível) o MAP cai a
-   ~75 kPa em plena carga (real ~90+); a VE referida ao coletor compensa. Trocar pela área de
-   Heywood do corpo real (~11 cm²) e pelo fluxo compressível deve levar `eta_max` para ~1,0 e
-   exige recalibrar o vazamento da lenta e rodar toda a suíte de novo.
-   Existem como funções puras testadas, mas não estão ligadas ao laço.
+4. **Fase 4, o que falta no laço**: atrito Chen–Flynn no `CrankDynamics` e filme/evaporação (F-28/F-29);
+   curva CEE digitalizada. Ligados: VE(N, p_m), eficiência física, contrapressão de escape, borboleta
+   compressível (Heywood + F-11), atrito por temperatura do óleo, acessórios (opcional) e térmica do manual.
+   `eta_max` caiu de 1,35 para 1,02 quando a borboleta deixou de limitar o MAP a ~75 kPa em plena carga.
 5. A calibração de VE usa uma âncora de partida (η_v(500 RPM) ≈ 0,80, estimativa).
 
 ## 8. Testes alterados (política da seção 6 do goal)
 
 Todos os valores antigos estão nos comentários dos arquivos. Preset único:
-`tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 8`, para cenários com a carga de 24 N·m), espelhado em C++ nos testes do Lab.
+`tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 14`, para cenários com a carga de 24 N·m e borboleta compressível), espelhado em C++ nos testes do Lab.
 
 | Teste | Classe | Mudança e justificativa |
 |---|---|---|
-| ~30 testes Python com `--throttle-leak-mm2 9` | Número mágico | Passam a usar `BENCH_LEAK_MM2` (8): preset da planta calibrada |
+| ~30 testes Python com `--throttle-leak-mm2 9` | Número mágico | Passam a usar `BENCH_LEAK_MM2` (8 com a borboleta antiga, 14 com a compressível) |
 | `test_physical_idle` | Número mágico | `LEAK_MM2 = 6` (cenário sem `--tps-bench-profile`, ROM fora de autoridade com 8: 1075 RPM); parada mínima aproximada por cima (0,0055 vs 0,005 rad) em vez de igualdade exata |
 | `test_physical_crank` | Invariante (instante de parada) | lista de gaps pode terminar em 58; partida da inércia 198000→300000 ticks (atrito a frio ×1,56) |
 | `test_crank_sensor_open` | Número mágico | diferença de RPM entre passos de fluido 5→25 RPM (uma contagem da ROM); contagem de pulsos CC3 ±3% |
@@ -168,4 +176,8 @@ Todos os valores antigos estão nos comentários dos arquivos. Preset único:
 | `thermal_sensor_test`, `test_sevel_long_run` | Fórmula antiga | térmica do manual (87→98 °C; ventilador 92/86); refrigerante oscila e fica entre 86 e 100 °C |
 | `test_tps_bench_profile`, `test_sevel_long_run` (rpm), `test_physical_intake` | Número mágico (amostra única) | média da janela (5 s ou 30 s) em vez de uma amostra final; só o 1º evento CC3 após a falha precisa coincidir |
 | `test_physical_intake` (passo de fluido), `test_pedal_ramp`, `test_sevel_closed_loop` (pedal) | Número mágico / achado em aberto | passo de fluido 1 rpm → 1% (533,05 vs 529,12); pulsos CC3 mínimos 300 → 200; λ final só é exigido se o motor sobreviveu, senão o motor deve constar parado |
+| `test_physical_crank`, `test_physical_intake`, `runner_snapshot_smoke` | Número mágico | partida a frio com vazamento explícito (9 mm²; 1 mm² não pega com a borboleta compressível); `coast` mantém 1 mm² |
+| `test_physical_idle` | Número mágico | vazamento 11 mm²; tronco de bridge ≤ 150 bordas e vão da haste < 0,5 mm (ROM oscila; 60 bordas e 0,34 mm medidos) |
+| `test_physical_lambda_cooldown`, `test_physical_misfire_lambda`, `test_lambda_table_threshold` | Número mágico / ROM | sensor frio lido em 29,7 M (era 19,8 M); coil cortado exige O₂ pobre (>1,2) e λ ≈ 1 ±0,1; ±1 pulso na borda da janela |
+| `test_lab_kline_live` | Condição de corrida do teste | leitura por regex: linha JSON truncada por trace do stderr no mesmo cano |
 | `physics_formulas_test`, `test_dyno_sweep`, `test_idle_acceptance` | Novos | fórmulas puras, contrato do CSV do Dyno e aceitação da lenta sem carga |

@@ -76,6 +76,9 @@ struct EmulatorConfig {
     // F-45 accessory torque (alternator + water pump) on the crank. Off by default:
     // scenarios with an explicit external load (24 N.m) already stand in for it.
     bool accessory_load = false;
+    // Physical plant uses the Heywood area + compressible flow throttle (F-10/F-11);
+    // --legacy-throttle keeps the old Bernoulli A_leak + A_max sin^2 model.
+    bool legacy_throttle = false;
     int fluid_step_ticks = 990;
 };
 

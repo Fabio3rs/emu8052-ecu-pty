@@ -35,6 +35,7 @@ struct Options {
     double ambient_kpa = 100.0, ambient_c = 20.0;
     double settle_s = 2.0;
     int measure_cycles = 40;      // >= 20 cycles (F-48)
+    bool legacy_throttle = false; // old Bernoulli throttle
     bool legacy = false;          // old constant-VE / 0.24-efficiency plant
     bool mbt = true;              // spark follows the plant MBT (else fixed)
     std::vector<std::pair<std::string, double>> overrides; // --set key=value
@@ -68,6 +69,7 @@ Row run_point(const Options &o, double rpm) {
     ip.ambient_temperature_c = o.ambient_c;
     ip.throttle_leak_area_m2 = o.leak_mm2 * 1e-6;
     ip.ve_map = !o.legacy;
+    ip.compressible_throttle = !o.legacy && !o.legacy_throttle;
     if (!o.legacy) ip.exhaust_back_pressure_k = 3.78e6; // calibrado: 15 kPa a 63 g/s (F-41)
     engine::CombustionParameters cparams;
     for (const auto &[k, v] : o.overrides) {
@@ -250,6 +252,7 @@ int main(int argc, char **argv) {
         }
         else if (std::strcmp(argv[i], "--legacy-plant") == 0) o.legacy = true;
         else if (std::strcmp(argv[i], "--fixed-spark") == 0) o.mbt = false;
+        else if (std::strcmp(argv[i], "--legacy-throttle") == 0) o.legacy_throttle = true;
         else { std::fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (o.rpm_step <= 0 || o.rpm_max < o.rpm_min || o.measure_cycles < 20) {

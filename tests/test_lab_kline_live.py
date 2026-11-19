@@ -48,7 +48,15 @@ def read_output():
             if match:
                 emulator_pid.put(int(match.group(1)))
         if line.startswith('{"type":"diagnostic"'):
-            sample = json.loads(line)
+            # stdout and stderr share one pipe, so a stderr trace line can land in the
+            # middle of this JSON line (seen at tick 2,970,000: "...lamp_on_cand[RAM_17]
+            # 0x04 -> 0x00"). json.loads then raised and killed this thread; read the two
+            # fields that matter with a regex, which survives a truncated tail.
+            tick = re.search(r'"tick":(\d+)', line)
+            f84f = re.search(r'"f84f":(\d+)', line)
+            if not (tick and f84f):
+                continue
+            sample = {"tick": int(tick[1]), "f84f": int(f84f[1])}
             clock_samples.append((sample["tick"], time.monotonic()))
             if sample["tick"] >= 2970000 and sample["f84f"] & 8:
                 diagnostic_ready.set()

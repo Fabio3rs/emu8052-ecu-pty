@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
         argv[0],  argv[1],        "--physical-crank", "--starter-ticks",
         "495000", "--stop-ticks", "1485000", "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "8" /* BENCH_LEAK_MM2 */,
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "14" /* BENCH_LEAK_MM2 */,
         "--load-step-tick", "800000", "--load-nm", "24",
         "--lambda-adc-gain", "5"};
     if (adc_fault)
@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
         // numero magico do modelo simplificado, docs/SEVEL_PHYSICS_CALIBRATION.md).
         for (std::size_t i = 0; i + 1 < words.size(); ++i)
             if (words[i] == "--load-nm") words[i + 1] = "1";
+            else if (words[i] == "--throttle-leak-mm2") words[i + 1] = "9"; // cold start window
     }
     // (see above) the clutch capacity is reduced from 200 to 40 N.m for the same
     // reason: 10 % of 200 N.m drags the calibrated idle engine to a stall.

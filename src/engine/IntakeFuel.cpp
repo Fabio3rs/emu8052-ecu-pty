@@ -65,19 +65,34 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
         parameters_.ambient_pressure_pa /
         (gas_constant_j_per_kg_k *
          (parameters_.ambient_temperature_c + kelvin_offset));
-    const double area_m2 =
-        parameters_.throttle_leak_area_m2 +
-        parameters_.throttle_max_area_m2 * std::pow(std::sin(angle_rad), 2.0);
+    const double manifold_t_k = air_temperature_c + kelvin_offset;
+    double throttle_flow_kg_s;
     const double manifold_density =
         old_air_mass_kg / parameters_.manifold_volume_m3;
     const double pressure_difference_pa =
         parameters_.ambient_pressure_pa - pressure_pa();
-    const double source_density =
-        pressure_difference_pa >= 0.0 ? density_ambient : manifold_density;
-    const double throttle_flow_kg_s =
-        std::copysign(area_m2 * std::sqrt(2.0 * source_density *
-                                          std::abs(pressure_difference_pa)),
-                      pressure_difference_pa);
+    if (parameters_.compressible_throttle) {
+        const double plate_m2 = physics::throttle_area_m2(
+            parameters_.throttle_bore_m, parameters_.throttle_shaft_ratio, angle_rad,
+            0.0);
+        const double area_eff_m2 =
+            parameters_.throttle_leak_area_m2 +
+            parameters_.throttle_discharge_cd * plate_m2;
+        throttle_flow_kg_s = physics::orifice_flow_kg_s(
+            area_eff_m2, parameters_.ambient_pressure_pa,
+            parameters_.ambient_temperature_c + kelvin_offset, pressure_pa(),
+            manifold_t_k);
+    } else {
+        const double area_m2 =
+            parameters_.throttle_leak_area_m2 +
+            parameters_.throttle_max_area_m2 * std::pow(std::sin(angle_rad), 2.0);
+        const double source_density =
+            pressure_difference_pa >= 0.0 ? density_ambient : manifold_density;
+        throttle_flow_kg_s =
+            std::copysign(area_m2 * std::sqrt(2.0 * source_density *
+                                              std::abs(pressure_difference_pa)),
+                          pressure_difference_pa);
+    }
     double eta_vm = parameters_.volumetric_efficiency;
     if (parameters_.ve_map) {
         const double t_k = air_temperature_c + kelvin_offset;
