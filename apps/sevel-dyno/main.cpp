@@ -170,7 +170,7 @@ Row run_point(const Options &o, double rpm) {
     r.map_kpa = mapsum / static_cast<double>(nsteps) / 1000.0;
     r.ve = air / (rho_ref * vd * dtheta / (4.0 * pi));
     r.lambda = fl > 0 ? air / (fl * afr) : 0.0;
-    r.bsfc = kw > 0 ? (inj_win / dt_win) * 3.6e9 / kw : 0.0;
+    r.bsfc = kw > 0 ? (inj_win / dt_win) * 3.6e6 / kw : 0.0;
     r.bmep_bar = engine::physics::bmep_pa(t_b, vd) / 1e5;
     r.imep_bar = engine::physics::bmep_pa(t_ind, vd) / 1e5;
     r.fmep_nm = t_fric;

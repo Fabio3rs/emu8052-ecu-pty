@@ -8,6 +8,7 @@ Manual: Fiat B.500.837 (VIII/93), "Tipo 1.6 SPI" (citado como "manual p.N").
 | Ferramenta | O que faz |
 |---|---|
 | `build/sevel-dyno` | Varredura de rotação constante (plena carga) sobre a planta real (`IntakeFuel` + `Combustion` + atrito), sem ROM. λ e avanço são comandados pela ferramenta (avanço segue o MBT da planta). Gera CSV com as colunas esperadas (curva CEE × 1,1) e o erro de potência. É o **teto da planta**. |
+| `tools/plot_dyno.py` | Gera `docs/dyno_wot.png` (torque, potência e VE × RPM com os alvos sobrepostos) a partir dos CSVs. |
 | `tools/fit_dyno_ve.py` | Ajusta os parâmetros da curva de VE (F-22) contra os alvos (Nelder–Mead sobre o `sevel-dyno`). |
 | `docs/dyno_wot_e22.csv`, `docs/dyno_wot_e0.csv` | Varredura 1000–6500 RPM, passo 250, vazamento 9 mm². |
 | Linha JSONL `{"type":"plant"}` | Telemetria por janela de 20 ciclos (F-48) no emulador com ROM: torques indicado/atrito/bombeamento/carga/freio, potência, IMEP/BMEP, trabalho por ciclo, VE ambiente, ar por cilindro e ciclo, combustível, BSFC, λ dos cilindros, avanço medido, MBT, eficiência de centelha, fração residual. |
@@ -27,7 +28,7 @@ Comandos (todos pelo NativeLab):
 | E0 vs E22 | poucos % | 62,9 vs 62,8 kW (0,1%) |
 | Antes (planta antiga) | — | 57 N·m a 3000, 35 cv a 6000 |
 
-BSFC: E22 282–321 g/kWh; E0 257–292 g/kWh (faixa de F-38 para E0: 270–340; o ponto
+BSFC (CSV corrigido; o `sevel-dyno` usava o fator 3,6e9 em vez de 3,6e6): E22 ≈ 287 g/kWh a 3000 e 322 a 6000 RPM. Valores antigos citados aqui: E22 282–321 g/kWh; E0 257–292 g/kWh (faixa de F-38 para E0: 270–340; o ponto
 de melhor consumo fica ~5% abaixo do piso, registrado, não ajustado).
 
 ## 3. Marcha lenta quente (ROM, `--physical-crank`, `--tps-bench-profile`)
