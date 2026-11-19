@@ -97,6 +97,7 @@ struct DynoBenchConfig {
     double accept_band = 0.01;               // mean rpm within +-1 %
     double min_run_rpm = 300.0;              // below this after the crank phase: stall
     double rev_limit_rpm = 6500.0;
+    bool ignore_diagnostic_fault = false; // --exp dyno_ignore_diag=1: keep measuring with F84E/F85E faults set
     long long fuel_cut_ticks = 400'000;      // no injector opening for this long: fuel cut
 };
 
@@ -262,7 +263,7 @@ class DynoBench {
         if (done()) return;
         const bool running_phase = state_ >= DynoState::Ramp;
         if (running_phase) {
-            if (diag_fault) return invalid(DynoInvalid::DiagnosticFault);
+            if (diag_fault && !cfg_.ignore_diagnostic_fault) return invalid(DynoInvalid::DiagnosticFault);
             if (rpm < cfg_.min_run_rpm) return invalid(DynoInvalid::Stall);
             // Filtered (180 deg) speed: the instantaneous rpm swings a few percent within a cycle.
             if (brake_.filtered_omega() * 30.0 / engine::physics::pi > cfg_.rev_limit_rpm)

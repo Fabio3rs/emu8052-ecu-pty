@@ -142,5 +142,22 @@ o += ["", "### Tabela P20 - as duas trilhas em seus valores finais (`--exp tps1_
       "| T1 final | T2 final | RPM | IRAM 66h | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | falhas F84E-50 |", "|---|---|---:|---:|---:|---:|---:|---:|---:|---|"]
 for r in tp:
     o.append(f"| {r['t1_end']} | {r['t2_end']} | {int(float(r['target_rpm']))} | {r['iram66_tps1']} | {r['iram60_tps2']} | {r['iram6d']} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} | {f(r,'shaft_power_kw')} | {r['faults']} |")
+rc = list(csv.DictReader(open(D / "tps_ratio_cutoff.csv")))
+o += ["", "### Tabela P21 - TPS ratiometrico (alimentacao do TPS = referencia do ADC) e curvas em porcentagem da pista", "",
+      "| caso | RPM | IRAM 66h | IRAM 60h | avanco [graus] | potencia [kW] | falhas F84E-50 |", "|---|---:|---:|---:|---:|---:|---|"]
+for r in rc:
+    if r["group"] in ("A_ratio", "B_linear"):
+        o.append(f"| {r['label']} | {int(float(r['target_rpm']))} | {r['iram66_tps1']} | {r['iram60_tps2']} | {f(r,'adv_mean_deg')} | {f(r,'shaft_power_kw')} | {r['faults']} |")
+fc = list(csv.DictReader(open(D / "idle_fault_cutoff.csv")))
+o += ["", "### Tabela P22 - falhas do conjunto lenta/TPS com a bancada ignorando a falha diagnostica (corte indevido acima de ~1500 RPM, relato do proprietario)", "",
+      "| falha (a partir de 2 M ticks) | RPM | resultado | RPM medio | potencia [kW] | avanco [graus] | lambda | falhas F84E-50 |", "|---|---:|---|---:|---:|---:|---:|---|"]
+for r in fc:
+    ok = r["state"] == "ACCEPTED"
+    o.append(f"| {r['label']} | {int(float(r['target_rpm']))} | {r['state']}{'' if ok else ':' + r['reason']} | {f(r,'mean_rpm',0) if ok else '-'} | {f(r,'shaft_power_kw') if ok else '-'} | {f(r,'adv_mean_deg') if ok else '-'} | {f(r,'lambda',4) if ok else '-'} | {r['faults']} |")
+ul = json.load(open(D / "underload_state.json"))
+o += ["", "### Tabela P23 - calibracoes de marcha lenta e em carga: variaveis retidas apos 300 M ticks de marcha lenta e apos 200 M ticks sob carga parcial (45 N.m)", "",
+      "| variavel retida | marcha lenta | sob carga |", "|---|---:|---:|"]
+for k, n in (("f80c","F80Ch (integrador lambda)"),("f83d","F83Dh (posicao do atuador de lenta)"),("f86c","F86Ch (correcao de longo prazo)"),("f86f","F86Fh (aditivo de lenta)"),("f869","F869h (purga)"),("f8e8","F8E8h (limite da tabela lambda)"),("f8e9","F8E9h (contador da tabela lambda)")):
+    o.append(f"| {n} | {ul['idle_300M'][k]} | {ul['underload_200M'][k]} |")
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))

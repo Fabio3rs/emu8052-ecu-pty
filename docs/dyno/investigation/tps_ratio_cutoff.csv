@@ -1,0 +1,32 @@
+group,label,target_rpm,state,reason,mean_rpm,shaft_power_kw,adv_mean_deg,lambda,inj_mass_mg,iram66_tps1,iram60_tps2,iram6d,faults
+A_ratio,supply 5.0 V (reference),3000.0,ACCEPTED,none,3000.83,31.3103,18.562,1.0052,5074.135,238,230,60,00 00 00
+A_ratio,"supply 4.7 V, ADC Vref follows (ratiometric)",3000.0,ACCEPTED,none,3000.83,31.3103,18.562,1.0052,5074.135,238,230,60,00 00 00
+A_ratio,"supply 4.7 V, ADC Vref fixed 5.0 V",3000.0,ACCEPTED,none,3000.96,31.3275,18.567,1.0048,5076.186,224,216,60,00 00 00
+A_ratio,"supply 5.3 V, ADC Vref follows (ratiometric)",3000.0,ACCEPTED,none,3000.83,31.3103,18.562,1.0052,5074.135,238,230,60,00 00 00
+A_ratio,"supply 5.3 V, ADC Vref fixed 5.0 V",3000.0,ACCEPTED,none,3000.73,31.3147,18.579,1.0051,5074.917,252,244,61,00 00 00
+A_ratio,supply 5.0 V (reference),6000.0,ACCEPTED,none,6002.47,39.2125,29.35,0.9959,4479.943,238,230,60,00 00 00
+A_ratio,"supply 4.7 V, ADC Vref follows (ratiometric)",6000.0,ACCEPTED,none,6002.47,39.2125,29.35,0.9959,4479.943,238,230,60,00 00 00
+A_ratio,"supply 4.7 V, ADC Vref fixed 5.0 V",6000.0,ACCEPTED,none,6002.23,39.2993,29.337,0.9959,4479.648,224,216,60,00 00 00
+A_ratio,"supply 5.3 V, ADC Vref follows (ratiometric)",6000.0,ACCEPTED,none,6002.47,39.2125,29.35,0.9959,4479.943,238,230,60,00 00 00
+A_ratio,"supply 5.3 V, ADC Vref fixed 5.0 V",6000.0,ACCEPTED,none,6002.07,39.3073,29.337,0.9959,4479.909,252,244,61,00 00 00
+B_linear,"percent-of-track curves (T1 0-24 deg, T2 18-90 deg)",1500.0,ACCEPTED,none,1499.58,14.8075,7.122,0.9991,4728.059,255,255,61,00 00 00
+B_linear,"percent-of-track curves (T1 0-24 deg, T2 18-90 deg)",3000.0,ACCEPTED,none,3000.4,31.2857,18.572,1.0058,5070.986,255,255,61,00 00 00
+B_linear,"percent-of-track curves (T1 0-24 deg, T2 18-90 deg)",6000.0,ACCEPTED,none,6001.99,39.2164,29.345,0.9959,4480.108,255,255,61,00 00 00
+C_fault,tps_both_open_0V,1500.0,ACCEPTED,none,1507.54,14.5407,15.155,1.0883,4365.382,0,0,60,00 02 00
+C_fault,tps_both_open_0V,3000.0,ACCEPTED,none,3001.22,23.0963,26.046,1.2707,4045.701,0,0,60,00 02 00
+C_fault,tps_both_open_5V,1500.0,ACCEPTED,none,1507.43,14.5382,15.158,1.089,4364.01,255,255,61,00 06 00
+C_fault,tps_both_open_5V,3000.0,ACCEPTED,none,3000.89,23.033,26.047,1.2727,4036.276,255,255,61,00 06 00
+C_fault,tps_both_open_2.5V,1500.0,ACCEPTED,none,1507.56,14.4738,15.216,1.09,4357.981,128,128,52,00 06 00
+C_fault,tps_both_open_2.5V,3000.0,ACCEPTED,none,3001.42,23.1176,26.046,1.27,4049.117,128,128,52,00 06 00
+C_fault,tps1_forced_high_from_idle,1500.0,ACCEPTED,none,1499.55,14.8835,7.144,0.9891,4789.575,255,230,56,00 02 00
+C_fault,tps1_forced_high_from_idle,3000.0,ACCEPTED,none,3000.33,31.2693,18.568,1.0,5136.214,255,230,56,00 02 00
+C_fault,tps2_forced_high_from_idle,1500.0,ACCEPTED,none,1500.48,15.94,15.132,0.9951,4738.657,238,255,61,00 04 00
+C_fault,tps2_forced_high_from_idle,3000.0,ACCEPTED,none,3000.21,32.0253,26.047,0.9998,5097.409,238,255,61,00 04 00
+C_fault,idle_contact_open,1500.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,02 00 00
+C_fault,idle_contact_open,3000.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,02 00 00
+C_fault,idle_contact_closed,1500.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,08 00 00
+C_fault,idle_contact_closed,3000.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,08 00 00
+C_fault,idle_motor_disconnected,1500.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,08 00 00
+C_fault,idle_motor_disconnected,3000.0,INVALID,diagnostic_fault,0.0,0.0,0.0,0.0,0.0,0,0,0,08 00 00
+C_fault,idle_contact_open+tps2_high,1500.0,ACCEPTED,none,1500.41,15.9531,15.145,0.9921,4747.327,238,255,61,00 04 00
+C_fault,idle_contact_open+tps2_high,3000.0,ACCEPTED,none,3000.69,32.0721,26.046,0.9985,5103.068,238,255,61,00 04 00

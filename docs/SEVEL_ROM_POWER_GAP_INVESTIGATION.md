@@ -514,6 +514,56 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 | 5.0 | 5.0 | 3000 | 255 | 255 | 61 | 18.57 | 1.0049 | 31.31 | 00 00 00 |
 | 5.0 | 5.0 | 6000 | 255 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
 
+### Tabela P21 - TPS ratiometrico (alimentacao do TPS = referencia do ADC) e curvas em porcentagem da pista
+
+| caso | RPM | IRAM 66h | IRAM 60h | avanco [graus] | potencia [kW] | falhas F84E-50 |
+|---|---:|---:|---:|---:|---:|---|
+| supply 5.0 V (reference) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 4.7 V, ADC Vref follows (ratiometric) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 4.7 V, ADC Vref fixed 5.0 V | 3000 | 224 | 216 | 18.57 | 31.33 | 00 00 00 |
+| supply 5.3 V, ADC Vref follows (ratiometric) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 5.3 V, ADC Vref fixed 5.0 V | 3000 | 252 | 244 | 18.58 | 31.31 | 00 00 00 |
+| supply 5.0 V (reference) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 4.7 V, ADC Vref follows (ratiometric) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 4.7 V, ADC Vref fixed 5.0 V | 6000 | 224 | 216 | 29.34 | 39.30 | 00 00 00 |
+| supply 5.3 V, ADC Vref follows (ratiometric) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 5.3 V, ADC Vref fixed 5.0 V | 6000 | 252 | 244 | 29.34 | 39.31 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 1500 | 255 | 255 | 7.12 | 14.81 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 3000 | 255 | 255 | 18.57 | 31.29 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 6000 | 255 | 255 | 29.34 | 39.22 | 00 00 00 |
+
+### Tabela P22 - falhas do conjunto lenta/TPS com a bancada ignorando a falha diagnostica (corte indevido acima de ~1500 RPM, relato do proprietario)
+
+| falha (a partir de 2 M ticks) | RPM | resultado | RPM medio | potencia [kW] | avanco [graus] | lambda | falhas F84E-50 |
+|---|---:|---|---:|---:|---:|---:|---|
+| idle_contact_open | 1500 | ACCEPTED | 1500 | 14.80 | 7.11 | 0.9994 | 02 00 00 |
+| idle_contact_open | 2000 | ACCEPTED | 2001 | 20.75 | 10.99 | 0.9966 | 02 00 00 |
+| idle_contact_open | 3000 | ACCEPTED | 3000 | 31.24 | 18.56 | 1.0072 | 02 00 00 |
+| idle_contact_closed | 1500 | ACCEPTED | 1500 | 14.80 | 7.10 | 0.9992 | 01 00 00 |
+| idle_contact_closed | 2000 | ACCEPTED | 2001 | 20.71 | 11.08 | 0.9962 | 01 00 00 |
+| idle_contact_closed | 3000 | ACCEPTED | 3001 | 31.45 | 18.59 | 1.0025 | 01 00 00 |
+| idle_motor_disconnected | 1500 | ACCEPTED | 1499 | 14.80 | 7.12 | 0.9990 | 08 00 00 |
+| idle_motor_disconnected | 2000 | ACCEPTED | 2001 | 20.76 | 10.97 | 0.9963 | 08 00 00 |
+| idle_motor_disconnected | 3000 | ACCEPTED | 3000 | 31.28 | 18.56 | 1.0058 | 08 00 00 |
+| idle_motor_disc+tps2_high | 1500 | ACCEPTED | 1500 | 15.96 | 15.13 | 0.9940 | 00 04 00 |
+| idle_motor_disc+tps2_high | 2000 | ACCEPTED | 2000 | 21.51 | 18.91 | 0.9961 | 00 04 00 |
+| idle_motor_disc+tps2_high | 3000 | ACCEPTED | 3000 | 32.05 | 26.05 | 0.9997 | 00 04 00 |
+| tps_both_open_0V | 1500 | ACCEPTED | 1508 | 14.54 | 15.15 | 1.0883 | 00 02 00 |
+| tps_both_open_0V | 2000 | ACCEPTED | 2010 | 18.00 | 19.00 | 1.1702 | 00 02 00 |
+| tps_both_open_0V | 3000 | ACCEPTED | 3001 | 23.10 | 26.05 | 1.2707 | 00 02 00 |
+
+### Tabela P23 - calibracoes de marcha lenta e em carga: variaveis retidas apos 300 M ticks de marcha lenta e apos 200 M ticks sob carga parcial (45 N.m)
+
+| variavel retida | marcha lenta | sob carga |
+|---|---:|---:|
+| F80Ch (integrador lambda) | 76 | 97 |
+| F83Dh (posicao do atuador de lenta) | 7 | 10 |
+| F86Ch (correcao de longo prazo) | 250 | 249 |
+| F86Fh (aditivo de lenta) | 0 | 0 |
+| F869h (purga) | 8 | 7 |
+| F8E8h (limite da tabela lambda) | 0 | 0 |
+| F8E9h (contador da tabela lambda) | 30 | 30 |
+
 Leitura dos resultados:
 
 1. **Reconhecimento de plena carga: hipótese anterior REFUTADA; o que vale é a consistência entre as trilhas.**
@@ -561,6 +611,19 @@ Leitura dos resultados:
      prolongada e longas operações em várias temperaturas: cobertas só por esta cadeia de pontos, não por horas simuladas.
 6. **Autoadaptação não demonstrada:** nenhum caso exibiu a cadeia estado → rotina → avanço/combustível → potência, com exceção
    do limiar de TPS2 do item 1 (que é condição de sensor, não adaptação).
+
+7. **TPS ratiométrico (observação do proprietário: o TPS e o Vref do ADC vêm do mesmo 5 V da ECU).** Tabela P21: com a alimentação do TPS em 4,7 ou 5,3 V e o Vref do ADC
+   seguindo-a, os códigos (IRAM 66h = 238, IRAM 60h = 230) e os resultados são idênticos aos de 5,0 V; com o Vref fixo em 5,0 V os códigos escalam (224/216 e 252/244)
+   e a potência muda ≤ 0,3 %. Curvas em porcentagem da pista (T1 0–100 % em 0–24°, T2 0–100 % em 18–90°, `--exp tps_linear_fraction=1`): IRAM 66h e 60h = 255 a 90°,
+   sem falha e sem mudança de avanço ou potência (≤ 0,1 %). Opções: `tps_supply_v`, `tps_ratiometric`, `tps_linear_fraction`. A curva do modelo por tensão absoluta não altera a conclusão.
+8. **Corte indevido por TPS ou lenta (relato do proprietário: TPS problemático, ou atuador + interruptor de lenta, faz a ROM cortar por volta de 1500 RPM).** Tabela P22, com a
+   bancada ignorando a falha diagnóstica (`--exp dyno_ignore_diag=1`): interruptor de lenta aberto, fechado ou atuador desconectado **não** cortam combustível a 1500, 2000 ou 3000 RPM no
+   emulador (a potência e o λ ficam normais); TPS aberto em 0 V dá avanço de fallback de 26° e λ pobre (1,09 a 1,27, −26 % de potência a 3000 RPM), mas também sem corte. O relato **não foi reproduzido**.
+   Casos adicionais com o TPS em 0 V ou preso em valores de "fechado" não são realistas (0 V é falha, e o TPS no batente acompanha o batente móvel pelo atuador de lenta; um TPS preso quebra a
+   malha de posição da lenta) e não são interpretados; em alguns a borboleta nem abriu ou o motor não pegou. Em aberto: reproduzir com TPS que acompanha o batente e atuador defeituoso.
+9. **Autocalibração durante a operação, marcha lenta e em carga (Tabela P23).** Variáveis retidas após 300 M ticks de marcha lenta e após 200 M ticks sob carga parcial: o integrador lambda F80Ch
+   (76 → 97) e a posição do atuador de lenta F83Dh (7 → 10) variam com o regime; a correção de longo prazo F86Ch varia 1 passo (250 → 249) sob carga; F86Fh (aditivo de lenta) e F8E8h/F8E9h
+   não variam; sem falhas. O efeito mensurável na plena carga do estado longo é ≤ 0,4 % (Tabela P17). Conclusão: existe adaptação lenta e pequena (lenta e carga), sem relação causal demonstrada com a potência.
 
 ### E.3 Identificação dos sensores de temperatura (água × ar)
 

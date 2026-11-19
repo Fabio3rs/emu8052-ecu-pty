@@ -1,0 +1,16 @@
+label,target_rpm,state,reason,mean_rpm,shaft_power_kw,adv_mean_deg,lambda,inj_mass_mg,faults
+idle_contact_open,1500.0,ACCEPTED,none,1499.57,14.7968,7.112,0.9994,4723.696,02 00 00
+idle_contact_open,2000.0,ACCEPTED,none,2000.88,20.7486,10.989,0.9966,4883.77,02 00 00
+idle_contact_open,3000.0,ACCEPTED,none,3000.34,31.2392,18.563,1.0072,5063.455,02 00 00
+idle_contact_closed,1500.0,ACCEPTED,none,1499.89,14.7956,7.099,0.9992,4731.564,01 00 00
+idle_contact_closed,2000.0,ACCEPTED,none,2000.95,20.711,11.076,0.9962,4900.404,01 00 00
+idle_contact_closed,3000.0,ACCEPTED,none,3000.66,31.4485,18.587,1.0025,5096.449,01 00 00
+idle_motor_disconnected,1500.0,ACCEPTED,none,1499.45,14.7987,7.119,0.999,4727.009,08 00 00
+idle_motor_disconnected,2000.0,ACCEPTED,none,2000.89,20.7588,10.975,0.9963,4888.715,08 00 00
+idle_motor_disconnected,3000.0,ACCEPTED,none,3000.5,31.2802,18.556,1.0058,5070.369,08 00 00
+idle_motor_disc+tps2_high,1500.0,ACCEPTED,none,1500.38,15.9599,15.13,0.994,4731.399,00 04 00
+idle_motor_disc+tps2_high,2000.0,ACCEPTED,none,2000.46,21.5058,18.912,0.9961,4901.001,00 04 00
+idle_motor_disc+tps2_high,3000.0,ACCEPTED,none,3000.34,32.0492,26.047,0.9997,5098.486,00 04 00
+tps_both_open_0V,1500.0,ACCEPTED,none,1507.54,14.5407,15.155,1.0883,4365.382,00 02 00
+tps_both_open_0V,2000.0,ACCEPTED,none,2010.19,17.9959,18.996,1.1702,4238.701,00 02 00
+tps_both_open_0V,3000.0,ACCEPTED,none,3001.22,23.0963,26.046,1.2707,4045.701,00 02 00

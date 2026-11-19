@@ -1,0 +1,23 @@
+{
+ "note": "retained XRAM after 300 M ticks idle vs 200 M ticks part-throttle under 45 N.m load (pedal 14 mm, from 3 M ticks)",
+ "idle_300M": {
+  "f80c": 76,
+  "f83d": 7,
+  "f86c": 250,
+  "f86f": 0,
+  "f869": 8,
+  "f8e8": 0,
+  "f8e9": 30,
+  "retained_f84e_50": "00 00 00"
+ },
+ "underload_200M": {
+  "f80c": 97,
+  "f83d": 10,
+  "f86c": 249,
+  "f86f": 0,
+  "f869": 7,
+  "f8e8": 0,
+  "f8e9": 30,
+  "retained_f84e_50": "00 00 00"
+ }
+}

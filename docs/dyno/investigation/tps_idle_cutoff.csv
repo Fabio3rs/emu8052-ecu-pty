@@ -1,0 +1,9 @@
+label,target_rpm,state,reason,mean_rpm,shaft_power_kw,adv_mean_deg,lambda,inj_mass_mg,faults
+tps_0V+idle_contact_closed,1200.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+idle_contact_closed,1500.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+idle_contact_closed,2000.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+idle_contact_closed,3000.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+contact_closed+motor_disc,1200.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+contact_closed+motor_disc,1500.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+contact_closed+motor_disc,2000.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00
+tps_0V+contact_closed+motor_disc,3000.0,INVALID,stall,0.0,0.0,0.0,0.0,0.0,00 02 00

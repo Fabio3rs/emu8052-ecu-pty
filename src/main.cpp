@@ -72,7 +72,10 @@ struct TpsSources {
     long long air_open_tick; // --exp air_open_tick=N: ADC2 (air NTC) open at 5 V from tick N
     long long ntc_force_tick; // --exp ntc_force_tick=N with ect_force_v / air_force_v [V]
     double ect_force_v, air_force_v; // < 0 = off
+    double tps1_force_v; // --exp tps1_force_v=V from ntc_force_tick (< 0 = off)
     double tps2_force_v; // --exp tps2_force_v=V from ntc_force_tick (< 0 = off)
+    double tps_supply_v;   // --exp tps_supply_v=V: analog supply of the TPS (default 5.0)
+    bool tps_ratiometric;  // --exp tps_ratiometric=0: ADC reference stays 5.0 V instead of following the supply
     bool swap_ntc; // --exp swap_ntc=1: ADC2 reads the coolant NTC, ADC3 the air NTC
 };
 
@@ -86,6 +89,11 @@ static bool read_tps_voltage(uint8_t channel, void *context,
         (!sources.tps_restore_tick ||
          sources.ticks < sources.tps_restore_tick)) {
         voltage = sources.tps_open_v;
+        return true;
+    }
+    if (channel == 6 && sources.ntc_force_tick && sources.ticks >= sources.ntc_force_tick &&
+        sources.tps1_force_v >= 0.0) {
+        voltage = sources.tps1_force_v;
         return true;
     }
     if (channel == 0 && sources.ntc_force_tick && sources.ticks >= sources.ntc_force_tick &&
@@ -145,6 +153,12 @@ static bool read_tps_voltage(uint8_t channel, void *context,
                       : sources.adc7_boundary_v;
     else
         return false;
+    if (channel == 0 || channel == 6) {
+        // The TPS is fed by the ECU 5 V rail that is also the ADC reference: ADC code = track fraction.
+        // Modelled as fraction * (ratiometric ? 5.0 : supply) at the 5.0 V full scale used by the converter.
+        const double fraction = voltage / sources.circuit.reference_voltage();
+        voltage = fraction * (sources.tps_ratiometric ? 5.0 : sources.tps_supply_v);
+    }
     return true;
 }
 
@@ -298,6 +312,20 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     ecu_hw::TpsCircuitParameters tps_parameters =
         config->tps_bench_profile ? ecu_hw::TpsCircuitParameters::bench_typical()
                                   : ecu_hw::TpsCircuitParameters{};
+    if (config->experiments.count("tps_linear_fraction") && config->experiments.at("tps_linear_fraction") != 0.0) {
+        // Owner's description: track 1 = 0..100 % over 0..24 deg, track 2 = 0..100 % over 18..90 deg, both ratiometric.
+        constexpr double deg = 0.017453292519943295;
+        tps_parameters.rest_angle_rad = 0.0;
+        tps_parameters.track1_rest_v = 0.0;
+        tps_parameters.track1_slope_v_per_rad = tps_parameters.reference_v / (24.0 * deg);
+        tps_parameters.track2_rest_v = 0.0;
+        tps_parameters.track2_low_slope_v_per_rad = 0.0;
+        tps_parameters.track2_transition_rad = 18.0 * deg;
+        tps_parameters.track2_overlap_end_rad = 24.0 * deg;
+        const double slope2 = tps_parameters.reference_v / (72.0 * deg);
+        tps_parameters.track2_high_slope_v_per_rad = slope2;
+        tps_parameters.track2_wide_slope_v_per_rad = slope2;
+    }
     if (const auto it = config->experiments.find("tps2_end_v"); it != config->experiments.end()) {
         // --exp tps2_end_v=V: continuous track-2 curve reaching V at 90 degrees (owner: track 2 spans
         // 18..90 degrees, 0 V..~4.7-5 V). Only the wide-range slope changes; the 18-24 degree part is kept.
@@ -361,7 +389,10 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
                                : 0,
                            config->experiments.count("ect_force_v") ? config->experiments.at("ect_force_v") : -1.0,
                            config->experiments.count("air_force_v") ? config->experiments.at("air_force_v") : -1.0,
+                           config->experiments.count("tps1_force_v") ? config->experiments.at("tps1_force_v") : -1.0,
                            config->experiments.count("tps2_force_v") ? config->experiments.at("tps2_force_v") : -1.0,
+                           config->experiments.count("tps_supply_v") ? config->experiments.at("tps_supply_v") : 5.0,
+                           !config->experiments.count("tps_ratiometric") || config->experiments.at("tps_ratiometric") != 0.0,
                            config->experiments.count("swap_ntc") && config->experiments.at("swap_ntc") != 0.0};
     sim.target_rpm = config->crank_rpm;
     sim.update_pulse_interval(990000); // 11.88 MHz / 12 = 990k ticks/sec
@@ -588,6 +619,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
             if (experiment("dyno_settle_ticks", 0.0) > 0.0)
                 bench_config.settle_end_tick =
                     static_cast<long long>(experiment("dyno_settle_ticks", 0.0));
+            bench_config.ignore_diagnostic_fault = experiment("dyno_ignore_diag", 0.0) != 0.0;
             dyno_bench.emplace(bench_config);
             loop.bench = &*dyno_bench;
             loop.pedal_step_tick = bench_config.settle_end_tick; // full open at the ramp start

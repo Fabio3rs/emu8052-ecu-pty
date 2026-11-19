@@ -348,3 +348,53 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 | 5.0 | 4.8 | 6000 | 255 | 246 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
 | 5.0 | 5.0 | 3000 | 255 | 255 | 61 | 18.57 | 1.0049 | 31.31 | 00 00 00 |
 | 5.0 | 5.0 | 6000 | 255 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+
+### Tabela P21 - TPS ratiometrico (alimentacao do TPS = referencia do ADC) e curvas em porcentagem da pista
+
+| caso | RPM | IRAM 66h | IRAM 60h | avanco [graus] | potencia [kW] | falhas F84E-50 |
+|---|---:|---:|---:|---:|---:|---|
+| supply 5.0 V (reference) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 4.7 V, ADC Vref follows (ratiometric) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 4.7 V, ADC Vref fixed 5.0 V | 3000 | 224 | 216 | 18.57 | 31.33 | 00 00 00 |
+| supply 5.3 V, ADC Vref follows (ratiometric) | 3000 | 238 | 230 | 18.56 | 31.31 | 00 00 00 |
+| supply 5.3 V, ADC Vref fixed 5.0 V | 3000 | 252 | 244 | 18.58 | 31.31 | 00 00 00 |
+| supply 5.0 V (reference) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 4.7 V, ADC Vref follows (ratiometric) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 4.7 V, ADC Vref fixed 5.0 V | 6000 | 224 | 216 | 29.34 | 39.30 | 00 00 00 |
+| supply 5.3 V, ADC Vref follows (ratiometric) | 6000 | 238 | 230 | 29.35 | 39.21 | 00 00 00 |
+| supply 5.3 V, ADC Vref fixed 5.0 V | 6000 | 252 | 244 | 29.34 | 39.31 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 1500 | 255 | 255 | 7.12 | 14.81 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 3000 | 255 | 255 | 18.57 | 31.29 | 00 00 00 |
+| percent-of-track curves (T1 0-24 deg, T2 18-90 deg) | 6000 | 255 | 255 | 29.34 | 39.22 | 00 00 00 |
+
+### Tabela P22 - falhas do conjunto lenta/TPS com a bancada ignorando a falha diagnostica (corte indevido acima de ~1500 RPM, relato do proprietario)
+
+| falha (a partir de 2 M ticks) | RPM | resultado | RPM medio | potencia [kW] | avanco [graus] | lambda | falhas F84E-50 |
+|---|---:|---|---:|---:|---:|---:|---|
+| idle_contact_open | 1500 | ACCEPTED | 1500 | 14.80 | 7.11 | 0.9994 | 02 00 00 |
+| idle_contact_open | 2000 | ACCEPTED | 2001 | 20.75 | 10.99 | 0.9966 | 02 00 00 |
+| idle_contact_open | 3000 | ACCEPTED | 3000 | 31.24 | 18.56 | 1.0072 | 02 00 00 |
+| idle_contact_closed | 1500 | ACCEPTED | 1500 | 14.80 | 7.10 | 0.9992 | 01 00 00 |
+| idle_contact_closed | 2000 | ACCEPTED | 2001 | 20.71 | 11.08 | 0.9962 | 01 00 00 |
+| idle_contact_closed | 3000 | ACCEPTED | 3001 | 31.45 | 18.59 | 1.0025 | 01 00 00 |
+| idle_motor_disconnected | 1500 | ACCEPTED | 1499 | 14.80 | 7.12 | 0.9990 | 08 00 00 |
+| idle_motor_disconnected | 2000 | ACCEPTED | 2001 | 20.76 | 10.97 | 0.9963 | 08 00 00 |
+| idle_motor_disconnected | 3000 | ACCEPTED | 3000 | 31.28 | 18.56 | 1.0058 | 08 00 00 |
+| idle_motor_disc+tps2_high | 1500 | ACCEPTED | 1500 | 15.96 | 15.13 | 0.9940 | 00 04 00 |
+| idle_motor_disc+tps2_high | 2000 | ACCEPTED | 2000 | 21.51 | 18.91 | 0.9961 | 00 04 00 |
+| idle_motor_disc+tps2_high | 3000 | ACCEPTED | 3000 | 32.05 | 26.05 | 0.9997 | 00 04 00 |
+| tps_both_open_0V | 1500 | ACCEPTED | 1508 | 14.54 | 15.15 | 1.0883 | 00 02 00 |
+| tps_both_open_0V | 2000 | ACCEPTED | 2010 | 18.00 | 19.00 | 1.1702 | 00 02 00 |
+| tps_both_open_0V | 3000 | ACCEPTED | 3001 | 23.10 | 26.05 | 1.2707 | 00 02 00 |
+
+### Tabela P23 - calibracoes de marcha lenta e em carga: variaveis retidas apos 300 M ticks de marcha lenta e apos 200 M ticks sob carga parcial (45 N.m)
+
+| variavel retida | marcha lenta | sob carga |
+|---|---:|---:|
+| F80Ch (integrador lambda) | 76 | 97 |
+| F83Dh (posicao do atuador de lenta) | 7 | 10 |
+| F86Ch (correcao de longo prazo) | 250 | 249 |
+| F86Fh (aditivo de lenta) | 0 | 0 |
+| F869h (purga) | 8 | 7 |
+| F8E8h (limite da tabela lambda) | 0 | 0 |
+| F8E9h (contador da tabela lambda) | 30 | 30 |
