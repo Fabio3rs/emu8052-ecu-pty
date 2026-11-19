@@ -429,6 +429,19 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                 continue;
             }
         }
+        if (index + 1 < argc && strcmp(argv[index], "--exp") == 0) {
+            const std::string kv = argv[++index];
+            const auto eq = kv.find('=');
+            if (eq != std::string::npos && eq > 0) {
+                char *end = nullptr;
+                const std::string value = kv.substr(eq + 1);
+                const double number = std::strtod(value.c_str(), &end);
+                if (end != value.c_str() && *end == '\0') {
+                    config.experiments[kv.substr(0, eq)] = number;
+                    continue;
+                }
+            }
+        }
         if (strcmp(argv[index], "--dyno-scenario") == 0) {
             DynoScenario{}.apply(config); // later options override single fields
             continue;

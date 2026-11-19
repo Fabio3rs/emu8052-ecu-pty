@@ -64,6 +64,9 @@ struct AccessoryParams {
     // Ramp over crank 550..750 rpm (alternator_ratio 2.0 => ~1100..1500 rpm).
     double charge_start_rpm = 550.0;
     double charge_full_rpm = 750.0;
+    // Experiment multipliers (--exp acc_alt_scale / acc_pump_scale); 1.0 = original model.
+    double alternator_scale = 1.0;
+    double pump_scale = 1.0;
 };
 inline double accessory_torque_nm(const AccessoryParams &a, double v_sys, double omega) {
     if (omega <= 0.0) return 0.0;
@@ -73,7 +76,7 @@ inline double accessory_torque_nm(const AccessoryParams &a, double v_sys, double
     const double alt = ramp * v_sys * a.electrical_current_a /
                        (a.alternator_efficiency * a.alternator_ratio * omega);
     const double r = omega / a.pump_ref_rad_s;
-    return alt + a.pump_nm_at_ref * r * r;
+    return a.alternator_scale * alt + a.pump_scale * a.pump_nm_at_ref * r * r;
 }
 inline double alternator_torque_nm(double p_el_w, double eta, double omega_alt) { // F-45
     return p_el_w / (eta * omega_alt);

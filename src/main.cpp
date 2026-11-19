@@ -478,6 +478,12 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         loop.physical_pty_realtime = config->physical_pty_realtime;
         loop.physical_plant_friction_temp = config->physical_plant;
         loop.physical_plant_accessories = config->physical_plant && config->accessory_load;
+        auto experiment = [&](const char *key, double fallback) {
+            const auto it = config->experiments.find(key);
+            return it == config->experiments.end() ? fallback : it->second;
+        };
+        loop.accessory_params.alternator_scale = experiment("acc_alt_scale", 1.0);
+        loop.accessory_params.pump_scale = experiment("acc_pump_scale", 1.0);
         if (const char *cycles = std::getenv("SEVEL_PLANT_WINDOW_CYCLES"))
             loop.plant_window.set_window_cycles(std::atof(cycles));
         loop.physical_input = &physical_input;
@@ -490,6 +496,9 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
                     std::numbers::pi / 180.0;
             parameters.swap_coil_channels = config->swap_ignition_coils;
             parameters.physical_efficiency = config->physical_plant;
+            parameters.exp_force_mbt = experiment("adv_force_mbt", 0.0) != 0.0;
+            parameters.exp_torque_saturate = experiment("spark_torque_saturate", 0.0) != 0.0;
+            parameters.exp_adv_offset_deg = experiment("adv_offset_deg", 0.0);
             loop.combustion = engine::Combustion{parameters, fuel};
         }
         engine::ExhaustParameters exhaust_parameters;
@@ -530,6 +539,9 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
             ma17::DynoBenchConfig bench_config;
             bench_config.target_rpm = config->dyno_point_rpm;
             bench_config.cycles = config->dyno_cycles;
+            if (experiment("dyno_settle_ticks", 0.0) > 0.0)
+                bench_config.settle_end_tick =
+                    static_cast<long long>(experiment("dyno_settle_ticks", 0.0));
             dyno_bench.emplace(bench_config);
             loop.bench = &*dyno_bench;
             loop.pedal_step_tick = bench_config.settle_end_tick; // full open at the ramp start

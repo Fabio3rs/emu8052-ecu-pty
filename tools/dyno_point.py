@@ -23,10 +23,10 @@ SCENARIO = {"ethanol_percent": 22, "throttle_leak_mm2": 9, "accessories": True,
             "coolant_c": 90.0, "ambient_c": 20.0}
 
 
-def run_point(binary, rom, rpm, tdc_deg=120, cycles=40, timeout=900):
+def run_point(binary, rom, rpm, tdc_deg=120, cycles=40, timeout=900, extra=()):
     args = [str(binary), str(rom), *BASE_ARGS, "--dyno-scenario",
             "--tdc-reference-deg", str(tdc_deg), "--dyno-point", str(rpm),
-            "--dyno-cycles", str(cycles)]
+            "--dyno-cycles", str(cycles), *extra]
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     out = subprocess.run(args, env=env, text=True, capture_output=True, timeout=timeout,
                          check=True).stdout

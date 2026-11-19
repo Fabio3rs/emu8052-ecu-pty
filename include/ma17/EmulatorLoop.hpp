@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include "engine/physics/Losses.hpp"
 #include "engine/Combustion.hpp"
 #include "engine/PlantTelemetry.hpp"
 #include "engine/ExhaustLambda.hpp"
@@ -96,6 +97,7 @@ struct EmulatorLoopContext {
     // Oil-temperature friction (F-43) follows the coolant temperature when true.
     bool physical_plant_friction_temp = false;
     bool physical_plant_accessories = false; // F-45, --accessory-load
+    engine::physics::AccessoryParams accessory_params{}; // --exp acc_*_scale
     double coolant_heat_pending_j = 0.0;
     engine::ExhaustLambda exhaust{};
     bool pump_relay_p34_candidate = false;

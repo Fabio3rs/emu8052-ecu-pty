@@ -1,4 +1,6 @@
 #pragma once
+#include <map>
+#include <string>
 
 #include <optional>
 
@@ -25,6 +27,9 @@ struct EmulatorConfig {
     double pedal_pull_m = 0.0;
     double dyno_point_rpm = 0.0; // --dyno-point: ROM bench at this rpm (0 = off)
     double dyno_cycles = 40.0;   // --dyno-cycles: measurement window
+    // --exp key=value: identified counterfactual interventions (CURVES_STUDY). Default empty
+    // = original behaviour. Keys: acc_alt_scale, acc_pump_scale, adv_force_mbt, adv_offset_deg.
+    std::map<std::string, double> experiments = {};
     bool tps_bench_profile = false;
     bool idle_bridge_p15_p16 = false;
     bool idle_bridge_reverse = false;

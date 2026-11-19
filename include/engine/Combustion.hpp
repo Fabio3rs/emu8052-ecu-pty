@@ -42,6 +42,13 @@ struct CombustionParameters {
     double dilution_k = 1.0;      // calibrado (F-34)
     double dilution_x0 = 0.10;    // calibrado (F-34)
     double compression_ratio = 9.2; // manual B.500.837 p.5
+    // Experiments (--exp adv_force_mbt / adv_offset_deg): efficiency evaluated at the plant MBT
+    // (+offset) instead of the ROM advance. Pulse timing in crank angle is NOT moved. Off by default.
+    bool exp_force_mbt = false;
+    double exp_adv_offset_deg = 0.0;
+    // --exp spark_torque_saturate=1: pulse torque scales with burn_fraction (strength/0.8, capped
+    // at 1) instead of raw strength, consistent with the burn-fraction rule above.
+    bool exp_torque_saturate = false;
 };
 
 // Provisional four-cylinder, wasted-spark event model. Coil 0 serves 1/4,
@@ -134,7 +141,10 @@ class Combustion {
             last_mbt_deg_ = physics::mbt_deg(dur);
             efficiency = parameters_.eta_ref *
                          physics::f_lambda_fuel(last_lambda_) *
-                         physics::f_advance(last_advance_deg_ - last_mbt_deg_,
+                         physics::f_advance((parameters_.exp_force_mbt
+                                                   ? parameters_.exp_adv_offset_deg
+                                                   : last_advance_deg_ + parameters_.exp_adv_offset_deg -
+                                                         last_mbt_deg_),
                                             parameters_.spark_k) *
                          std::max(0.0, physics::f_dilution(
                                            last_xr_, parameters_.dilution_k,
@@ -144,7 +154,8 @@ class Combustion {
         pulse_torque_nm_ =
             fuel_kg * fuel_.lower_heating_value_j_kg() *
             efficiency *
-            std::min(1.0, spark_strength) / expansion_rad;
+            (parameters_.exp_torque_saturate ? burn_fraction : std::min(1.0, spark_strength)) /
+            expansion_rad;
         pulse_start_rad_ = crank_angle_rad;
         pulse_end_rad_ = crank_angle_rad + expansion_rad;
         energy_scheduled_j_ += pulse_torque_nm_ * expansion_rad;

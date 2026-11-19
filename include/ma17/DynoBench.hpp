@@ -109,11 +109,13 @@ struct DynoPointResult {
     double kinetic_over_brake = 0.0;
     double adv_mean = 0.0, adv_min = 0.0, adv_max = 0.0, adv_std = 0.0;
     unsigned long long sparks = 0;
+    double mbt_mean = 0.0, eta_mean = 0.0, xr_mean = 0.0, strength_mean = 0.0, strength_min = 0.0; // plant combustion model, per fired spark
     double spark_abs_deg[4] = {0, 0, 0, 0}; // mean absolute crank angle (0..720) per cylinder
     unsigned long long spark_cyl_count[4] = {0, 0, 0, 0};
     double inj_mass_mg = 0.0, inj_width_ms = 0.0, inj_freq_hz = 0.0, inj_duty = 0.0;
     unsigned long long inj_pulses = 0;
     int ram69_end = 0, ram69_min = 0, ram69_max = 0;
+    int probe_tps1 = 0, probe_rpm47 = 0, probe_vbat61 = 0, probe_adc65 = 0, probe_xf8e8 = 0;
     long long ramp_start_tick = 0, measure_start_tick = 0;
 };
 
@@ -171,8 +173,12 @@ class DynoBench {
         }
         inj_prev_open_ = open;
     }
-    void on_spark(double angle_rad, double advance_deg, unsigned cylinder) {
+    void on_spark(double angle_rad, double advance_deg, unsigned cylinder, double mbt_deg = 0.0,
+                  double eta = 0.0, double xr = 0.0, double strength = 1.0) {
         if (state_ != DynoState::Measure) return;
+        str_sum_ += strength;
+        str_min_ = advances_.empty() ? strength : std::min(str_min_, strength);
+        mbt_sum_ += mbt_deg; eta_sum_ += eta; xr_sum_ += xr;
         advances_.push_back(advance_deg);
         constexpr double four_pi = 4.0 * engine::physics::pi;
         const double a = std::fmod(angle_rad, four_pi) * 180.0 / engine::physics::pi;
@@ -180,6 +186,10 @@ class DynoBench {
             abs_sum_[cylinder] += a;
             ++abs_n_[cylinder];
         }
+    }
+    void on_probes(int tps1, int rpm47, int vbat, int adc65, int xf8e8) {
+        if (state_ != DynoState::Measure) return;
+        p_tps1_ = tps1; p_rpm47_ = rpm47; p_vbat_ = vbat; p_adc65_ = adc65; p_xf8e8_ = xf8e8;
     }
     void on_ram69(int value) {
         if (state_ != DynoState::Measure) return;
@@ -217,6 +227,11 @@ class DynoBench {
             r.adv_std = std::sqrt(v / static_cast<double>(advances_.size()));
         }
         r.sparks = advances_.size();
+        if (!advances_.empty()) {
+            const double n = static_cast<double>(advances_.size());
+            r.mbt_mean = mbt_sum_ / n; r.eta_mean = eta_sum_ / n; r.xr_mean = xr_sum_ / n;
+            r.strength_mean = str_sum_ / n; r.strength_min = str_min_;
+        }
         for (int c = 0; c < 4; ++c) {
             r.spark_cyl_count[c] = abs_n_[c];
             r.spark_abs_deg[c] = abs_n_[c] ? abs_sum_[c] / static_cast<double>(abs_n_[c]) : 0.0;
@@ -228,6 +243,8 @@ class DynoBench {
                                        static_cast<double>(pulses_) : 0.0;
         r.inj_freq_hz = t > 0.0 ? static_cast<double>(pulses_) / t : 0.0;
         r.inj_duty = t > 0.0 ? static_cast<double>(open_ticks_) * bench_tick_s / t : 0.0;
+        r.probe_tps1 = p_tps1_; r.probe_rpm47 = p_rpm47_; r.probe_vbat61 = p_vbat_;
+        r.probe_adc65 = p_adc65_; r.probe_xf8e8 = p_xf8e8_;
         r.ram69_end = ram69_; r.ram69_min = ram_min_; r.ram69_max = ram_max_;
         r.ramp_start_tick = ramp_start_;
         r.measure_start_tick = measure_start_;
@@ -322,6 +339,8 @@ class DynoBench {
     bool inj_prev_open_ = false;
     // ignition
     std::vector<double> advances_;
+    int p_tps1_ = 0, p_rpm47_ = 0, p_vbat_ = 0, p_adc65_ = 0, p_xf8e8_ = 0;
+    double str_sum_ = 0.0, str_min_ = 0.0, mbt_sum_ = 0.0, eta_sum_ = 0.0, xr_sum_ = 0.0;
     double abs_sum_[4] = {0, 0, 0, 0};
     unsigned long long abs_n_[4] = {0, 0, 0, 0};
     int ram69_ = 0, ram_min_ = 0, ram_max_ = 0;

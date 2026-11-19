@@ -65,7 +65,12 @@ static void print_dyno_point(const EmulatorLoopContext &context) {
             "\"inj_mass_mg\":%.3f,\"inj_pulses\":%llu,\"inj_width_ms\":%.4f,"
             "\"inj_freq_hz\":%.3f,\"inj_duty\":%.5f,\"lambda\":%.4f,"
             "\"ram69_end\":%d,\"ram69_min\":%d,\"ram69_max\":%d,"
-            "\"tdc_deg\":%.1f,\"bmep_bar\":%.3f,\"bsfc_g_kwh\":%.1f}\n",
+            "\"tdc_deg\":%.1f,\"bmep_bar\":%.3f,\"bsfc_g_kwh\":%.1f,"
+            "\"ve_ambient\":%.4f,\"air_mg_cyl\":%.2f,\"fuel_g_s\":%.4f,"
+            "\"mbt_mean_deg\":%.3f,\"eta_i_mean\":%.4f,\"xr_mean\":%.4f,"
+            "\"spark_strength_mean\":%.4f,\"spark_strength_min\":%.4f,"
+            "\"iram66_tps1\":%d,\"iram47_rpm\":%d,\"iram61_vbat\":%d,\"iram65_adc5\":%d,"
+            "\"xram_f8e8\":%d}\n",
             dyno_state_name(r.state), dyno_invalid_name(r.reason), r.target_rpm, r.mean_rpm,
             w.window_id, w.tick_start, w.tick_end, w.window_s,
             context.bench->config().cycles, r.ramp_start_tick, r.measure_start_tick,
@@ -78,7 +83,9 @@ static void print_dyno_point(const EmulatorLoopContext &context) {
             r.inj_pulses, r.inj_width_ms, r.inj_freq_hz, r.inj_duty, w.lambda_cylinders,
             r.ram69_end, r.ram69_min, r.ram69_max,
             context.combustion.tdc_phase_rad() * 180.0 / engine::physics::pi, w.bmep_bar,
-            w.bsfc_g_kwh);
+            w.bsfc_g_kwh, w.ve_ambient, w.air_mg_per_cyl_cycle, w.fuel_g_s, r.mbt_mean,
+            r.eta_mean, r.xr_mean, r.strength_mean, r.strength_min, r.probe_tps1, r.probe_rpm47,
+            r.probe_vbat61, r.probe_adc65, r.probe_xf8e8);
 }
 
 static void print_plant_line(const EmulatorLoopContext &context) {
@@ -783,7 +790,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                          ? context.sensor_circuit->supply_voltage()
                                          : 14.0;
                 plant_acc_nm = engine::physics::accessory_torque_nm(
-                    engine::physics::AccessoryParams{}, v_sys, omega);
+                    context.accessory_params, v_sys, omega);
             }
             tick_physical_crank_input(&cpu, *context.physical_crank,
                                       *context.physical_input,
@@ -826,6 +833,9 @@ static void run_tick_batch(EmulatorLoopContext &context,
                         plant_omega_before, context.physical_crank->speed_rad_s(), torques,
                         context.physical_crank->inertia_kg_m2());
                     context.bench->on_ram69(cpu.mLowerData[0x69]);
+                    context.bench->on_probes(cpu.mLowerData[0x66], cpu.mLowerData[0x47],
+                                             cpu.mLowerData[0x61], cpu.mLowerData[0x65],
+                                             cpu.mExtData[0xF8E8]);
                     context.bench->finish_measure_if_ready(
                         context.ticks, rho_ref, context.combustion.stoichiometric_afr(),
                         context.combustion.fuel_energy_j_per_kg());
@@ -1142,7 +1152,10 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     if (context.bench && event.air_kg > 0.0 && event.burned_fuel_kg > 0.0)
                         context.bench->on_spark(
                             context.physical_crank->angle_rad(),
-                            context.combustion.last_spark_advance_deg(), event.cylinder_index);
+                            context.combustion.last_spark_advance_deg(), event.cylinder_index,
+                            context.combustion.last_mbt_deg(),
+                            context.combustion.last_spark_efficiency(),
+                            context.combustion.last_residual_fraction(), sparks[channel]);
                     context.coolant_heat_pending_j +=
                         event.burned_fuel_kg *
                         context.combustion.fuel_energy_j_per_kg() * 0.25;
