@@ -418,3 +418,20 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 | 3000 | after_5min_idle | 31.25 | -0.18 | 18.64 | 1.0083 |
 | 6000 | fresh | 39.21 | +0.00 | 29.35 | 0.9959 |
 | 6000 | after_5min_idle | 38.79 | -1.08 | 29.36 | 1.0047 |
+
+### Tabela P25 - enriquecimento de plena carga em toda a faixa de rotacao: lambda dos cilindros com a sonda travada pobre (0 mV, a ROM enriquece ao maximo), neutra (2500 mV) e rica (4500 mV)
+
+| RPM | sonda pobre 0 mV | neutra 2500 mV | rica 4500 mV |
+|---:|---:|---:|---:|
+| 1500 | 0.9472 | 1.0812 | 1.0427 |
+| 2000 | 0.9981 | 1.1049 | 1.0659 |
+| 2500 | 0.9783 | 1.0917 | 1.0544 |
+| 3000 | 0.9705 | 1.0820 | 1.0496 |
+| 3500 | 0.9446 | 1.0520 | 1.0226 |
+| 4000 | 0.9469 | 1.0524 | 1.0243 |
+| 4500 | 0.9753 | 1.0792 | 1.0507 |
+| 5000 | 0.9788 | 1.0710 | 1.0446 |
+| 5500 | 0.9772 | 1.0482 | 1.0239 |
+| 6000 | 0.9949 | 1.0501 | 1.0263 |
+
+Menor lambda com enriquecimento maximo da malha em plena carga: 0.9446.

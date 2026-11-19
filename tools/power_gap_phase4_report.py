@@ -169,5 +169,15 @@ fresh = {r["target_rpm"]: float(r["shaft_power_kw"]) for r in p2 if r["case"] ==
 for r in p2:
     dv = 100.0 * (float(r["shaft_power_kw"]) / fresh[r["target_rpm"]] - 1.0)
     o.append(f"| {int(float(r['target_rpm']))} | {r['case']} | {f(r,'shaft_power_kw')} | {dv:+.2f} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
+eb = list(csv.DictReader(open(D / "enrichment_bracket_full_range.csv")))
+o += ["", "### Tabela P25 - enriquecimento de plena carga em toda a faixa de rotacao: lambda dos cilindros com a sonda travada pobre (0 mV, a ROM enriquece ao maximo), neutra (2500 mV) e rica (4500 mV)", "",
+      "| RPM | sonda pobre 0 mV | neutra 2500 mV | rica 4500 mV |", "|---:|---:|---:|---:|"]
+byr = {}
+for r in eb:
+    byr.setdefault(int(float(r["rpm"])), {})[int(r["adc5_mv"])] = float(r["lambda"])
+for rpm in sorted(byr):
+    o.append(f"| {rpm} | {byr[rpm][0]:.4f} | {byr[rpm][2500]:.4f} | {byr[rpm][4500]:.4f} |")
+mn = min(v[0] for v in byr.values())
+o += ["", f"Menor lambda com enriquecimento maximo da malha em plena carga: {mn:.4f}."]
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))

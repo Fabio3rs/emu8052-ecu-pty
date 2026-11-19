@@ -605,6 +605,23 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 | 6000 | fresh | 39.21 | +0.00 | 29.35 | 0.9959 |
 | 6000 | after_5min_idle | 38.79 | -1.08 | 29.36 | 1.0047 |
 
+### Tabela P25 - enriquecimento de plena carga em toda a faixa de rotacao: lambda dos cilindros com a sonda travada pobre (0 mV, a ROM enriquece ao maximo), neutra (2500 mV) e rica (4500 mV)
+
+| RPM | sonda pobre 0 mV | neutra 2500 mV | rica 4500 mV |
+|---:|---:|---:|---:|
+| 1500 | 0.9472 | 1.0812 | 1.0427 |
+| 2000 | 0.9981 | 1.1049 | 1.0659 |
+| 2500 | 0.9783 | 1.0917 | 1.0544 |
+| 3000 | 0.9705 | 1.0820 | 1.0496 |
+| 3500 | 0.9446 | 1.0520 | 1.0226 |
+| 4000 | 0.9469 | 1.0524 | 1.0243 |
+| 4500 | 0.9753 | 1.0792 | 1.0507 |
+| 5000 | 0.9788 | 1.0710 | 1.0446 |
+| 5500 | 0.9772 | 1.0482 | 1.0239 |
+| 6000 | 0.9949 | 1.0501 | 1.0263 |
+
+Menor lambda com enriquecimento maximo da malha em plena carga: 0.9446.
+
 Leitura dos resultados:
 
 1. **Reconhecimento de plena carga: hipótese anterior REFUTADA; o que vale é a consistência entre as trilhas.**
@@ -629,7 +646,7 @@ Leitura dos resultados:
    Sem evidência de enriquecimento por TPS no regime testado. **Teste com a malha lambda travada nos extremos (Tabela P14):** com a sonda
    dizendo "pobre" o tempo todo (ADC5 = 0 mV) a ROM enriquece ao máximo e atinge só λ = 0,98 (3000 RPM) e 0,99 (4500 RPM) em plena carga;
    com "rico" (4500 mV) vai a λ = 1,05. A autoridade total da malha em plena carga é ≈ ±3 %, centrada acima de 1,0; um enriquecimento de
-   plena carga (λ ≈ 0,85–0,9) não aparece em nenhum dos dois extremos. A interpretação é de que **esta ROM não tem enriquecimento de plena carga** dentro do
+   plena carga (λ ≈ 0,85–0,9) não aparece em nenhum dos dois extremos, nem em nenhuma rotação de 1500 a 6000 RPM (Tabela P25: o menor λ com enriquecimento máximo da malha é 0,9446, a 3500 RPM). A interpretação é de que **esta ROM não tem enriquecimento de plena carga** dentro do
    alcance do integrador; não exclui lógica ativada por condição não testada (carga, rotação ou temperatura fora da faixa).
 4. **Estado térmico e o "estol" a 70–80 °C (resolvido).** Água a 60, 65, 85, 90 e 105 °C mudam a potência em ≤ 2 % e o avanço em ≤ 0,9°. Entre 70 e 80 °C o ponto
    saía `INVALID:stall`. Investigado: nessa faixa o motor **não pega** com o arranque padrão da bancada (495 000 ticks ≈ 0,5 s; nenhuma janela de planta, bit F850.1 ligado);
@@ -789,7 +806,7 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 
 - Calibração do TPS pelo procedimento de regulagem do manual: a arquitetura de aceleração está modelada e respeitada pela bancada (puxão do cabo 0 a 40,27 mm = folga de 1 mm + raio × 90°;
   ângulo do cabo = (puxão − folga)/raio; borboleta = máx(cabo, batente); interruptor de lenta abre quando o cabo se afasta do batente; batente móvel pelo motor DC, 4° estimado em `SEVEL_COSIM_PROGRESS.md`),
-  mas a calibração elétrica (tensão no batente, curvas das duas pistas, posição do êmbolo do batente na regulagem) é estimativa de bancada e não foi refeita com o procedimento de regulagem do TPS.
+  mas a calibração elétrica já existe e é a do manual MA1.7 (Alfatest), do material de bancada e da ROM (`SEVEL_COSIM_PROGRESS.md`, seção do perfil de bancada): o dyno usa `--tps-bench-profile` (pista 1 em 0,27 V a 0°, 1,00 V a 4° e 4,65 V a 24°; pista 2 de 0 V até 18° a ~4,5 V a 90°), dentro das faixas de referência (pista 1: 0,20–0,27 V fechada, ~1,00 V na lenta, 4,50–4,80 V acima de 24°; pista 2: 4,30–4,60 V na abertura total) e ancorada no par ADC 40/95 aceito pela ROM no batente estimado de 4°. São referências de sistema, não medições deste corpo de borboleta; o que falta é a medição própria da regulagem no carro.
 
 ## H. Recomendações
 
