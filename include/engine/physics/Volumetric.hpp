@@ -48,7 +48,7 @@ struct VeCurveParams {
     double kz = 8.9186;        // calibrado
     double hs_gain = 0.01941;  // ajuste (GOAL_DYNO_ROM fase 2): correcao de alta rotacao (antes 0)
     double hs_n0 = 2500.0;     // rpm: inicio da rampa (abaixo, a curva base e usada sem alteracao)
-    double hs_n1 = 3500.0;     // rpm: fim da rampa
+    double hs_n1 = 3000.0;     // rpm: fim da rampa
 };
 inline double eta_v_wot(const EngineGeometry &g, const VeCurveParams &v, double rpm,
                         double t_k) { // F-22
