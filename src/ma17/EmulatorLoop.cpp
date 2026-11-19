@@ -743,6 +743,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                       sensor_connected, context.drivetrain);
             if (context.drivetrain)
                 context.vehicle_speed_kmh = context.drivetrain->speed_m_s() * 3.6;
+            context.combustion_integrated_j +=
+                plant_comb_nm * (context.physical_crank->angle_rad() - plant_angle_before);
             if (context.intake) {
                 context.plant_window.accumulate(
                     1.0 / 990000.0,
@@ -1636,6 +1638,20 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                 static_cast<unsigned>(cpu.mLowerData[0x61]),
                 static_cast<unsigned>(cpu.mLowerData[0x62]),
                 static_cast<unsigned>(cpu.mLowerData[0x63]));
+        {
+            // Energy check (GOAL_DYNO_ROM 1.4): integrated per-tick torque vs the exact
+            // T * 2 rad of every pulse, discounting the unfinished tail of the last one.
+            const double angle = context.physical_crank->angle_rad();
+            const double tail_j =
+                context.combustion.pulse_torque_nm() *
+                std::max(0.0, context.combustion.pulse_end_rad() -
+                                  std::max(angle, context.combustion.pulse_start_rad()));
+            fprintf(stdout,
+                    "[PHYSICAL-ENERGY] scheduled_j=%.9f tail_j=%.9f integrated_j=%.9f "
+                    "burns=%llu\n",
+                    context.combustion.energy_scheduled_j(), tail_j,
+                    context.combustion_integrated_j, context.combustion.burns());
+        }
         fprintf(stdout, "[PHYSICAL-INTAKE] pressure_pa=%.1f air_kg=%.9f "
                         "air_in_kg=%.9f air_out_kg=%.9f "
                         "injected_kg=%.9f film_kg=%.9f vapor_kg=%.9f "

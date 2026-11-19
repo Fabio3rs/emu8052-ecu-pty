@@ -141,12 +141,11 @@ Row run_point(const Options &o, double rpm) {
             }
             ++next_k;
         }
-        const double tau = comb.torque_nm(theta);
         const double pump = intake.pumping_torque_nm();
         const double fric = cp.running_friction_nm +
                             cp.viscous_friction_nm_per_rad_s * omega;
         if (measuring) {
-            w_ind += tau * omega * dt;
+            w_ind += comb.work_j(theta, new_theta); // exact pulse overlap (GOAL_DYNO_ROM 1.2)
             w_pump += pump * omega * dt;
             w_fric += fric * omega * dt;
             mapsum += intake.pressure_pa();

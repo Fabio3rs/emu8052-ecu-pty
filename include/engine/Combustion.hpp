@@ -145,7 +145,9 @@ class Combustion {
             fuel_kg * fuel_.lower_heating_value_j_kg() *
             efficiency *
             std::min(1.0, spark_strength) / expansion_rad;
+        pulse_start_rad_ = crank_angle_rad;
         pulse_end_rad_ = crank_angle_rad + expansion_rad;
+        energy_scheduled_j_ += pulse_torque_nm_ * expansion_rad;
         burned_fuel_kg_ += burned_fuel_kg;
         event.burned_fuel_kg = burned_fuel_kg;
         ++burns_;
@@ -153,9 +155,25 @@ class Combustion {
         return event;
     }
 
+    // Torque of the current pulse at a crank angle: zero before the spark and after
+    // the end of the expansion window (GOAL_DYNO_ROM 1.1).
     double torque_nm(double crank_angle_rad) const {
-        return crank_angle_rad < pulse_end_rad_ ? pulse_torque_nm_ : 0.0;
+        return crank_angle_rad >= pulse_start_rad_ && crank_angle_rad < pulse_end_rad_
+                   ? pulse_torque_nm_
+                   : 0.0;
     }
+    // Exact work [J] of the current pulse over the crank interval [a0, a1]:
+    // T * |[a0, a1] intersect [spark, spark + 2 rad]|.
+    double work_j(double a0, double a1) const {
+        const double lo = std::max(a0, pulse_start_rad_);
+        const double hi = std::min(a1, pulse_end_rad_);
+        return hi > lo ? pulse_torque_nm_ * (hi - lo) : 0.0;
+    }
+    double pulse_torque_nm() const { return pulse_torque_nm_; }
+    double pulse_start_rad() const { return pulse_start_rad_; }
+    double pulse_end_rad() const { return pulse_end_rad_; }
+    // Sum of T * 2 rad over every pulse scheduled so far (telemetry, energy checks).
+    double energy_scheduled_j() const { return energy_scheduled_j_; }
     unsigned long long burns() const { return burns_; }
     const std::array<unsigned long long, 4> &burns_by_cylinder() const
         EMU_LIFETIMEBOUND {
@@ -197,7 +215,9 @@ class Combustion {
     std::array<double, 4> pending_air_kg_{};
     std::array<double, 4> pending_fuel_kg_{};
     double pulse_torque_nm_ = 0.0;
+    double pulse_start_rad_ = 0.0;
     double pulse_end_rad_ = 0.0;
+    double energy_scheduled_j_ = 0.0;
     double burned_fuel_kg_ = 0.0;
     double rpm_ = 0.0, manifold_pa_ = 100000.0, exhaust_pa_ = 100000.0;
     double last_advance_deg_ = 0.0, last_mbt_deg_ = 0.0, last_eta_i_ = 0.0,

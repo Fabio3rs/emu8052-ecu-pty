@@ -90,6 +90,7 @@ struct EmulatorLoopContext {
     engine::IntakeFuel *intake = nullptr;
     engine::Combustion combustion{};
     engine::PlantWindow plant_window{};
+    double combustion_integrated_j = 0.0; // per-tick integral of the pulse torque (energy check)
     // Oil-temperature friction (F-43) follows the coolant temperature when true.
     bool physical_plant_friction_temp = false;
     bool physical_plant_accessories = false; // F-45, --accessory-load
