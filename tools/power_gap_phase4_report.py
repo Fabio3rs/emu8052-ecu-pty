@@ -159,5 +159,15 @@ o += ["", "### Tabela P23 - calibracoes de marcha lenta e em carga: variaveis re
       "| variavel retida | marcha lenta | sob carga |", "|---|---:|---:|"]
 for k, n in (("f80c","F80Ch (integrador lambda)"),("f83d","F83Dh (posicao do atuador de lenta)"),("f86c","F86Ch (correcao de longo prazo)"),("f86f","F86Fh (aditivo de lenta)"),("f869","F869h (purga)"),("f8e8","F8E8h (limite da tabela lambda)"),("f8e9","F8E9h (contador da tabela lambda)")):
     o.append(f"| {n} | {ul['idle_300M'][k]} | {ul['underload_200M'][k]} |")
+l2 = json.load(open(D / "long_history_20min_idle.json")); p2 = list(csv.DictReader(open(D / "long_history_20min_points.csv")))
+o += ["", "### Tabela P24 - historico de ~20 min simulados (1,2 bilhao de ticks) de marcha lenta, estado retido carregado em pontos de plena carga (o rotulo `after_5min_idle` do CSV significa depois desse historico longo)", "",
+      "| janela [M ticks] | RPM | avanco [graus] | lambda | combustivel [g/s] | agua [C] |", "|---|---:|---:|---:|---:|---:|"]
+for t in l2["trajectory"]:
+    o.append(f"| {t['window_M']} | {t['rpm']} | {t['spark']} | {t['lam']} | {t['fuel']} | {t['coolant_c']} |")
+o += ["", "| RPM | estado inicial | potencia [kW] | variacao [%] | avanco [graus] | lambda |", "|---:|---|---:|---:|---:|---:|"]
+fresh = {r["target_rpm"]: float(r["shaft_power_kw"]) for r in p2 if r["case"] == "fresh"}
+for r in p2:
+    dv = 100.0 * (float(r["shaft_power_kw"]) / fresh[r["target_rpm"]] - 1.0)
+    o.append(f"| {int(float(r['target_rpm']))} | {r['case']} | {f(r,'shaft_power_kw')} | {dv:+.2f} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))

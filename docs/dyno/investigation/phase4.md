@@ -398,3 +398,23 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 | F869h (purga) | 8 | 7 |
 | F8E8h (limite da tabela lambda) | 0 | 0 |
 | F8E9h (contador da tabela lambda) | 30 | 30 |
+
+### Tabela P24 - historico de ~20 min simulados (1,2 bilhao de ticks) de marcha lenta, estado retido carregado em pontos de plena carga (o rotulo `after_5min_idle` do CSV significa depois desse historico longo)
+
+| janela [M ticks] | RPM | avanco [graus] | lambda | combustivel [g/s] | agua [C] |
+|---|---:|---:|---:|---:|---:|
+| 0-200 | 912.1 | 8.48 | 1.003 | 0.2284 | 91.1 |
+| 200-400 | 910.7 | 8.63 | 1.005 | 0.2275 | 87.9 |
+| 400-600 | 910.5 | 8.62 | 1.005 | 0.2275 | 87.8 |
+| 600-800 | 910.9 | 8.66 | 0.998 | 0.229 | 87.8 |
+| 800-1000 | 911.0 | 8.62 | 0.997 | 0.2293 | 87.8 |
+| 1000-1200 | 910.8 | 8.61 | 0.998 | 0.229 | 87.8 |
+
+| RPM | estado inicial | potencia [kW] | variacao [%] | avanco [graus] | lambda |
+|---:|---|---:|---:|---:|---:|
+| 1500 | fresh | 14.81 | +0.00 | 7.12 | 0.9995 |
+| 1500 | after_5min_idle | 14.78 | -0.20 | 8.24 | 1.0143 |
+| 3000 | fresh | 31.31 | +0.00 | 18.56 | 1.0052 |
+| 3000 | after_5min_idle | 31.25 | -0.18 | 18.64 | 1.0083 |
+| 6000 | fresh | 39.21 | +0.00 | 29.35 | 0.9959 |
+| 6000 | after_5min_idle | 38.79 | -1.08 | 29.36 | 1.0047 |

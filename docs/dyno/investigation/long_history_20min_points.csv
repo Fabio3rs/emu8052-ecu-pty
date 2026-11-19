@@ -1,0 +1,7 @@
+case,target_rpm,state,reason,mean_rpm,shaft_power_kw,indicated_nm,adv_mean_deg,lambda,inj_mass_mg
+fresh,1500.0,ACCEPTED,none,1499.49,14.8083,112.921,7.123,0.9995,4724.842
+after_5min_idle,1500.0,ACCEPTED,none,1501.35,14.7789,112.623,8.238,1.0143,4688.726
+fresh,3000.0,ACCEPTED,none,3000.83,31.3103,125.564,18.562,1.0052,5074.135
+after_5min_idle,3000.0,ACCEPTED,none,3002.01,31.2528,125.349,18.643,1.0083,5075.376
+fresh,6000.0,ACCEPTED,none,6002.47,39.2125,112.57,29.35,0.9959,4479.943
+after_5min_idle,6000.0,ACCEPTED,none,6003.85,38.789,111.895,29.36,1.0047,4464.79
