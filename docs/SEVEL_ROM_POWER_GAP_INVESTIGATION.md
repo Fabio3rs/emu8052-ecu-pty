@@ -620,7 +620,9 @@ Leitura dos resultados:
    bancada ignorando a falha diagnóstica (`--exp dyno_ignore_diag=1`): interruptor de lenta aberto, fechado ou atuador desconectado **não** cortam combustível a 1500, 2000 ou 3000 RPM no
    emulador (a potência e o λ ficam normais); TPS aberto em 0 V dá avanço de fallback de 26° e λ pobre (1,09 a 1,27, −26 % de potência a 3000 RPM), mas também sem corte. O relato **não foi reproduzido**.
    Casos adicionais com o TPS em 0 V ou preso em valores de "fechado" não são realistas (0 V é falha, e o TPS no batente acompanha o batente móvel pelo atuador de lenta; um TPS preso quebra a
-   malha de posição da lenta) e não são interpretados; em alguns a borboleta nem abriu ou o motor não pegou. Em aberto: reproduzir com TPS que acompanha o batente e atuador defeituoso.
+   malha de posição da lenta) e não são interpretados; em alguns a borboleta nem abriu ou o motor não pegou. Informação do proprietário: o atuador é um batente dinâmico de rosca sem fim com motor DC e há um interruptor de lenta que identifica o TPS no batente; a ECU opera em
+   malha fechada TPS ↔ atuador enquanto o interruptor está pressionado (borboleta no batente); toda aceleração intencional puxa o cabo, vence a folga (1 mm no simulador) e só então move a borboleta.
+   Tudo isso está modelado (`ThrottleAssembly`, `IdleActuator`). Em aberto: reproduzir o corte com TPS que acompanha o batente e atuador/interruptor realmente defeituosos.
 9. **Autocalibração durante a operação, marcha lenta e em carga (Tabela P23).** Variáveis retidas após 300 M ticks de marcha lenta e após 200 M ticks sob carga parcial: o integrador lambda F80Ch
    (76 → 97) e a posição do atuador de lenta F83Dh (7 → 10) variam com o regime; a correção de longo prazo F86Ch varia 1 passo (250 → 249) sob carga; F86Fh (aditivo de lenta) e F8E8h/F8E9h
    não variam; sem falhas. O efeito mensurável na plena carga do estado longo é ≤ 0,4 % (Tabela P17). Conclusão: existe adaptação lenta e pequena (lenta e carga), sem relação causal demonstrada com a potência.
