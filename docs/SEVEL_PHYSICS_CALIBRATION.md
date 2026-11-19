@@ -88,6 +88,38 @@ estrangulamento. A lenta fica estrangulada (MAP 33 kPa < 53 kPa), o que dá ~0,6
 area não zerava com a placa fechada (19% do furo a 5°). Corrigido (`ThrottleAreaZeroWhenClosedAndSmallAngleReference`).
 A área também é mantida a partir de cos ψ = 1,25·a·cos ψ₀ para ficar monotônica quando quase aberta.
 
+### 3.1 Fase do PMS, sensor de relutância variável e a lenta de 850 RPM
+
+**Lenta de 850 RPM.** Os 850 ± 50 RPM do manual são uma referência, não um valor fixo: a ECU muda o
+alvo de lenta conforme vários outros parâmetros (temperatura, cargas, estado da malha). Verificar o
+cálculo da física, e não reproduzir esse número, é o que importa; por isso a lenta é medida como
+"fecha o balanço de torque, λ ≈ 1, MAP plausível e rotação que acompanha o alvo da própria ROM".
+
+**Avanço e PMS (120° do manual × 117°).** Comparação no mesmo cenário da ROM (sem carga ou com
+pedal, acessórios ligados, janelas de 6 ciclos, média após 25–30 M ticks):
+
+| Cenário | PMS | RPM | Avanço | η de centelha | Indicado |
+|---|---|---|---|---|---|
+| Lenta | 120° | 908 | 8,8° | 0,297 | 25,69 N·m |
+| Lenta | 117° | 908 | 5,8° | 0,289 | 25,61 N·m |
+| Pedal 8 mm + 40 N·m | 120° | 1150 | 9,5° | 0,328 | 62,56 N·m |
+| Pedal 8 mm + 40 N·m | 117° | 1127 | 6,4° | 0,321 | 62,36 N·m |
+
+A referência de PMS desloca o avanço *medido* em 3° e a eficiência de centelha em 2–3%, mas a ROM fecha a
+malha e o torque indicado muda < 0,5%: a escolha afeta a leitura do avanço, quase não afeta a potência. (O
+Dyno não depende dela: o avanço lá é o MBT da planta.)
+
+**Sensor de rotação (ímã e bobina).** O sensor é de relutância variável: a tensão é a derivada do fluxo
+que a roda fônica faz variar, então a forma de onda tem cruzamento por zero no centro do dente e
+amplitude proporcional à rotação, e o condicionador dispara quando o sinal passa de um limiar. O
+deslocamento entre a "borda" modelada e a borda que a ECU enxerga pode ter assim (a) um termo
+geométrico fixo (posição do sensor e deslocamento do dente) e (b) um termo que depende da rotação
+(limiar contra amplitude: em baixa rotação o disparo atrasa mais). O manual (120°) ignora (b). Os 3° da
+calibração de 117° podem ser esse efeito, e então o avanço deveria variar com a rotação. O simulador hoje
+gera as bordas no ângulo geométrico do dente, sem esse atraso. **O que resolve:** capturar a saída do sensor
+e a faísca em duas ou três rotações no carro (osciloscópio) e ajustar `offset_fixo + f(ω)`. Até lá o padrão
+fica em 120° (manual) e 117° só no preset sem carga do Lab e no teste de aceitação.
+
 ## 4. Tabela de parâmetros
 
 | Parâmetro | Valor | Unidade | Origem |
