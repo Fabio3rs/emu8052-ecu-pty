@@ -278,8 +278,9 @@ int main(int argc, char **argv) {
             // tests) that load stands in for the accessories and needs 8 mm2
             // (tests/sevel_preset.py), so the leak is 8 and accessories stay off.
             {"--throttle-leak-mm2", has_option(harness_args, "--load-nm") ? "14" : "9"},
-            // Candidate TDC reference: manual says 120 deg +-1 tooth (6 deg); 117 deg
-            // gives the manual idle advance of 6 +-2 deg (5.7 measured).
+            // Candidate TDC reference. The manual gives 120 deg (no tolerance, edge not
+            // stated); 117 deg is a FIT to the manual idle advance of 6 +-2 deg (5.7
+            // measured), not a measurement: 115-119 deg fit equally.
             {"--tdc-reference-deg", "117"},
             {"--lambda-adc-gain", "5"},
         }};

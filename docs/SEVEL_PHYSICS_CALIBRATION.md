@@ -61,11 +61,12 @@ O que continua fora do alcance da planta:
 * A ECU resolve a rotação em passos de 25 RPM (`RAM47`) e a malha oscila ("humor" da ECU e
   micro calibração dos sensores). Por isso a lenta é verificada pela **média física da
   janela de ciclos**, e a intenção da ECU pela RAM (`RAM46` alvo, `RAM47` medido).
-* O avanço depende da fase do PMS, que é um candidato: o manual dá 120° ± um dente (6°)
-  entre a falha da roda e o PMS 1/4. Com 120° o avanço medido é 8,6°; com 117° é 5,7°;
-  com 123° é 11,5°. 117° é uma **calibração para o alvo do manual**, dentro da incerteza
-  de um dente, e só vale até alguém medir a fase real no osciloscópio. O padrão do
-  simulador continua 120°; 117° está no preset sem carga do Lab e no teste de aceitação.
+* O avanço depende da fase do PMS (`tdc_phase_rad`), que é um **candidato**: o manual dá 120° entre a falha
+  da roda e o PMS 1/4 (sem tolerância, e sem dizer a partir de qual borda do dente). Com 120° o avanço medido é
+  8,6°; com 117° é 5,7°. O 117° **não é uma medição**: é um ajuste ao avanço de 6° ± 2° do manual, e 115–119°
+  o satisfazem igualmente (o `SEVEL_COSIM_PROGRESS.md` já registrou 116° pelo mesmo motivo e avisou para não
+  inferir uma montagem real). O padrão do simulador continua 120°; 117° está só no preset sem carga do Lab e no
+  teste de aceitação.
 
 Varredura do vazamento (cenário com carga de 24 N·m dos testes, planta sem acessórios):
 3 mm² → 899–914 RPM, mas falha em cenários sem perfil de bancada; 6 mm² → a malha de λ
@@ -109,16 +110,82 @@ A referência de PMS desloca o avanço *medido* em 3° e a eficiência de centel
 malha e o torque indicado muda < 0,5%: a escolha afeta a leitura do avanço, quase não afeta a potência. (O
 Dyno não depende dela: o avanço lá é o MBT da planta.)
 
-**Sensor de rotação (ímã e bobina).** O sensor é de relutância variável: a tensão é a derivada do fluxo
-que a roda fônica faz variar, então a forma de onda tem cruzamento por zero no centro do dente e
-amplitude proporcional à rotação, e o condicionador dispara quando o sinal passa de um limiar. O
-deslocamento entre a "borda" modelada e a borda que a ECU enxerga pode ter assim (a) um termo
-geométrico fixo (posição do sensor e deslocamento do dente) e (b) um termo que depende da rotação
-(limiar contra amplitude: em baixa rotação o disparo atrasa mais). O manual (120°) ignora (b). Os 3° da
-calibração de 117° podem ser esse efeito, e então o avanço deveria variar com a rotação. O simulador hoje
-gera as bordas no ângulo geométrico do dente, sem esse atraso. **O que resolve:** capturar a saída do sensor
-e a faísca em duas ou três rotações no carro (osciloscópio) e ajustar `offset_fixo + f(ω)`. Até lá o padrão
-fica em 120° (manual) e 117° só no preset sem carga do Lab e no teste de aceitação.
+**Sensor de rotação (ímã e bobina) e o que 3° significam.** O sensor é de relutância variável: a tensão é a
+derivada do fluxo, com cruzamento por zero no centro do dente e amplitude proporcional à rotação. O que a
+ECU enxerga como "borda" depende da topologia do condicionador, que na MA1.7 é **desconhecida**:
+
+* condicionador que arma num limiar e marca no cruzamento por zero (tipo LM1815/MAX9924): a amplitude só
+  decide quando o circuito arma; o atraso que sobra (indutância da bobina, filtro RC, propagação) é
+  aproximadamente constante no tempo e cresce em graus com a rotação;
+* comparador de limiar fixo: o disparo atrasa mais em baixa rotação (amplitude menor).
+
+Os dois sinais de dependência com a rotação são opostos, então o sinal do efeito **não se infere** sem o
+circuito. Quanto à magnitude, 3° a 908 RPM exigem τ ≈ 550 µs; um atraso constante no tempo daria então ≈ 20°
+a 6000 RPM, o que o torna uma explicação fraca para os 3°. Tratar o 117° como "efeito do sensor" não está
+sustentado.
+
+**Sentido da referência.** O gerador (`tick_physical_crank_input`) põe a subida no limite da posição (6·k°)
+e a descida 3° depois (6·k + 3°), e a ROM, no seguimento de dentes, captura a **descida** (`T2CON.6` = `I3FR`
+é limpo em `code_FA` (`0x0FA`; a instrução `C2 CE` fica em `0x108`) com `CCEN` = `xxxxxx01`). Se os 120° do manual forem contados a partir do primeiro dente
+capturado, o PMS fica em 123° nas coordenadas do gerador; para o ajuste dar 117° a referência precisa estar
+6° antes, na posição do último dente ausente. As duas leituras ficam documentadas; só medir no carro as separa.
+
+### 3.2 Análise estática: `RAM[69h]` → recarga do Timer 1 (sem mudar a planta)
+
+Fonte: `FiatTipo_MA17_dump_27c256.asm`/`.bin` (bytes conferidos) e `MA17_SEMANTIC_INVENTORY.md` (~L1324).
+**Fechado = lido no assembly; inferido = interpretação.**
+
+**Verificado no assembly**
+
+1. O serviço `IEX3_0` (`0x0B6`) roda a cada captura de dente em CC0. Cada captura faz `djnz RAM_30` e
+   `djnz RAM_50`; só quando `RAM_50` chega a zero a máquina de estados (`IRAM[C4h]` = 1, 2, 4 ou 8) executa.
+2. Borda capturada: `code_FA` (`0x0FA`) é o ressincronismo e limpa `T2CON.6` (`I3FR`, instrução `C2 CE` em
+   `0x108`) e deixa `CCEN&3` = 01; logo o seguimento de dentes captura a **descida** (confere com o simulador,
+   `capture_edge`). O modo de agendamento (`code_223`, `0x223`) ativa `CCEN|=3` e `setb T2CON.6`, e alterna `I3FR` em
+   `0x23E`/`0x24A` (`xrl CCEN,#2`, `cpl T2CON.6`); portanto há capturas de subida nesse modo.
+3. Confirmação da lacuna: no estado 1 (`code_118`) a ROM compara períodos de capturas consecutivas
+   (`0x566C`/`0x5693`/`0x56A2`) durante `RAM_51` (= 4) capturas; confirmada, grava `C4 = 2`, `RAM_50 = 8`
+   (`code_14C`/`code_15B`) e copia `RAM_47` para `XRAM[F8h]`.
+4. Estado 2 (**8 capturas** depois da confirmação, `RAM_50` = 8): grava `C4 = 4`, `RAM_50 = 9` e salta para
+   `code_2AF` (`0x2AF`), o tratador do evento de bobina: para o Timer 1 (`CLR TCON.6/7`) e, conforme `RAM_2A.2`,
+   zera `P5.0` ou `P5.1` **na própria captura**, a menos que `RAM_22.7` esteja ativo, caso em que recarrega o
+   Timer 1 com `RAM[34:35]` (`code_2D6`) e adia o evento para o overflow (`code_252`, `0x252..0x2A5`, que alterna
+   `P5.0/P5.1` e recarrega `TL1/TH1` com `RAM[32:33]` ou `RAM[34:35]`).
+5. Estado 4 (**9 capturas** depois, `RAM_50` = 9): grava `C4 = 1`, `RAM_50 = 8` (se `RAM_2A.2` = 0) ou `0x0D`
+   (13, se = 1) e salta para `code_35E` (`0x35E`), a captura de referência: lê `CRCH:CRCL`, subtrai a captura de
+   referência anterior (`R2:R3`) e grava `RAM[36:37]` = metade dessa diferença (um `rrc` na cadeia `0x3A5..0x3B2`).
+6. Cadeia de `RAM[69h]` (`0x439..0x51E`), cálculo das duas recargas:
+   * `V = RAM_69 × 15 − IRAM[C7h]` (16 bits; se negativo, 0). Byte alto → `RAM_3A`; byte baixo `Vb`.
+     `RAM[32:33] = ~( round(Vb × 0x22 / 256) × RAM[36:37] / 256 )`.
+   * `V' = (RAM_69 >> 1 − RAM_31 → flag RAM_22.7 pelo sinal) × 0x1E − IRAM[C7h]`; byte alto → `RAM_3B`;
+     `RAM[34:35]` calculado como acima, com ajustes por `0x14/0x12/0x44/0x22` (`0x4C9..0x4E5`).
+   * `RAM_38`/`RAM_39` (`0x530`, `0x535..0x547`) = quantas capturas ainda esperar (`RAM_30`) antes da fração fina
+     do Timer 1.
+   Ou seja, o atraso da centelha tem uma parte inteira em capturas (da ordem de `RAM_3A`/`RAM_3B`) e uma fração em
+   contagens do Timer 1 proporcional ao período medido (`RAM[36:37]`).
+
+**Não fechado (N e K).** Não consegui, só por leitura, fixar (a) a posição absoluta do dente de confirmação da
+lacuna em relação à falha (quais das 4 capturas de `RAM_51` valem) e, portanto, **N** (descida do dente N, onde o
+evento de bobina cai 8 capturas depois); nem (b) o **K** em graus, porque as unidades de `RAM_69` (fator 15, `0x22`,
+`0x1E`, subtração de `IRAM[C7h]`) e o intervalo coberto por `RAM[36:37]` (metade da distância entre referências)
+dependem de um traço com o tick de cada captura. A soma 8 + 9 + (8 ou 13) + 4 = 29 ou 34 capturas aponta para
+o ciclo de meia volta (29 dentes por 180° com a lacuna), **inferência** que o traço deve confirmar.
+
+**Medido, não estático** (testes existentes `test_ignition_phase.py`): o ângulo do flanco de `P5` no virabrequim, módulo
+180°, é ≈ 56° + 0,35°·`RAM_69` (intercepto 53–59°, inclinação 0,34–0,37°/contagem). Pela fórmula acima a
+sensibilidade seria 15·0,133/256·`RAM[36:37]`, ou 0,0078·`RAM[36:37]`; com `RAM[36:37]` ≙ 45° isso dá 0,35°/contagem
+(**inferência**: `RAM[36:37]` cobriria 45° de giro, o que ainda precisa ser conferido).
+
+**Implicações para `tdc_phase` (separando o que se sabe)**
+
+* A ROM não contém "o PMS": ela posiciona o evento de `P5` por "descida do dente N + atraso(`RAM_69`)". Qualquer
+  ângulo de avanço é então `tdc_phase − θ_P5`, e o simulador só escolhe `tdc_phase`; a ROM não o fixa.
+* O PMS "na coordenada da própria ROM" fica determinado quando se souber, para um `RAM_69` conhecido, o atraso total
+  em graus (N, K). Isso dispensaria o 120° do manual como entrada e daria o ponto no gerador por conta própria; hoje
+  **não está determinado**.
+* Próximo passo mínimo (dinâmico, sem mudar a planta): registrar, para cada captura, `tick`, `RAM_50`, `C4`,
+  `RAM_51`, `RAM_69`, `RAM[36:37]` e o ângulo do gerador, e ver em qual dente (a partir da posição 58/59) cai o evento
+  de estado 2 e quantas contagens do Timer 1 seguem.
 
 ## 4. Tabela de parâmetros
 
