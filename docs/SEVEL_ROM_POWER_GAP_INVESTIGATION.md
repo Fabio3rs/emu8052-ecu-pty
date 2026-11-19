@@ -744,6 +744,10 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 - Avanço real do motor (PMS físico) e MBT medido em dinamômetro.
 - Canal P5.0/P5.1 e atrasos do estágio de ignição: só a hipótese vigente foi mantida, sem teste novo.
 
+- Calibração do TPS pelo procedimento de regulagem do manual: a arquitetura de aceleração está modelada e respeitada pela bancada (puxão do cabo 0 a 40,27 mm = folga de 1 mm + raio × 90°;
+  ângulo do cabo = (puxão − folga)/raio; borboleta = máx(cabo, batente); interruptor de lenta abre quando o cabo se afasta do batente; batente móvel pelo motor DC, 4° estimado em `SEVEL_COSIM_PROGRESS.md`),
+  mas a calibração elétrica (tensão no batente, curvas das duas pistas, posição do êmbolo do batente na regulagem) é estimativa de bancada e não foi refeita com o procedimento de regulagem do TPS.
+
 ## H. Recomendações
 
 1. Substituir o modelo da bomba por uma curva limitada (potência de dezenas a poucas centenas de W) e recalibrar o conjunto; maior ganho (até 13 kW a 6000 RPM).
@@ -751,4 +755,5 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 3. Padronizar a comparação isolada × ROM (acessórios, temperatura do ar, força de centelha).
 4. Medir a tensão real das duas trilhas do TPS (curva elétrica do modelo é estimativa) e decodificar a regra de contradição entre pistas e o consumo de IRAM 6Dh.0.
    Investigar por que a janela 70–80 °C exige arranque mais longo.
-5. Repetir a matriz com mais pontos de RPM e com 117/123° de PMS.
+5. Calibrar o TPS e a posição do êmbolo do batente pelo procedimento de regulagem do manual (tensão no batente, curvas das duas pistas) e refazer os testes de aceleração (cabo → folga → TPS) e de falha de lenta/TPS.
+6. Repetir a matriz com mais pontos de RPM e com 117/123° de PMS.
