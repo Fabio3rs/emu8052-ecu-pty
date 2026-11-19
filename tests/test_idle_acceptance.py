@@ -4,7 +4,7 @@ Scenario: hot (90 C), no external load, accessories on (alternator + pump, F-45)
 bench TPS profile, idle actuator driven by the ROM. All numbers are read from the
 plant telemetry window ({"type":"plant"}, 20 crank cycles), never from one sample.
 
-The ROM (IE ALCOOL image) targets RAM46*25 = 925 rpm hot while the manual quotes
+The ROM (image G, gasoline) targets RAM46*25 = 925 rpm hot while the manual quotes
 850 +/- 50: the plant cannot move that setpoint, so the physical mean is checked
 against the manual band widened by one ROM count (25 rpm) and against the ROM's own
 intention (RAM46/RAM47 resolve rpm in 25 rpm steps). LLM-written (Claude).

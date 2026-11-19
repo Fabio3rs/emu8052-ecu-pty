@@ -55,8 +55,9 @@ a 925 RPM, rampa de carga do alternador 550–750 RPM do virabrequim), vazamento
 O que continua fora do alcance da planta:
 
 * O alvo da ROM é `RAM46 × 25 = 925 RPM` em toda temperatura quente testada (80–105 °C) e
-  com bateria de 11,5 a 14,4 V. O manual pede 850 ± 50. A ROM é a variante "IE ÁLCOOL";
-  a diferença é de calibração da ROM. A rotação física (908) fica 8 RPM acima do teto da
+  com bateria de 11,5 a 14,4 V. O manual pede 850 ± 50. A ROM é a imagem **G (gasolina)**
+  `FiatTipo_MA17_dump_27c256.bin` (SHA-256 `a3473435…8e1f`, `MA17_FIRMWARE_VARIANTS_ANALYSIS.md`); o rótulo
+  "IE ÁLCOOL" que apareceu aqui estava errado. A diferença para o manual é de calibração da ROM. A rotação física (908) fica 8 RPM acima do teto da
   banda do manual (900) e o teste a aceita até 925 (uma contagem de ROM de 25 RPM).
 * A ECU resolve a rotação em passos de 25 RPM (`RAM47`) e a malha oscila ("humor" da ECU e
   micro calibração dos sensores). Por isso a lenta é verificada pela **média física da

@@ -35,6 +35,8 @@ struct Options {
     double ambient_kpa = 100.0, ambient_c = 20.0;
     double settle_s = 2.0;
     int measure_cycles = 40;      // >= 20 cycles (F-48)
+    double dt_us = 100.0;         // intake/combustion step in microseconds (--dt-us)
+    double tdc_deg = 120.0;       // TDC reference (--tdc-reference-deg), manual B.500.837
     bool legacy_throttle = false; // old Bernoulli throttle
     bool legacy = false;          // old constant-VE / 0.24-efficiency plant
     bool mbt = true;              // spark follows the plant MBT (else fixed)
@@ -72,6 +74,7 @@ Row run_point(const Options &o, double rpm) {
     ip.compressible_throttle = !o.legacy && !o.legacy_throttle;
     if (!o.legacy) ip.exhaust_back_pressure_k = 3.78e6; // calibrado: 15 kPa a 63 g/s (F-41)
     engine::CombustionParameters cparams;
+    cparams.tdc_phase_rad = o.tdc_deg * pi / 180.0;
     for (const auto &[k, v] : o.overrides) {
         if (k == "eta_max") ip.ve_curve.eta_max = v;
         else if (k == "cb") ip.ve_curve.cb = v;
@@ -92,7 +95,7 @@ Row run_point(const Options &o, double rpm) {
     const engine::CrankParameters cp;
     const double afr = fuel.stoichiometric_air_fuel_ratio();
     const double omega = rpm * 2.0 * pi / 60.0;
-    const double dt = 1e-4;
+    const double dt = o.dt_us * 1e-6;
     const double tdc = comb.tdc_phase_rad();
     double adv = o.spark_btdc_deg * pi / 180.0;
     if (!o.legacy && o.mbt) adv = 20.0 * pi / 180.0; // refined from the plant MBT
@@ -241,6 +244,8 @@ int main(int argc, char **argv) {
         else if ((v = need("--ambient-kpa"))) o.ambient_kpa = std::atof(v);
         else if ((v = need("--ambient-c"))) o.ambient_c = std::atof(v);
         else if ((v = need("--cycles"))) o.measure_cycles = std::atoi(v);
+        else if ((v = need("--dt-us"))) o.dt_us = std::atof(v);
+        else if ((v = need("--tdc-reference-deg"))) o.tdc_deg = std::atof(v);
         else if ((v = need("--out"))) o.out = v;
         else if ((v = need("--preset"))) o.preset = v;
         else if ((v = need("--out-dir"))) o.out_dir = v;
@@ -254,6 +259,10 @@ int main(int argc, char **argv) {
         else if (std::strcmp(argv[i], "--fixed-spark") == 0) o.mbt = false;
         else if (std::strcmp(argv[i], "--legacy-throttle") == 0) o.legacy_throttle = true;
         else { std::fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
+    }
+    if (!(o.dt_us > 0.0 && o.dt_us <= 1000.0)) {
+        std::fprintf(stderr, "--dt-us must be in (0, 1000]\n");
+        return 2;
     }
     if (o.rpm_step <= 0 || o.rpm_max < o.rpm_min || o.measure_cycles < 20) {
         std::fprintf(stderr, "invalid sweep (cycles must be >= 20)\n");

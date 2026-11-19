@@ -1,0 +1,39 @@
+{
+  "accessories": false,
+  "ambient": "100 kPa / 20 C",
+  "args": [
+    "--ethanol",
+    "22",
+    "--throttle-leak-mm2",
+    "9",
+    "--cycles",
+    "40",
+    "--rpm-min",
+    "3000",
+    "--rpm-max",
+    "6000",
+    "--rpm-step",
+    "1000"
+  ],
+  "binary": "build-lab/sevel-dyno",
+  "code": {
+    "commit": "",
+    "dirty_files": []
+  },
+  "cycles": 40,
+  "dt_us": [
+    100,
+    25,
+    10,
+    1
+  ],
+  "fuel": "E22",
+  "leak_mm2": 9,
+  "modes": [
+    "MBT",
+    "fixed30",
+    "fixed36"
+  ],
+  "tdc_reference_deg": 120,
+  "tool": "tools/dyno_convergence.py"
+}
