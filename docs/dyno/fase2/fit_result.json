@@ -1,100 +1,102 @@
 {
-  "parameters_before": {
-    "hs_gain": 0.0
+ "parameters_before": {
+  "hs_gain": 0.0,
+  "hs_n1": 3500.0
+ },
+ "parameters_after": {
+  "hs_gain": 0.01941015625000001,
+  "hs_n1": 3000.0
+ },
+ "cost_final": 0.02669171559621695,
+ "note": "VE is unknown: a fit to approximate targets, not a validation. hs_gain was fitted; hs_n1 was chosen by a scan (3500, 3200, 3000, 2800) because 3000 lowered the worst shape error from 8.2 % to 7.3 % without touching other rpm points. The CEE reference curve is a European-version curve (different fuel and method than ABNT), so it is a soft shape reference.",
+ "points": [
+  {
+   "rpm": 1500,
+   "torque_nm": 125.69,
+   "target_nm": 115,
+   "deviation_pct": 9.295652173913037,
+   "power_kw": 19.74,
+   "ve_ambient": 0.8897
   },
-  "parameters_after": {
-    "hs_gain": 0.01941015625000001
+  {
+   "rpm": 2000,
+   "torque_nm": 127.91,
+   "target_nm": 126,
+   "deviation_pct": 1.515873015873015,
+   "power_kw": 26.79,
+   "ve_ambient": 0.9133
   },
-  "cost_final": 0.02669171559621695,
-  "note": "VE is unknown: this is a fit to the targets, not a validation",
-  "points": [
-    {
-      "rpm": 1500,
-      "torque_nm": 125.68,
-      "target_nm": 115,
-      "deviation_pct": 9.286956521739143,
-      "power_kw": 19.74,
-      "ve_ambient": 0.8897
-    },
-    {
-      "rpm": 2000,
-      "torque_nm": 127.9,
-      "target_nm": 126,
-      "deviation_pct": 1.5079365079365026,
-      "power_kw": 26.79,
-      "ve_ambient": 0.9133
-    },
-    {
-      "rpm": 2500,
-      "torque_nm": 128.34,
-      "target_nm": 134,
-      "deviation_pct": -4.223880597014917,
-      "power_kw": 33.6,
-      "ve_ambient": 0.9267
-    },
-    {
-      "rpm": 3000,
-      "torque_nm": 128.61,
-      "target_nm": 133,
-      "deviation_pct": -3.3007518796992374,
-      "power_kw": 40.4,
-      "ve_ambient": 0.9403
-    },
-    {
-      "rpm": 3500,
-      "torque_nm": 127.59,
-      "target_nm": 132,
-      "deviation_pct": -3.3409090909090833,
-      "power_kw": 46.76,
-      "ve_ambient": 0.9469
-    },
-    {
-      "rpm": 4000,
-      "torque_nm": 124.37,
-      "target_nm": 126,
-      "deviation_pct": -1.2936507936507913,
-      "power_kw": 52.09,
-      "ve_ambient": 0.9397
-    },
-    {
-      "rpm": 4500,
-      "torque_nm": 120.42,
-      "target_nm": 117,
-      "deviation_pct": 2.923076923076917,
-      "power_kw": 56.75,
-      "ve_ambient": 0.9285
-    },
-    {
-      "rpm": 5000,
-      "torque_nm": 115.37,
-      "target_nm": 109,
-      "deviation_pct": 5.844036697247712,
-      "power_kw": 60.41,
-      "ve_ambient": 0.9101
-    },
-    {
-      "rpm": 5500,
-      "torque_nm": 107.0,
-      "target_nm": 102,
-      "deviation_pct": 4.90196078431373,
-      "power_kw": 61.63,
-      "ve_ambient": 0.8676
-    },
-    {
-      "rpm": 6000,
-      "torque_nm": 95.6,
-      "target_nm": 96.3,
-      "deviation_pct": -0.7268951194184914,
-      "power_kw": 60.06,
-      "ve_ambient": 0.8018
-    },
-    {
-      "rpm": 6500,
-      "torque_nm": 81.18,
-      "target_nm": 84,
-      "deviation_pct": -3.3571428571428474,
-      "power_kw": 55.25,
-      "ve_ambient": 0.7125
-    }
-  ]
+  {
+   "rpm": 2500,
+   "torque_nm": 128.35,
+   "target_nm": 134,
+   "deviation_pct": -4.216417910447767,
+   "power_kw": 33.6,
+   "ve_ambient": 0.9267
+  },
+  {
+   "rpm": 3000,
+   "torque_nm": 129.89,
+   "target_nm": 133,
+   "deviation_pct": -2.3383458646616617,
+   "power_kw": 40.8,
+   "ve_ambient": 0.9487
+  },
+  {
+   "rpm": 3500,
+   "torque_nm": 127.6,
+   "target_nm": 132,
+   "deviation_pct": -3.3333333333333326,
+   "power_kw": 46.77,
+   "ve_ambient": 0.9469
+  },
+  {
+   "rpm": 4000,
+   "torque_nm": 124.37,
+   "target_nm": 126,
+   "deviation_pct": -1.2936507936507913,
+   "power_kw": 52.1,
+   "ve_ambient": 0.9397
+  },
+  {
+   "rpm": 4500,
+   "torque_nm": 120.42,
+   "target_nm": 117,
+   "deviation_pct": 2.923076923076917,
+   "power_kw": 56.75,
+   "ve_ambient": 0.9285
+  },
+  {
+   "rpm": 5000,
+   "torque_nm": 115.38,
+   "target_nm": 109,
+   "deviation_pct": 5.853211009174308,
+   "power_kw": 60.41,
+   "ve_ambient": 0.9101
+  },
+  {
+   "rpm": 5500,
+   "torque_nm": 107.02,
+   "target_nm": 102,
+   "deviation_pct": 4.921568627450967,
+   "power_kw": 61.64,
+   "ve_ambient": 0.8676
+  },
+  {
+   "rpm": 6000,
+   "torque_nm": 95.6,
+   "target_nm": 96.3,
+   "deviation_pct": -0.7268951194184914,
+   "power_kw": 60.07,
+   "ve_ambient": 0.8018
+  },
+  {
+   "rpm": 6500,
+   "torque_nm": 81.2,
+   "target_nm": 84,
+   "deviation_pct": -3.3333333333333326,
+   "power_kw": 55.27,
+   "ve_ambient": 0.7125
+  }
+ ]
 }

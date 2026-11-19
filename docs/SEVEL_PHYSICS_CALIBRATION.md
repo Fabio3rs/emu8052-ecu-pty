@@ -28,8 +28,8 @@ Comandos (todos pelo NativeLab):
 | Grandeza | Alvo | Ajustado (integração exata) |
 |---|---|---|
 | Potência máxima | 60,3 kW ± 5 % entre 5750–6000 | pico 61,64 kW (83,8 cv) a 5500 RPM; 60,06 kW a 6000 |
-| Torque máximo | 125–133 N·m entre 2750–3250 | 128,6 N·m a 3000 RPM (−3,3 % do alvo de 133) |
-| Formato | ±8 % da CEE × 1,1 (2000–6000) | erro máximo 8,2 % (`dyno_summary.csv`), um pouco acima da banda |
+| Torque máximo | 125–133 N·m entre 2750–3250 | 129,9 N·m a 3000 RPM (−2,3 % do alvo de 133) |
+| Formato | ±8 % da CEE × 1,1 (2000–6000) | erro máximo 7,3 % (`dyno_summary.csv`); a referência CEE é de versão europeia (combustível e método diferentes do ABNT), então é branda |
 | E0 vs E22 | poucos % | 61,70 vs 61,64 kW |
 
 BSFC (CSV corrigido; o `sevel-dyno` usava o fator 3,6e9 em vez de 3,6e6): E22 ≈ 287 g/kWh a 3000 e 322 a 6000 RPM. Valores antigos citados aqui: E22 282–321 g/kWh; E0 257–292 g/kWh (faixa de F-38 para E0: 270–340; o ponto

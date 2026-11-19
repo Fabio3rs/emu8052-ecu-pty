@@ -17,7 +17,7 @@
   ],
   "binary": "build-lab/sevel-dyno",
   "code": {
-    "commit": "f5ff2b608a29bd7b1f2ab8306e7bcbe43006c89d",
+    "commit": "3184c6a56717cfa57030552d296689e9bcbf42b7",
     "dirty_files": []
   },
   "cycles": 40,
