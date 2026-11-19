@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+from sevel_preset import BENCH_LEAK_MM2
 
 
 binary, firmware = sys.argv[1:3]
@@ -72,7 +73,7 @@ pedal_base = base.copy()
 pedal_base[pedal_base.index("--stop-ticks") + 1] = "20000000"
 pedal_base += ["--adc7-mv", "1232", "--idle-bridge-p15-p16",
                "--idle-contact-p46", "--coolant-c", "90",
-               "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+               "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2),
                "--load-step-tick", "800000", "--load-nm", "24",
                "--lambda-adc-gain", "5", "--pedal-step-tick", "10000000",
                "--pedal-release-tick", "12000000", "--pedal-mm", "8"]

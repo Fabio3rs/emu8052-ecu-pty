@@ -11,6 +11,7 @@
 #include "ecu_hw/Ma17SensorCircuit.hpp"
 #include "ecu_hw/Ma17InjectorStage.hpp"
 #include "engine/IntakeFuel.hpp"
+#include "engine/physics/Losses.hpp"
 #include "ma17/ExecutionTracer.hpp"
 #include "ma17/FiveBaudInjector.hpp"
 #include "ma17/PtyBridge.hpp"
@@ -664,6 +665,22 @@ static void run_tick_batch(EmulatorLoopContext &context,
                 (context.crank_sensor_restore_tick &&
                  context.ticks >= context.crank_sensor_restore_tick);
             const auto gaps_before = context.physical_input->missing_positions;
+            if (context.thermal && context.physical_plant_friction_temp &&
+                context.ticks % context.fluid_step_ticks == 0)
+                context.physical_crank->set_friction_scale(
+                    engine::physics::oil_friction_scale(
+                        engine::physics::OilFrictionParams{},
+                        context.thermal->coolant_c()));
+            const double plant_angle_before = context.physical_crank->angle_rad();
+            const double plant_friction_nm =
+                context.physical_crank->friction_torque_nm();
+            const double plant_comb_nm = context.combustion.torque_nm(plant_angle_before);
+            const double plant_load_nm =
+                context.load_step_tick && context.ticks >= context.load_step_tick
+                    ? context.load_torque_nm
+                    : 0.0;
+            const double plant_pump_nm =
+                context.intake ? context.intake->pumping_torque_nm() : 0.0;
             tick_physical_crank_input(&cpu, *context.physical_crank,
                                       *context.physical_input,
                                       context.ticks <= context.starter_stop_tick,
@@ -679,6 +696,18 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                       sensor_connected, context.drivetrain);
             if (context.drivetrain)
                 context.vehicle_speed_kmh = context.drivetrain->speed_m_s() * 3.6;
+            if (context.intake) {
+                context.plant_window.accumulate(
+                    1.0 / 990000.0,
+                    context.physical_crank->angle_rad() - plant_angle_before,
+                    plant_comb_nm, plant_friction_nm, plant_pump_nm, plant_load_nm);
+                const auto &ip = context.intake->parameters();
+                const double rho_ref = ip.ambient_pressure_pa /
+                    (287.05 * (ip.ambient_temperature_c + 273.15));
+                context.plant_window.finish_if_ready(
+                    rho_ref, context.combustion.stoichiometric_afr(),
+                    context.combustion.fuel_energy_j_per_kg());
+            }
             if (context.physical_input->missing_positions != gaps_before) {
                 fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
                                 "\"position\":%d,\"rpm\":%.3f}\n",
@@ -1048,8 +1077,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.physical_crank->rpm(), context.throttle->angle_rad(),
                     context.thermal->air_c(), context.thermal->wall_c(),
                     context.injected_mass_pending_kg);
+                context.plant_window.add_mass(
+                    charge.air_to_cylinders_kg, context.injected_mass_pending_kg,
+                    charge.fuel_to_cylinders_kg);
                 context.combustion.admit(charge,
                                          context.physical_crank->angle_rad());
+                context.combustion.set_operating_point(
+                    context.physical_crank->rpm(), context.intake->pressure_pa(),
+                    context.intake->parameters().exhaust_pressure_pa);
                 const double fluid_dt_s =
                     static_cast<double>(context.fluid_step_ticks) / 990000.0;
                 context.exhaust_flow_kg_s = charge.air_to_cylinders_kg /
@@ -1118,6 +1153,34 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.combustion.burned_fuel_kg(),
                     context.physical_crank->rpm(), by_cylinder[0],
                     by_cylinder[1], by_cylinder[2], by_cylinder[3]);
+        }
+        if (context.intake && context.physical_crank &&
+            context.ticks % 990000 == 0 && context.plant_window.last().valid) {
+            const auto &w = context.plant_window.last();
+            fprintf(stdout,
+                    "{\"type\":\"plant\",\"tick\":%lld,\"rpm\":%.1f,"
+                    "\"indicated_nm\":%.3f,\"friction_nm\":%.3f,"
+                    "\"pumping_nm\":%.3f,\"accessory_nm\":%.3f,"
+                    "\"brake_nm\":%.3f,\"brake_kw\":%.4f,"
+                    "\"imep_bar\":%.3f,\"bmep_bar\":%.3f,"
+                    "\"work_cycle_j\":%.2f,\"ve_ambient\":%.4f,"
+                    "\"ve_manifold\":%.4f,\"air_mg_cyl_cycle\":%.2f,"
+                    "\"fuel_g_s\":%.4f,\"bsfc\":%.1f,\"lambda_cyl\":%.3f,"
+                    "\"spark_deg\":%.2f,\"mbt_deg\":%.2f,"
+                    "\"spark_eff\":%.4f,\"residual\":%.4f,"
+                    "\"air_throttle_kg_s\":%.6f,\"air_cyl_kg_s\":%.6f}\n",
+                    context.ticks, w.mean_rpm, w.indicated_torque_nm,
+                    w.friction_torque_nm, w.pumping_torque_nm,
+                    w.accessory_torque_nm, w.brake_torque_nm, w.brake_power_kw,
+                    w.imep_bar, w.bmep_bar, w.work_per_cycle_j, w.ve_ambient,
+                    context.intake->last_ve_manifold(), w.air_mg_per_cyl_cycle,
+                    w.fuel_g_s, w.bsfc_g_kwh, w.lambda_cylinders,
+                    context.combustion.last_spark_advance_deg(),
+                    context.combustion.last_mbt_deg(),
+                    context.combustion.last_spark_efficiency(),
+                    context.combustion.last_residual_fraction(),
+                    context.intake->last_air_in_kg_s(),
+                    context.intake->last_air_to_cylinders_kg_s());
         }
         if (context.physical_crank && context.ticks % 990000 == 0)
             fprintf(stdout, "{\"type\":\"lambda\",\"tick\":%lld,"
@@ -1309,6 +1372,16 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
         snapshot.intake_available = true;
         snapshot.fuel_film_kg = context.intake->fuel_film_kg();
         snapshot.fuel_vapor_kg = context.intake->fuel_vapor_kg();
+        snapshot.air_throttle_kg_s = context.intake->last_air_in_kg_s();
+        snapshot.air_to_cylinders_kg_s = context.intake->last_air_to_cylinders_kg_s();
+        snapshot.manifold_air_mass_kg = context.intake->air_mass_kg();
+        snapshot.manifold_air_c = context.intake->air_temperature_c();
+        snapshot.ve_manifold_coefficient = context.intake->last_ve_manifold();
+        snapshot.spark_advance_deg = context.combustion.last_spark_advance_deg();
+        snapshot.mbt_deg = context.combustion.last_mbt_deg();
+        snapshot.spark_efficiency = context.combustion.last_spark_efficiency();
+        snapshot.residual_fraction = context.combustion.last_residual_fraction();
+        snapshot.plant_window = context.plant_window.last();
     }
     if (context.thermal) {
         snapshot.thermal_available = true;

@@ -2749,3 +2749,20 @@ proprietário e não define, por si só, a causa dos bits observados.
 - Próximo passo: separar telemetria física do log legado, investigar DTCs e
   guardas da ROM na partida física, e iniciar T2 (cabo e TPS duplo) com
   associação ADC/RAM confirmada no scanner e no inventário semântico.
+
+## Física da planta (GOAL_SEVEL_FISICA) — fases 1–4 parciais
+Escrito com ajuda de LLM (Claude). Detalhes, tabelas e divergências em
+`docs/SEVEL_PHYSICS_CALIBRATION.md`.
+
+- Fase 1: fórmulas F-01…F-57 como funções puras em `include/engine/physics/*.hpp`;
+  26 testes em `tests/physics_formulas_test.cpp` (valores de referência à mão).
+- Fase 2: telemetria publicada (`EmulatorSnapshot`, JSONL `{"type":"plant"}`,
+  `engine::PlantWindow` com janelas de 20 ciclos de 4π).
+- Fase 3: `sevel-dyno` (varredura a rotação constante) gera CSV com curva esperada
+  e erro; `DynoPi` (malha PI com anti-windup) testado, ainda não ligado ao `SimSession`.
+- Fase 4: `eta_v(N, p_m)` (F-18/F-22), eficiência indicada física (F-30..F-34, MBT por
+  Wiebe) ligadas como padrão (`--legacy-plant` volta ao modelo antigo). Plena carga:
+  59,8 kW (81 cv) a 6000 RPM, 131–132 N·m a 3000 RPM (antes 35 cv / 57 N·m).
+  Lenta quente com `--throttle-leak-mm2 3`: ~900–915 RPM, MAP ~33 kPa, λ≈1,00,
+  avanço ~8° (alvo da ROM 925 RPM; manual 850 ± 50).
+- Preset único da bancada: `tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 3`).

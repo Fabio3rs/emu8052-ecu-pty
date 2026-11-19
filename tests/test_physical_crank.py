@@ -50,7 +50,10 @@ assert int(ram47) > 0 and abs(int(ram47) * 25 - float(rpm)) < 50
 gaps = [json.loads(line) for line in log.splitlines()
         if line.startswith('{"type":"crank_gap"')]
 assert len(gaps) == int(missing)
-assert [event["position"] for event in gaps] == [58, 59] * (len(gaps) // 2)
+# The stop tick can fall between the two missing positions of the last gap (58 seen,
+# 59 not yet), so an odd list ending in 58 is valid; equality only held by coincidence.
+positions = [event["position"] for event in gaps]
+assert positions == ([58, 59] * (len(positions) // 2) + [58] * (len(positions) % 2)), positions
 assert all(a["tick"] < b["tick"] for a, b in zip(gaps, gaps[1:]))
 assert re.search(r"\[COSIM-RPM\] tick=\d+ physical_rpm=[\d.]+ "
                  r"ram47=[1-9]\d* pc=0EA5", log), log[-2000:]
@@ -59,7 +62,11 @@ no_starter, _ = run(1)
 assert float(no_starter[1]) == 0.0 and int(no_starter[3]) == 0
 assert int(no_starter[5]) == 0 and int(no_starter[6]) == 0
 
-coast, coast_log = run(198000, 3000000)
+# Old starter time: 198000 ticks. The cold engine now has oil-viscosity friction
+# (x1.56 at 20 C, F-43), so 0.2 s of starter no longer spins the wheel enough for the
+# ROM to latch a speed (RAM47 never becomes non-zero, so there is nothing to clear).
+# 300000 ticks (measured: RAM47 set, then cleared at tick 2.198 M) keeps the scenario.
+coast, coast_log = run(300000, 3000000)
 assert float(coast[1]) == 0.0 and int(coast[6]) == 0
 assert int(coast[3]) > 58
 # The ROM clears RAM47 when the last teeth stop arriving; the wheel may still

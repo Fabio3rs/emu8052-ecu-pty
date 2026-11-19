@@ -282,6 +282,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     if (config->throttle_leak_mm2 >= 0)
         intake_parameters.throttle_leak_area_m2 =
             static_cast<double>(config->throttle_leak_mm2) * 1e-6;
+    intake_parameters.ve_map = config->physical_plant;
     engine::IntakeFuel intake{intake_parameters};
     ecu_hw::SensorCircuitParameters sensor_parameters;
     sensor_parameters.battery_v = config->battery_v;
@@ -469,15 +470,17 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         loop.physical_crank = &physical_crank;
         loop.drivetrain = drivetrain ? &*drivetrain : nullptr;
         loop.physical_pty_realtime = config->physical_pty_realtime;
+        loop.physical_plant_friction_temp = config->physical_plant;
         loop.physical_input = &physical_input;
         if (config->tdc_reference_deg >= 0 || config->swap_ignition_coils ||
-            config->ethanol_percent != 0) {
+            config->ethanol_percent != 0 || config->physical_plant) {
             engine::CombustionParameters parameters;
             if (config->tdc_reference_deg >= 0)
                 parameters.tdc_phase_rad =
                     static_cast<double>(config->tdc_reference_deg) *
                     std::numbers::pi / 180.0;
             parameters.swap_coil_channels = config->swap_ignition_coils;
+            parameters.physical_efficiency = config->physical_plant;
             loop.combustion = engine::Combustion{parameters, fuel};
         }
         engine::ExhaustParameters exhaust_parameters;

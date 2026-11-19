@@ -5,13 +5,14 @@ import os
 import re
 import subprocess
 import sys
+from sevel_preset import BENCH_LEAK_MM2
 
 
 binary, firmware = sys.argv[1:3]
 base = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
         "--stop-ticks", "14000000", "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2),
         "--load-step-tick", "800000", "--load-nm", "24",
         "--lambda-adc-gain", "5", "--tps-bench-profile"]
 fault = ["--idle-contact-open-tick", "10000000",

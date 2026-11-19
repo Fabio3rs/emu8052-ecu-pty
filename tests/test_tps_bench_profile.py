@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+from sevel_preset import BENCH_LEAK_MM2
 
 
 # Active lambda loop = CC3 keeps toggling. The count follows intake/pumping
@@ -15,7 +16,7 @@ binary, firmware = sys.argv[1:3]
 base = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
         "--stop-ticks", "20000000", "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2),
         "--load-step-tick", "800000", "--load-nm", "24",
         "--lambda-adc-gain", "5"]
 
@@ -60,7 +61,7 @@ assert int(bench["TPS"]["ram6f"]) < int(default["TPS"]["ram6f"])
 # run settles inside that tolerance, not a requirement, so it is not asserted.
 for result in (default, bench):
     target = int(result["CRANK"]["ram46"]) * 25
-    assert abs(float(result["CRANK"]["rpm"]) - target) <= max(50.0, 0.05 * target)
+    assert abs(float(result["CRANK"]["rpm"]) - target) <= max(50.0, 0.05 * target), (result["CRANK"]["rpm"], target)
 
 # 9–12 mm spans approximately 18–25 degrees through the two-track overlap.
 # The earlier straight-line track 2 fit raised ROM TPS fault bits at 10/11 mm.

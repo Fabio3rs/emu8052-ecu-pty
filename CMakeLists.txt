@@ -175,6 +175,10 @@ endif()
 add_executable(emu8051-tty "src/cli_main.cpp")
 target_link_libraries(emu8051-tty emu8051-tty_lib)
 
+# Speed-controlled plant sweep with CSV comparison against expected curves.
+add_executable(sevel-dyno apps/sevel-dyno/main.cpp)
+target_link_libraries(sevel-dyno emu8051-tty_lib)
+
 if(ENABLE_SEVEL_MA17_LAB)
     find_package(Threads REQUIRED)
     if(ENABLE_SEVEL_MA17_LAB_GUI)

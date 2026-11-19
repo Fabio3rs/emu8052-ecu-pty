@@ -8,13 +8,14 @@ import os
 import re
 import statistics
 import subprocess
+import sys, os; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tests")); from sevel_preset import BENCH_LEAK_MM2
 
 
 def run(binary, firmware, reference_deg, rom_hash):
     args = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
             "--stop-ticks", "20000000", "--adc7-mv", "1232",
             "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-            "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+            "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2),
             "--load-step-tick", "800000", "--load-nm", "24",
             "--lambda-adc-gain", "5", "--tdc-reference-deg", str(reference_deg)]
     result = subprocess.run(args, env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},

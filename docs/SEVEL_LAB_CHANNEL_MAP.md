@@ -211,10 +211,29 @@ policy. These counters describe the session, not only the selected interval.
 The debug summary labels the accumulated `injector_pulses` value `INJ PULSES`.
 `CC3` names the electrical pin trace and its current level, not this counter.
 
-`volumetric_efficiency`, intake AFR, produced torque, produced power, fuel
-tank level, cylinder pressure and exhaust flow
-are not published by this snapshot. Their gauges must show `N/D` or remain
-absent; no widget may synthesize them from throttle angle or pulse count.
+Plant telemetry (GOAL_SEVEL_FISICA, LLM-written) is published by
+`EmulatorSnapshot` and by the `{"type":"plant"}` JSONL line, averaged over a
+window of 20 cycles (multiples of 4*pi of crank angle, never frames). Until the
+first window closes (`plant_window.valid == false`) the channels are `N/D`:
+
+| Channel | Snapshot field | Notes |
+|---|---|---|
+| VE (ambient reference) | `plant_window.ve_ambient` | sum(air to cylinders) / (rho_ref * Vd * cycles); rho_ref = ambient of the scenario (100 kPa, 20 C) |
+| VE (manifold coefficient) | `ve_manifold_coefficient` | instantaneous eta_v,m |
+| Indicated / friction / pumping / load / brake torque | `plant_window.*_torque_nm` | T_b = T_i - T_f - T_p - T_load |
+| Brake power | `plant_window.brake_power_kw` | P = T_b * omega |
+| IMEP / BMEP | `plant_window.imep_bar`, `bmep_bar` | |
+| BSFC | `plant_window.bsfc_g_kwh` | 0 (N/D) below 0.5 kW brake power |
+| Air per cylinder-cycle | `plant_window.air_mg_per_cyl_cycle` | |
+| Fuel | `plant_window.fuel_g_s`, `fuel_l_h` | |
+| Air through TBI / to cylinders | `air_throttle_kg_s` (legacy `air_in_kg_s`), `air_to_cylinders_kg_s` | TBI flow is signed |
+| Manifold air mass / temperature | `manifold_air_mass_kg`, `manifold_air_c` | `manifold_air_c` is the physical temperature; `intake_air_c` is the delayed ECU sensor |
+| Spark advance, MBT, spark efficiency, residual | `spark_advance_deg`, `mbt_deg`, `spark_efficiency`, `residual_fraction` | advance is deg BTDC measured from the spark event; depends on the candidate `tdc_phase_rad` |
+
+Torque/power gauges, the Torque/Power x RPM panel and the VE gauge in the GUI
+still need to be wired to these fields. Intake AFR, tank level, cylinder
+pressure and exhaust flow are not published; their gauges must show `N/D` or
+remain absent; no widget may synthesize them from throttle angle or pulse count.
 An instrument with a defined channel but no valid current reading shows `--`
 and its tooltip says `MISSING`; `N/D` is reserved for an undefined channel.
 Analog cursor rows follow the same rule: a defined signal without a valid

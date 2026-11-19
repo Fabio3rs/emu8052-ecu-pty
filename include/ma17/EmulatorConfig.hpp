@@ -70,6 +70,9 @@ struct EmulatorConfig {
     int coil_channel = -1;
     int tdc_reference_deg = -1;
     bool swap_ignition_coils = false;
+    // Calibrated plant: eta_v(N,p_m) map + physical indicated efficiency
+    // (GOAL_SEVEL_FISICA fase 4). --legacy-plant restores the old constant-VE plant.
+    bool physical_plant = true;
     int fluid_step_ticks = 990;
 };
 

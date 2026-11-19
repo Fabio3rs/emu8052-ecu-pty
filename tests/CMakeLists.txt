@@ -1,4 +1,4 @@
-add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp sevel_geometry_test.cpp sevel_scene_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp ma17_tachometer_test.cpp ma17_tps_circuit_test.cpp)
+add_executable(emu8051-tty_tests test.cpp adc_simulator_test.cpp cpu_hooks_test.cpp port_controller_test.cpp uart_scheduler_test.cpp xram_access_test.cpp crank_dynamics_test.cpp sevel_geometry_test.cpp sevel_scene_test.cpp throttle_assembly_test.cpp thermal_sensor_test.cpp intake_fuel_test.cpp ma17_tachometer_test.cpp ma17_tps_circuit_test.cpp physics_formulas_test.cpp)
 target_include_directories(emu8051-tty_tests SYSTEM PRIVATE
     ${PROJECT_SOURCE_DIR}/third_party/open-engine-sim/include)
 target_compile_definitions(emu8051-tty_tests PRIVATE
@@ -200,3 +200,6 @@ add_test(NAME PhysicalPower.RetainedXramAcrossKeyAndProcess
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_power_retention.py
             $<TARGET_FILE:emu8051-tty>
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+
+add_test(NAME Dyno.SweepCsvContract
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_dyno_sweep.py $<TARGET_FILE:sevel-dyno>)

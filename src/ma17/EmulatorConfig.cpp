@@ -159,6 +159,14 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                 continue;
             }
         }
+        if (strcmp(argv[index], "--physical-plant") == 0) {
+            config.physical_plant = true;
+            continue;
+        }
+        if (strcmp(argv[index], "--legacy-plant") == 0) {
+            config.physical_plant = false;
+            continue;
+        }
         if (index + 1 < argc &&
             strcmp(argv[index], "--throttle-leak-mm2") == 0) {
             errno = 0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ma17/AdcSimulator.hpp"
+#include "engine/PlantTelemetry.hpp"
 
 #include <array>
 #include <cstdint>
@@ -34,6 +35,18 @@ struct EmulatorSnapshot {
     bool intake_available = false;
     double fuel_film_kg = 0.0;
     double fuel_vapor_kg = 0.0;
+    // Plant telemetry (goal section 4). air_in_kg_s is the legacy name of
+    // air_throttle_kg_s (flow through the throttle body, signed).
+    double air_throttle_kg_s = 0.0;
+    double air_to_cylinders_kg_s = 0.0;
+    double manifold_air_mass_kg = 0.0;
+    double manifold_air_c = 0.0; // physical air temperature; intake_air_c is the delayed ECU sensor
+    double ve_manifold_coefficient = 0.0;
+    double spark_advance_deg = 0.0; // last event, degrees BTDC
+    double mbt_deg = 0.0;
+    double spark_efficiency = 0.0;
+    double residual_fraction = 0.0;
+    engine::PlantWindowResult plant_window{}; // last completed 20-cycle window
     double tps_track1_v = 0.0;
     double tps_track2_v = 0.0;
     double lambda = 0.0;

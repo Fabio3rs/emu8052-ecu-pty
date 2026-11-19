@@ -91,10 +91,16 @@ with tempfile.TemporaryDirectory() as directory:
     assert counts[1][1] > counts[0][1], counts
     motion = {}
     for view, frames in captures.items():
-        changed = sum(first != second for first, second in
-                      zip(frames[0], frames[1]))
-        fraction = changed / len(frames[0])
-        assert fraction > 0.05, (view, changed, fraction)
+        # Old: only the first pair (1.50 M vs 1.55 M) had to change > 5 %. 50 ms is an
+        # integer number of crank turns when the engine runs at 1200 rpm (360 deg per
+        # 50 ms), so the calibrated plant can alias that pair to an identical frame
+        # (measured 0.8 % in the profile view). The property is that the mechanical
+        # view changes as the engine turns: the best consecutive pair must change > 5 %.
+        fractions = [sum(a != b for a, b in zip(first, second)) / len(first)
+                     for first, second in zip(frames, frames[1:])]
+        fraction = max(fractions)
+        changed = round(fraction * len(frames[0]))
+        assert fraction > 0.05, (view, fractions)
         motion[view] = f"{changed}/{len(frames[0])} ({fraction:.1%})"
     print(f"[LAB-MOTION] ticks={ticks} cc3/burns={counts} "
           f"mechanical_changed={motion}")

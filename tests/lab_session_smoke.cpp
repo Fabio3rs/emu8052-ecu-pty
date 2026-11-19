@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
                              "--idle-min-stop-mrad",
                              "5",
                              "--throttle-leak-mm2",
-                             "9",
+                             "8" /* BENCH_LEAK_MM2, see tests/sevel_preset.py */,
                              "--load-step-tick",
                              "800000",
                              "--load-nm",

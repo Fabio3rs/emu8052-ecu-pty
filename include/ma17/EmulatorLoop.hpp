@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include "engine/Combustion.hpp"
+#include "engine/PlantTelemetry.hpp"
 #include "engine/ExhaustLambda.hpp"
 #include "engine/IdleActuator.hpp"
 #include "ecu_hw/Ma17IgnitionStage.hpp"
@@ -88,6 +89,9 @@ struct EmulatorLoopContext {
     ecu_hw::Ma17SensorCircuit *sensor_circuit = nullptr;
     engine::IntakeFuel *intake = nullptr;
     engine::Combustion combustion{};
+    engine::PlantWindow plant_window{};
+    // Oil-temperature friction (F-43) follows the coolant temperature when true.
+    bool physical_plant_friction_temp = false;
     double coolant_heat_pending_j = 0.0;
     engine::ExhaustLambda exhaust{};
     bool pump_relay_p34_candidate = false;

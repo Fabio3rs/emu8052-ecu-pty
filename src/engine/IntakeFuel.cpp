@@ -74,8 +74,24 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
         std::copysign(area_m2 * std::sqrt(2.0 * source_density *
                                           std::abs(pressure_difference_pa)),
                       pressure_difference_pa);
+    double eta_vm = parameters_.volumetric_efficiency;
+    if (parameters_.ve_map) {
+        const double t_k = air_temperature_c + kelvin_offset;
+        const double p_m = std::max(1000.0, pressure_pa());
+        const double r_c = parameters_.geometry.compression_ratio;
+        eta_vm = physics::eta_v_wot(parameters_.geometry, parameters_.ve_curve, rpm, t_k) *
+                 physics::residual_correction(parameters_.exhaust_pressure_pa, p_m, r_c) /
+                 physics::residual_correction(parameters_.exhaust_pressure_pa,
+                                              parameters_.wot_manifold_pressure_pa, r_c);
+        eta_vm = std::clamp(eta_vm, 0.0, 1.2);
+    }
     const double air_out_kg_s = manifold_density * parameters_.displacement_m3 *
-                                rpm / 120.0 * parameters_.volumetric_efficiency;
+                                rpm / 120.0 * eta_vm;
+    last_ve_manifold_ = eta_vm;
+    last_ve_ambient_ =
+        density_ambient > 0.0 && rpm > 0.0
+            ? air_out_kg_s / (density_ambient * parameters_.displacement_m3 * rpm / 120.0)
+            : 0.0;
     IntakeStep result;
     result.air_in_kg = std::max(-old_air_mass_kg, throttle_flow_kg_s * dt_s);
     result.air_to_cylinders_kg = std::min(old_air_mass_kg, air_out_kg_s * dt_s);
@@ -85,6 +101,7 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
     air_mass_kg_ =
         old_air_mass_kg + result.air_in_kg - result.air_to_cylinders_kg;
     last_air_in_kg_s_ = result.air_in_kg / dt_s;
+    last_air_cyl_kg_s_ = result.air_to_cylinders_kg / dt_s;
     air_in_total_kg_ += result.air_in_kg;
     air_delivered_total_kg_ += result.air_to_cylinders_kg;
 

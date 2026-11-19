@@ -8,11 +8,12 @@ usage: p11_tach_trace.py <emu8051-tty> <rom.bin> <out-dir>
 import csv, math, os, statistics, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from sevel_preset import BENCH_LEAK_MM2
 
 TICKS_PER_S = 990000.0
 BASE = ["--8052", "--physical-crank", "--starter-ticks", "495000", "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9", "--lambda-adc-gain", "5"]
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2), "--lambda-adc-gain", "5"]
 # name: (extra args, stop tick, (window start, window end))
 SCENARIOS = {
     "start": ([], 1500000, (300000, 900000)),

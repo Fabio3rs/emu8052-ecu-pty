@@ -70,16 +70,27 @@ int main(int argc, char **argv) {
         argv[0],  argv[1],        "--physical-crank", "--starter-ticks",
         "495000", "--stop-ticks", "1485000", "--adc7-mv", "1232",
         "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+        "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "8" /* BENCH_LEAK_MM2 */,
         "--load-step-tick", "800000", "--load-nm", "24",
         "--lambda-adc-gain", "5"};
     if (adc_fault)
         words.insert(words.end(), {"--tps1-high-tick", "500000",
                                    "--tps1-restore-tick", "700000"});
+    if (drivetrain_cli) {
+        // The scenario load (24 N.m, tuned for the old plant) plus a 10 % clutch
+        // (20 N.m) exceeds what the calibrated engine (22 N.m indicated at idle)
+        // can pull, so the car never moves. The test checks drivetrain telemetry
+        // consistency, not load, so the bench load is reduced to 1 N.m here (the CLI rejects 0) (classe:
+        // numero magico do modelo simplificado, docs/SEVEL_PHYSICS_CALIBRATION.md).
+        for (std::size_t i = 0; i + 1 < words.size(); ++i)
+            if (words[i] == "--load-nm") words[i + 1] = "1";
+    }
+    // (see above) the clutch capacity is reduced from 200 to 40 N.m for the same
+    // reason: 10 % of 200 N.m drags the calibrated idle engine to a stall.
     if (drivetrain_cli)
         words.insert(words.end(), {"--drivetrain", "--gear", "1",
             "--clutch-percent", "10", "--vehicle-mass-kg", "1000",
-            "--clutch-max-nm", "200"});
+            "--clutch-max-nm", "40"});
     std::vector<char *> harness_argv(words.size());
     for (std::size_t index = 0; index < words.size(); ++index)
         harness_argv[index] = words[index].data();

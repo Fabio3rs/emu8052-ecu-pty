@@ -4,6 +4,8 @@
 
 #include "engine/IntakeFuel.hpp"
 #include "engine/FuelBlend.hpp"
+#include "engine/physics/Combustion.hpp"
+#include "engine/physics/Volumetric.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,6 +31,17 @@ struct CombustionParameters {
     // Relative coil charge threshold is an engineering estimate, not a
     // measured ignition probability. The observed nominal minimum is 0.817.
     double full_burn_strength = 0.80;
+    // false: legacy fixed 0.24 efficiency, optimum fixed at 11.5 deg BTDC.
+    // true: eta_i = eta_ref * g(lambda) * f_av * f_dil (F-30..F-34).
+    bool physical_efficiency = false;
+    double eta_ref = 0.36;        // calibrado: alvo 133 N.m @3000 (F-31: 0,34-0,38)
+    double burn_duration0_deg = 60.0; // calibrado: F-33 faixa 50-75 deg
+    double burn_ref_rpm = 3000.0;     // referencia de F-33
+    double burn_residual_gain = 1.2;  // calibrado: MBT na lenta ~19 deg
+    double spark_k = 3.5e-4;      // F-33 (10 deg de atraso -> -3,5%)
+    double dilution_k = 1.0;      // calibrado (F-34)
+    double dilution_x0 = 0.10;    // calibrado (F-34)
+    double compression_ratio = 9.2; // manual B.500.837 p.5
 };
 
 // Provisional four-cylinder, wasted-spark event model. Coil 0 serves 1/4,
@@ -54,6 +67,18 @@ class Combustion {
         pending_fuel_kg_[cylinder] += charge.fuel_to_cylinders_kg;
     }
 
+    // Operating point for the physical efficiency model (rpm, p_m, p_e).
+    void set_operating_point(double rpm, double manifold_pa, double exhaust_pa) {
+        rpm_ = rpm;
+        manifold_pa_ = manifold_pa;
+        exhaust_pa_ = exhaust_pa;
+    }
+    double last_spark_advance_deg() const { return last_advance_deg_; }
+    double last_mbt_deg() const { return last_mbt_deg_; }
+    double last_spark_efficiency() const { return last_eta_i_; }
+    double last_residual_fraction() const { return last_xr_; }
+    double last_lambda() const { return last_lambda_; }
+
     CombustionEvent spark(double crank_angle_rad, unsigned channel,
                           double spark_strength = 1.0) {
         constexpr double pi = 3.14159265358979323846;
@@ -75,7 +100,8 @@ class Combustion {
             return event;
         const unsigned expected_channel =
             (slot % 2) ^ static_cast<unsigned>(parameters_.swap_coil_channels);
-        if (std::abs(phase) > 0.60 || channel != expected_channel ||
+        if (std::abs(phase) > (parameters_.physical_efficiency ? 0.85 : 0.60) ||
+            channel != expected_channel ||
             fuel_kg <= 0.0 || !std::isfinite(spark_strength) ||
             spark_strength <= 0.0) {
             ++missed_sparks_;
@@ -93,10 +119,32 @@ class Combustion {
         const double burn_fraction = std::clamp(
             spark_strength / parameters_.full_burn_strength, 0.0, 1.0);
         const double burned_fuel_kg = fuel_kg * burn_fraction;
+        double efficiency = indicated_efficiency * phase_efficiency;
+        if (parameters_.physical_efficiency) {
+            const double afr = fuel_.stoichiometric_air_fuel_ratio();
+            last_lambda_ = pending_lambda(event.air_kg, event.fuel_kg, afr);
+            last_advance_deg_ = -phase * 180.0 / pi;
+            last_xr_ = physics::residual_fraction(
+                exhaust_pa_, std::max(1000.0, manifold_pa_),
+                parameters_.compression_ratio);
+            const double dur = physics::burn_duration_deg(
+                parameters_.burn_duration0_deg, std::max(rpm_, 1.0),
+                parameters_.burn_ref_rpm, parameters_.burn_residual_gain,
+                last_xr_, 1.0);
+            last_mbt_deg_ = physics::mbt_deg(dur);
+            efficiency = parameters_.eta_ref *
+                         physics::f_lambda_fuel(last_lambda_) *
+                         physics::f_advance(last_advance_deg_ - last_mbt_deg_,
+                                            parameters_.spark_k) *
+                         std::max(0.0, physics::f_dilution(
+                                           last_xr_, parameters_.dilution_k,
+                                           parameters_.dilution_x0));
+            last_eta_i_ = efficiency;
+        }
         pulse_torque_nm_ =
             fuel_kg * fuel_.lower_heating_value_j_kg() *
-            indicated_efficiency *
-            std::min(1.0, spark_strength) * phase_efficiency / expansion_rad;
+            efficiency *
+            std::min(1.0, spark_strength) / expansion_rad;
         pulse_end_rad_ = crank_angle_rad + expansion_rad;
         burned_fuel_kg_ += burned_fuel_kg;
         event.burned_fuel_kg = burned_fuel_kg;
@@ -121,11 +169,15 @@ class Combustion {
             throw std::out_of_range("invalid ignition channel");
         return channel ^ static_cast<unsigned>(parameters_.swap_coil_channels);
     }
+    double stoichiometric_afr() const { return fuel_.stoichiometric_air_fuel_ratio(); }
     double fuel_energy_j_per_kg() const {
         return fuel_.lower_heating_value_j_kg();
     }
 
   private:
+    static double pending_lambda(double air, double fuel, double afr) {
+        return fuel > 0.0 ? air / (fuel * afr) : 99.0;
+    }
     static unsigned cylinder_for_slot(unsigned slot) {
         constexpr std::array<unsigned, 4> order{0, 2, 3, 1};
         return order[slot];
@@ -147,6 +199,9 @@ class Combustion {
     double pulse_torque_nm_ = 0.0;
     double pulse_end_rad_ = 0.0;
     double burned_fuel_kg_ = 0.0;
+    double rpm_ = 0.0, manifold_pa_ = 100000.0, exhaust_pa_ = 100000.0;
+    double last_advance_deg_ = 0.0, last_mbt_deg_ = 0.0, last_eta_i_ = 0.0,
+           last_xr_ = 0.0, last_lambda_ = 0.0;
     unsigned long long burns_ = 0;
     std::array<unsigned long long, 4> burns_by_cylinder_{};
     unsigned long long missed_sparks_ = 0;

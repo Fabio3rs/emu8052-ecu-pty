@@ -50,6 +50,9 @@ class CrankDynamics {
     double inertia_kg_m2() const { return parameters_.inertia_kg_m2; }
     double rpm() const;
     double friction_torque_nm() const;
+    // Oil-temperature multiplier on the running friction (1.0 = hot, calibrated).
+    void set_friction_scale(double scale) { friction_scale_ = scale; }
+    double friction_scale() const { return friction_scale_; }
     // Starter torque at the crank for the current speed; zero once the
     // freewheel overruns (crank faster than the pinion could drive it).
     double starter_torque_at_crank_nm() const;
@@ -61,6 +64,7 @@ class CrankDynamics {
     double angle_rad_ = 0.0;
     double speed_rad_s_ = 0.0;
     long long crossed_positions_ = 0;
+    double friction_scale_ = 1.0;
 };
 
 } // namespace engine

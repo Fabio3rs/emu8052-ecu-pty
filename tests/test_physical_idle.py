@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+from sevel_preset import BENCH_LEAK_MM2
 
 
 binary, firmware = sys.argv[1:3]
@@ -14,7 +15,11 @@ base = [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
 # the blade on its stop; with 0 mm2 the warm engine cannot sustain idle once
 # pumping work is modelled. 8 mm2 gives ~925 rpm (warm ROM target) with the
 # stem extended, so the ECU keeps authority in both directions.
-LEAK_MM2 = 8
+# This scenario runs without --tps-bench-profile, where the ROM's closed-throttle
+# reference differs and the warm idle with the shared 8 mm2 preset sits at
+# 1075 rpm (ROM target 925, stem on the retracted stop = out of authority).
+# 6 mm2 keeps the ROM in authority. Old value: 8 (old plant, ~925 rpm).
+LEAK_MM2 = 6
 
 invalid = subprocess.run(base + ["--idle-contact-p46"],
                          env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
@@ -229,15 +234,19 @@ assert recovered_tps["diag_f84e"] == "0"
 assert recovered_states[-1]["contact"]
 assert recovered_states[-1]["angle_rad"] == recovered_states[-1]["stop_rad"]
 assert recovered_states[-1]["ram60"] < open_states[-1]["ram60"]
-assert hot_states[-1]["stop_rad"] == 0.04
+assert hot_states[-1]["stop_rad"] == 0.04, hot_states[-1]
 assert int(hot_tps["ram60"]) < 40 and int(hot_tps["ram66"]) < 95
 assert hot_tps["diag_f84e"] == "8"
-assert hot_five_states[-1]["stop_rad"] == 0.005
-assert hot_ten_states[-1]["stop_rad"] == 0.01
+# Old: stop_rad == min stop exactly after 4 M ticks. The calibrated plant needs less
+# idle air, and the ROM retracts the stem toward the stop asymptotically (measured
+# 0.005509 rad vs the 0.005 stop at 3.96 M ticks, stem 5e-5 m). The property is that
+# the stop is approached from above and never crossed, within 1.5 mrad here.
+assert 0.005 <= hot_five_states[-1]["stop_rad"] < 0.0065, hot_five_states[-1]
+assert 0.01 <= hot_ten_states[-1]["stop_rad"] < 0.0115, hot_ten_states[-1]
 assert hot_five_tps["diag_f84e"] == "0"
 assert hot_ten_tps["diag_f84e"] == "0"
 assert hot_ten_tps["ram6f"] == "65"
-assert float(hot_five_tps["rpm"]) < float(hot_ten_tps["rpm"])
+assert float(hot_five_tps["rpm"]) < float(hot_ten_tps["rpm"]), (hot_five_tps["rpm"], hot_ten_tps["rpm"])
 
 
 def summary_with_trace(trace):
@@ -283,7 +292,7 @@ def pedal_at_speed(speed):
         [binary, firmware, "--physical-crank", "--starter-ticks", "495000",
          "--stop-ticks", "13000000", "--adc7-mv", "1232",
          "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c", "90",
-         "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", "9",
+         "--idle-min-stop-mrad", "5", "--throttle-leak-mm2", str(BENCH_LEAK_MM2),
          "--load-step-tick", "800000", "--load-nm", "24",
          "--lambda-adc-gain", "5", "--pedal-step-tick", "10000000",
          "--pedal-release-tick", "12000000", "--pedal-mm", "8",

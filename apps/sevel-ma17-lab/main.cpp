@@ -272,7 +272,7 @@ int main(int argc, char **argv) {
             {"--coolant-c", "90"},
             {"--idle-min-stop-mrad", "5"},
             {"--idle-motor-speed-mm-s", "50"},
-            {"--throttle-leak-mm2", "9"},
+            {"--throttle-leak-mm2", "8"}, // kBenchThrottleLeakMm2: calibrated plant, docs/SEVEL_PHYSICS_CALIBRATION.md
             {"--lambda-adc-gain", "5"},
         }};
         for (const auto &[option, value] : values) {

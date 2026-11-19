@@ -132,3 +132,31 @@ Bateria: 12 V 55 Ah 255 A (60 Ah 320 A com ar-condicionado). Curvas característ
 **Lacunas (não estão neste material):** relação coroa/pinhão (Z coroa/Z pinhão) do conjunto 1581 cm³; resistência interna e estado da bateria no modelo; temperatura (dados só a 20 °C). Sem a relação, o torque e a rotação do virabrequim **não** podem ser derivados destes números.
 
 **Implementado em 2026-11-18** (ver `docs/SEVEL_STARTER_IDLE_CALIBRATION.md`). Estado anterior ao ajuste — **Implicação para o modelo (`CrankDynamics`):** o torque de partida atual é constante (50 N·m no virabrequim, sem depender da rotação e sem roda livre). O motor série do manual tem torque decrescente com a rotação e a roda livre impede que o arranque acelere o motor acima da rotação do pinhão. Com torque constante, manter o arranque acionado faz a rotação subir sem limite (medido: 5788 rpm em 5 s).
+
+
+## Parâmetros da planta física (GOAL_SEVEL_FISICA)
+
+| Parâmetro | Valor | Unidade | Origem |
+|---|---|---|---|
+| Diâmetro × curso | 86,4 × 67,4 | mm | manual p.5, 7 |
+| Taxa de compressão | 9,2 | — | manual p.5 |
+| Comprimento da biela | 127 | mm | estimativa de literatura (não está no manual) |
+| Desaxamento do pino | 0 (candidato 1 mm) | mm | manual p.10 ambíguo |
+| `VeCurveParams::eta_max` | 1,2542 | — | calibrado: 131–133 N·m a 3000 |
+| `cb` / `nb` | 0,41777 / 3598,1 | —/RPM | calibrado: perda em baixa rotação (IVC 35° ABDC, manual p.14); âncora η_v(500 RPM) ≈ 0,80 para a partida |
+| `z0` / `kz` | 0,29166 / 2,2073 | — | calibrado: 82 cv a 6000 |
+| `valve_d_m` | 39,5 | mm | manual p.11 |
+| `ci` | 0,35 | — | estimativa de literatura (Taylor) |
+| `wot_manifold_pressure_pa` | 95 000 | Pa | calibrado (referência de f_res) |
+| `eta_ref` (η_i) | 0,36 | — | calibrado: 133 N·m (faixa F-31 0,34–0,38) |
+| `burn_duration0_deg` / `burn_residual_gain` | 60° a 3000 RPM / 1,2 | ° / — | calibrado: MBT ~20° na lenta (F-33) |
+| `spark_k` | 3,5e-4 | 1/°² | F-33 |
+| `dilution_k`, `dilution_x0` | 1,0 / 0,10 | — | estimativa (F-34) |
+| g(λ) | picos 0,875 (+5,5%) e 1,10 (+3%), queda acima de 1,45 | — | calibrado: propriedades de F-32 |
+| Atrito (`FrictionParams`) | c0=0,95 bar, c1=0,06 bar·s/m, c2=0,0035 bar·s²/m² | — | calibrado: 12,6–16 N·m na lenta e 25–35 N·m a 6000 (F-42) |
+| Ventilador | liga 92 / desliga 87 | °C | manual p.17 (centros) |
+| Termostato | 87 → 98 | °C | manual p.17 (centros) |
+| Embreagem | μ·F·n·r_e, r_e = 81,8 mm | mm | manual (Ø 190/134), F-49 |
+
+
+Óleo (F-43): ν40 = 160 cSt, ν100 = 19 cSt, parcela hidrodinâmica 30%, expoente 0,35 (estimativas de literatura para 20W50). Detalhes e resultados em `docs/SEVEL_PHYSICS_CALIBRATION.md`.

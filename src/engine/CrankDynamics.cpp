@@ -103,7 +103,7 @@ double CrankDynamics::starter_torque_at_crank_nm() const {
 }
 
 double CrankDynamics::friction_torque_nm() const {
-    return parameters_.running_friction_nm +
+    return friction_scale_ * parameters_.running_friction_nm +
            parameters_.viscous_friction_nm_per_rad_s * speed_rad_s_;
 }
 
