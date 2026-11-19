@@ -153,6 +153,12 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   (valor baixo = quente: 19 a 90 °C), o de 62h na faixa ambiente (114 a 24 °C).
 - Memória de falhas: XRAM F84Eh..F850h (24 bits), contadores F851h..F85Bh (confirma a falha ao chegar a 0Ah), tabela de
   registros em `6E27h` (3 bytes por falha) copiada para XRAM CDh..CFh, `515Bh` apaga F84Eh..F860h por comando 05h.
+- **Salvar/restaurar da correção de longo prazo** (`1722h`..`176Dh`, IRAM A7h-ABh): quando `RAM_27.6` está ligado e `B.1` limpo, o byte XRAM F86Ch (correção de
+  combustível de longo prazo, posição 5 da coleta F4) é copiado para a IRAM superior @AAh; após uma contagem regressiva em IRAM @97h (decrementada com
+  `RAM_2D.5` e `.6`) e `RAM_29.5` ligado, o valor salvo é escrito de volta em F86Ch. É a única escrita direta de F86Ch na ROM, um mecanismo de
+  congelar/restaurar a adaptação, com semântica das condições (`27h.6`, `2Fh.1`) não identificada. Demais variáveis adaptativas da coleta: F80Ch
+  (escrita em `19D0h`), F83Dh (inicialização no reset, `0C86h` com valor lido da ROM por `MOVC`, e escrita em `2491h`) e F869h (somente leituras diretas). Varredura mecânica dos padrões
+  `MOV R0/R1,#addr` + `MOVX`; escritas via ponteiros calculados podem não aparecer.
 - Não foi encontrada rotina de autoaprendizado de TPS mínimo/máximo nem adaptação de combustível que dependa do tempo
   de funcionamento, além do contador de limite da tabela lambda (XRAM F8E8h) e das posições do inventário
   (correção de longo prazo, aditivo de marcha lenta). Busca textual no assembly, não varredura semântica completa.
@@ -313,6 +319,30 @@ Os bits sao reais (lidos da XRAM retida). A coluna de DTC e a decodificacao inge
 | ADC2 (ar) | 2.8 | 143 | 19 | 906.1 |
 | ADC2 (ar) | 3.5 | 179 | 19 | 906.7 |
 
+### Tabela P11 - reinicio no meio da execucao (marcha lenta, reboot a 30 M ticks; janelas 22-30 M antes e 50-60 M depois)
+
+| caso | RPM antes | RPM depois | avanco antes/depois [graus] | lambda antes/depois | bytes retidos F800h-FBFFh diferentes do caso sem reboot |
+|---|---:|---:|---|---|---:|
+| no_reboot | 908.6 | 912.1 | 8.62 / 8.43 | 1.004 / 1.006 | 0 |
+| warm_reboot_30M | 908.6 | 934.1 | 8.62 / 8.21 | 1.004 / 1.006 | 42 |
+| cold_reboot_30M | 908.6 | 905.8 | 8.62 / 8.71 | 1.004 / 1.005 | 30 |
+
+Bytes retidos que diferem apos o reinicio frio (sem estado retido) em relacao ao caso sem reboot: F80B:3C->3B F80C:49->44 F82C:04->0E F82D:35->2F F831:3C->3B F832:3B->3A F833:3B->3A F834:3B->3A F836:04->0F F83D:07->0C F840:8D->87 F841:8D->87 F842:8D->87 F843:8D->87 F844:8D->87 F845:8D->87 F848:3B->3A F867:70->C4 F868:FD->AD F869:01->00 F888:79->88 F897:10->1F F8D5:01->00 F8E8:00->01 F8E9:1E->08 F8EA:00->06 F8EB:1E->08 F8EC:A7->D2 F8F5:26->3B F8FE:9C->98
+
+### Tabela P12 - plena carga apos reinicio a 5 M ticks (antes do degrau de pedal a 12 M)
+
+| RPM | caso | potencia [kW] | avanco [graus] | lambda |
+|---:|---|---:|---:|---:|
+| 1500 | no_reboot | 14.81 | 7.12 | 0.9995 |
+| 1500 | warm_reboot_5M | 14.81 | 7.12 | 0.9985 |
+| 1500 | cold_reboot_5M | 14.83 | 7.13 | 0.9985 |
+| 3000 | no_reboot | 31.31 | 18.56 | 1.0052 |
+| 3000 | warm_reboot_5M | 31.31 | 18.57 | 1.0054 |
+| 3000 | cold_reboot_5M | 31.34 | 18.57 | 1.0039 |
+| 6000 | no_reboot | 39.21 | 29.35 | 0.9959 |
+| 6000 | warm_reboot_5M | 39.24 | 29.34 | 0.9951 |
+| 6000 | cold_reboot_5M | 39.24 | 29.34 | 0.9950 |
+
 Leitura dos resultados:
 
 1. **Reconhecimento de plena carga (cadeia causal medida).** No modelo elétrico atual a trilha 2 do TPS chega a 4,5 V a 90°
@@ -331,11 +361,18 @@ Leitura dos resultados:
    6000 RPM (`INVALID:stall`), anomalia não explicada: o limiar `ROM[721Dh]=27h` em IRAM 63h cai nesta faixa (~75 °C);
    hipótese, não demonstrada, de que a troca da matriz de avanço/combustível nesse limiar desestabiliza a marcha lenta
    da bancada (ver G).
-5. **Histórico e reinícios:** marcha lenta livre de 6, 12 e 24 M ticks, sequência de pontos encadeados 3000 → 6000 → 1500 → 3000
-   com XRAM retida recarregada em partida morna (POF = 0) e repetição do ponto: potência varia ≤ 0,6 %, avanço ≤ 0,03° (Tabela P5,
-   Tabela 6). A reinicialização **sem** estado retido é o próprio ponto "fresh_saved" (partida fria de RAM); a diferença
-   para as mornas é desprezível. Itens 3 e 5 dos experimentos temporais (carga parcial prolongada, longas operações em
-   várias temperaturas) foram cobertos apenas por esta cadeia, não por horas de simulação.
+5. **Histórico e reinícios (itens 6 e 7 dos experimentos temporais, agora como experimentos separados):**
+   - *Item 6, reinício com estado retido:* `MA17_WARM_REBOOT_TICK` (reinício da CPU preservando toda a RAM) no meio da marcha
+     lenta e partida morna encadeada (Tabela P5, POF = 0). Marcha lenta 908,6 → 934,1 RPM (+2,8 %), avanço 8,62° → 8,21°; plena carga
+     após reboot a 5 M ticks: |Δpotência| ≤ 0,03 kW (Tabela P12).
+   - *Item 7, reinício sem estado retido:* nova variável `MA17_COLD_REBOOT_TICK` (reinício com a XRAM F800h–FBFFh zerada e POF = 1).
+     Marcha lenta 908,6 → 905,8 RPM; plena carga após o reboot: |Δpotência| ≤ 0,04 kW, |Δavanço| ≤ 0,01° (Tabela P12).
+   - Os dois reinícios deixam 42 (morno) e 30 (frio) bytes retidos diferentes do caso sem reboot (Tabela P11), com destaque
+     para F80Ch (estado do integrador lambda), F83Dh (posição do atuador de marcha lenta: 07h → 0Ch no reboot frio),
+     F869h (adaptação de purga) e F8E8h/F8E9h (contador da tabela lambda). Não variaram F86Ch (correção de longo prazo) e F86Fh
+     (aditivo de marcha lenta). A potência de plena carga não depende desse estado (≤ 0,1 %).
+   - Histórico por tempo de marcha lenta (6, 12, 24 M ticks) e temperatura da água (60/105 °C): ≤ 2 % (Tabelas 6 e P3). Carga parcial
+     prolongada e longas operações em várias temperaturas: cobertas só por esta cadeia de pontos, não por horas simuladas.
 6. **Autoadaptação não demonstrada:** nenhum caso exibiu a cadeia estado → rotina → avanço/combustível → potência, com exceção
    do limiar de TPS2 do item 1 (que é condição de sensor, não adaptação).
 
@@ -400,7 +437,7 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
   nenhum foi observado até 100 % de pedal, mas só com TPS2 abaixo de F0h ou forçado a 5 V.
 - Estol com água a 75 °C na bancada (60 e 105 °C não estolam): mecanismo desconhecido (limiar `ROM[721Dh]=27h` é hipótese).
 - Decodificação completa do deslocamento R7 da tabela de DTC `6E27h`; polaridade física dos divisores NTC e curvas reais.
-- Reinicialização com e sem RAM retida (item 6 e 7 dos experimentos temporais) e histórico de longa duração.
+- Histórico de longa duração (horas) e carga parcial prolongada; a lógica de congelar/restaurar F86Ch (`1722h`) não teve suas condições (`27h.6`, `2Fh.1`) decodificadas.
 - Temperatura de admissão real do carro em plena carga (modelo térmico não validado).
 - Avanço real do motor (PMS físico) e MBT medido em dinamômetro.
 - Canal P5.0/P5.1 e atrasos do estágio de ignição: só a hipótese vigente foi mantida, sem teste novo.

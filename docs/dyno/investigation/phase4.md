@@ -153,3 +153,27 @@ Os bits sao reais (lidos da XRAM retida). A coluna de DTC e a decodificacao inge
 | ADC2 (ar) | 2.2 | 113 | 19 | 909.5 |
 | ADC2 (ar) | 2.8 | 143 | 19 | 906.1 |
 | ADC2 (ar) | 3.5 | 179 | 19 | 906.7 |
+
+### Tabela P11 - reinicio no meio da execucao (marcha lenta, reboot a 30 M ticks; janelas 22-30 M antes e 50-60 M depois)
+
+| caso | RPM antes | RPM depois | avanco antes/depois [graus] | lambda antes/depois | bytes retidos F800h-FBFFh diferentes do caso sem reboot |
+|---|---:|---:|---|---|---:|
+| no_reboot | 908.6 | 912.1 | 8.62 / 8.43 | 1.004 / 1.006 | 0 |
+| warm_reboot_30M | 908.6 | 934.1 | 8.62 / 8.21 | 1.004 / 1.006 | 42 |
+| cold_reboot_30M | 908.6 | 905.8 | 8.62 / 8.71 | 1.004 / 1.005 | 30 |
+
+Bytes retidos que diferem apos o reinicio frio (sem estado retido) em relacao ao caso sem reboot: F80B:3C->3B F80C:49->44 F82C:04->0E F82D:35->2F F831:3C->3B F832:3B->3A F833:3B->3A F834:3B->3A F836:04->0F F83D:07->0C F840:8D->87 F841:8D->87 F842:8D->87 F843:8D->87 F844:8D->87 F845:8D->87 F848:3B->3A F867:70->C4 F868:FD->AD F869:01->00 F888:79->88 F897:10->1F F8D5:01->00 F8E8:00->01 F8E9:1E->08 F8EA:00->06 F8EB:1E->08 F8EC:A7->D2 F8F5:26->3B F8FE:9C->98
+
+### Tabela P12 - plena carga apos reinicio a 5 M ticks (antes do degrau de pedal a 12 M)
+
+| RPM | caso | potencia [kW] | avanco [graus] | lambda |
+|---:|---|---:|---:|---:|
+| 1500 | no_reboot | 14.81 | 7.12 | 0.9995 |
+| 1500 | warm_reboot_5M | 14.81 | 7.12 | 0.9985 |
+| 1500 | cold_reboot_5M | 14.83 | 7.13 | 0.9985 |
+| 3000 | no_reboot | 31.31 | 18.56 | 1.0052 |
+| 3000 | warm_reboot_5M | 31.31 | 18.57 | 1.0054 |
+| 3000 | cold_reboot_5M | 31.34 | 18.57 | 1.0039 |
+| 6000 | no_reboot | 39.21 | 29.35 | 0.9959 |
+| 6000 | warm_reboot_5M | 39.24 | 29.34 | 0.9951 |
+| 6000 | cold_reboot_5M | 39.24 | 29.34 | 0.9950 |

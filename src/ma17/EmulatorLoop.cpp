@@ -1612,6 +1612,18 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             std::exit(2);
         }
     }
+    // MA17_COLD_REBOOT_TICK=N: reboot at tick N with the retained XRAM (F800h..FBFFh) wiped and
+    // POF set, i.e. a power-on start without battery-backed state (CURVES_STUDY experiment 7).
+    long long cold_reboot_tick = 0;
+    if (const char *setting = std::getenv("MA17_COLD_REBOOT_TICK")) {
+        char *end = nullptr;
+        errno = 0;
+        cold_reboot_tick = std::strtoll(setting, &end, 10);
+        if (!*setting || *end != '\0' || errno || cold_reboot_tick <= 0) {
+            fprintf(stderr, "Invalid MA17_COLD_REBOOT_TICK=%s\n", setting);
+            std::exit(2);
+        }
+    }
     if (trace_movc_enabled) {
         original_movc_pc = cpu.op[0x83];
         original_movc_dptr = cpu.op[0x93];
@@ -1669,6 +1681,14 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                     cpu.mExtData[0xF8FF], cpu.mPC);
             last_pc = cpu.mPC;
             warm_reboot_tick = 0;
+        }
+        if (cold_reboot_tick && context.ticks >= cold_reboot_tick) {
+            reboot_cpu_with_retained_ram(cpu);
+            std::memset(cpu.mExtData + 0xF800, 0, 0x400);
+            cpu.mSFR[REG_PCON] |= 0x10u; // POF: power-on flag
+            fprintf(stderr, "[COLD-REBOOT] tick=%lld pc=%04X\n", context.ticks, cpu.mPC);
+            last_pc = cpu.mPC;
+            cold_reboot_tick = 0;
         }
         if (context.on_snapshot) {
             const auto snapshot = capture_snapshot(context);

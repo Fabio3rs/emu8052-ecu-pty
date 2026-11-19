@@ -75,5 +75,18 @@ o += ["", "### Tabela P10 - o mesmo, mas em degrau a 10 M ticks (a ROM rejeita o
 for r in step:
     if r['channel'] != 'none':
         o.append(f"| {names[r['channel']]} | {r['volts']} | {r['ram62']} | {r['ram63']} | {r['rpm']} |")
+rs = json.load(open(D / "restart_idle.json"))
+o += ["", "### Tabela P11 - reinicio no meio da execucao (marcha lenta, reboot a 30 M ticks; janelas 22-30 M antes e 50-60 M depois)", "",
+      "| caso | RPM antes | RPM depois | avanco antes/depois [graus] | lambda antes/depois | bytes retidos F800h-FBFFh diferentes do caso sem reboot |", "|---|---:|---:|---|---|---:|"]
+for r in rs:
+    b, a = r["before"], r["after"]
+    o.append(f"| {r['case']} | {b['rpm']} | {a['rpm']} | {b['spark']} / {a['spark']} | {b['lam']} / {a['lam']} | {r['xram_diff_count']} |")
+cold = [r for r in rs if r["case"].startswith("cold")][0]
+o += ["", "Bytes retidos que diferem apos o reinicio frio (sem estado retido) em relacao ao caso sem reboot: " + " ".join(cold["xram_diff_vs_no_reboot"]), ""]
+rp = list(csv.DictReader(open(D / "restart_points.csv")))
+o += ["### Tabela P12 - plena carga apos reinicio a 5 M ticks (antes do degrau de pedal a 12 M)", "",
+      "| RPM | caso | potencia [kW] | avanco [graus] | lambda |", "|---:|---|---:|---:|---:|"]
+for r in rp:
+    o.append(f"| {int(float(r['target_rpm']))} | {r['case']} | {f(r,'shaft_power_kw')} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))
