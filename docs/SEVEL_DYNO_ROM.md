@@ -54,18 +54,18 @@ Dyno isolado, E22, vazamento 9 mm², 40 ciclos; erro da potência com dt = 100 �
 <!-- BEGIN:CONV -->
 | Modo | RPM | dt=100 µs antes (kW) | erro vs 1 µs antes | dt=100 µs depois (kW) | erro vs 1 µs depois |
 |---|---|---|---|---|---|
-| MBT | 3000 | 40.98 | +2.42 % | 40.01 | +0.00 % |
-| MBT | 4000 | 51.47 | +0.61 % | 51.15 | +0.00 % |
-| MBT | 5000 | 60.94 | +2.54 % | 59.40 | +0.00 % |
-| MBT | 6000 | 61.90 | +4.76 % | 59.06 | +0.00 % |
-| fixed30 | 3000 | 40.87 | +2.41 % | 39.90 | +0.00 % |
-| fixed30 | 4000 | 52.73 | +3.11 % | 51.13 | +0.00 % |
-| fixed30 | 5000 | 62.46 | +5.81 % | 59.02 | +0.00 % |
-| fixed30 | 6000 | 60.77 | +4.74 % | 57.98 | +0.00 % |
-| fixed36 | 3000 | 39.76 | +2.45 % | 38.81 | +0.00 % |
-| fixed36 | 4000 | 50.90 | +0.61 % | 50.58 | +0.00 % |
-| fixed36 | 5000 | 62.73 | +5.80 % | 59.28 | +0.00 % |
-| fixed36 | 6000 | 61.90 | +4.77 % | 59.06 | +0.00 % |
+| MBT | 3000 | 40.98 | +2.42 % | 40.41 | +0.00 % |
+| MBT | 4000 | 51.47 | +0.61 % | 52.10 | +0.00 % |
+| MBT | 5000 | 60.94 | +2.54 % | 60.41 | +0.00 % |
+| MBT | 6000 | 61.90 | +4.76 % | 60.07 | +0.00 % |
+| fixed30 | 3000 | 40.87 | +2.41 % | 40.30 | +0.00 % |
+| fixed30 | 4000 | 52.73 | +3.11 % | 52.08 | +0.00 % |
+| fixed30 | 5000 | 62.46 | +5.81 % | 60.02 | +0.00 % |
+| fixed30 | 6000 | 60.77 | +4.74 % | 58.95 | +0.00 % |
+| fixed36 | 3000 | 39.76 | +2.45 % | 39.20 | +0.00 % |
+| fixed36 | 4000 | 50.90 | +0.61 % | 51.53 | +0.00 % |
+| fixed36 | 5000 | 62.73 | +5.80 % | 60.30 | +0.00 % |
+| fixed36 | 6000 | 61.90 | +4.77 % | 60.07 | +0.00 % |
 
 Maior |erro| de dt=100 µs contra 1 µs: **5.81 %** antes, **0.00 %** depois.
 <!-- END:CONV -->
@@ -209,7 +209,22 @@ parte do déficit de torque indicado; o resto não foi decomposto (ver backlog).
 
 ## § Bloqueios
 
-Nenhuma fase está BLOQUEADA. Todos os critérios de aceite foram atendidos; nada foi relaxado.
+### B1 — Fase 2: erro de forma da curva acima da banda (critério BLOQUEADO)
+
+* **Critério:** forma da curva de potência dentro de ±8 % da CEE × 1,1 entre 2000 e 6000 RPM.
+* **Evidência:** `docs/dyno/fase2/dyno_summary.csv`: erro máximo 8,2 % (E22) e 8,1 % (E0). Torque a 3000 RPM −3,3 % do alvo de 133 N·m
+  (`fit_result.json`). Os outros alvos (pico de potência 61,64 kW, 5500 RPM; 60,06 kW a 6000) estão na banda.
+* **Reprodução:** `python3 tools/dyno_acceptance.py build-lab/sevel-dyno docs/dyno/fase2`.
+* **Hipótese:** o ajuste foi restrito a um parâmetro (`hs_gain`) para não perturbar os testes caóticos da ROM abaixo de
+  2500 RPM; a curva base (inalterada) não acompanha a forma alvo ali. Um refit livre foi tentado e flipou 2–3 testes
+  por tentativa. Não relaxei a banda nem ajustei parâmetros para forçar o número.
+* **Efeito:** as demais fases não dependem da banda e foram executadas; a Fase 2 fica **ACEITA COM CRITÉRIO DE FORMA BLOQUEADO**.
+
+### Proveniência dos manifestos
+
+Os manifestos das Fases 1 e 2 foram **regenerados** no commit `f5ff2b6` com o SHA real (`DYNO_CODE_SHA`). O da Fase 0
+(baseline da integração antiga) não é regenerável: o `commit` é o que introduziu as opções da ferramenta e foi preenchido
+depois; a proveniência dele é afirmada, não verificada por máquina (ver `commit_note`).
 
 ## Estado das fases
 
@@ -217,7 +232,7 @@ Nenhuma fase está BLOQUEADA. Todos os critérios de aceite foram atendidos; nad
 |---|---|---|
 | 0 Linha de base | ACEITA | `efa374f` |
 | 1 Integração exata | ACEITA | `7f4a478` |
-| 2 Refit da VE | ACEITA (ajuste) | `48bd7ab` |
+| 2 Refit da VE | ACEITA COM RESSALVA: forma 8,2 % > 8 % (B1) | `48bd7ab` |
 | 3 Telemetria de eixo e balanço | ACEITA | `91a854e` |
 | 4 Limites de controle e cenário | ACEITA | `c4e292b` |
 | 5 Bancada com a ROM (3000 RPM) | ACEITA | `8e437df` |
@@ -234,8 +249,7 @@ Nenhuma fase está BLOQUEADA. Todos os critérios de aceite foram atendidos; nad
 * Lenta de 850 RPM: indicativa, fora do escopo.
 * O freio do dyno usa a velocidade média de 180° e os ganhos padrão do `DynoPi`; ganhos diferentes não foram explorados.
 * `FuelBlend` não modela a água do etanol hidratado.
-* Os manifestos das Fases 0–2 foram gerados sem acesso ao `.git`; o campo `commit` foi preenchido depois com o commit
-  da fase (com `commit_note`), pois os artefatos saíram da árvore que virou esse commit. Os das Fases 5–6 trazem o SHA completo (`DYNO_CODE_SHA`).
+* Manifestos: ver § Bloqueios (proveniência).
 
 ## Backlog (registrado, não feito)
 

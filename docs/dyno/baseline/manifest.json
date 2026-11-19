@@ -18,7 +18,7 @@
   "binary": "build-lab/sevel-dyno",
   "code": {
     "commit": "efa374f05970dc3b0ccde5093627449ab42dd431",
-    "commit_note": "phase 0 artifacts generated from the working tree that became commit efa374f; commit filled in afterwards because the sandbox could not read .git",
+    "commit_note": "baseline of the OLD point-sampled integration; the old integration no longer exists, so it cannot be regenerated. The commit is the one that added the tool options (--dt-us) used to produce it; the SHA was filled in afterwards (the sandbox cannot read .git). Provenance is therefore asserted, not machine-verified.",
     "dirty_files": []
   },
   "cycles": 40,

@@ -15,10 +15,9 @@
     "--rpm-step",
     "1000"
   ],
-  "binary": "./sevel-dyno",
+  "binary": "build-lab/sevel-dyno",
   "code": {
-    "commit": "7f4a478fa103a3fe8fffedea5fd1cc6aefd1bed8",
-    "commit_note": "generated from the working tree that became commit 7f4a478; commit filled in afterwards because the sandbox could not read .git",
+    "commit": "f5ff2b608a29bd7b1f2ab8306e7bcbe43006c89d",
     "dirty_files": []
   },
   "cycles": 40,
