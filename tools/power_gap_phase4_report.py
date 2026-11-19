@@ -88,5 +88,59 @@ o += ["### Tabela P12 - plena carga apos reinicio a 5 M ticks (antes do degrau d
       "| RPM | caso | potencia [kW] | avanco [graus] | lambda |", "|---:|---|---:|---:|---:|"]
 for r in rp:
     o.append(f"| {int(float(r['target_rpm']))} | {r['case']} | {f(r,'shaft_power_kw')} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
+ex = list(csv.DictReader(open(D / "phase4_extra.csv")))
+o += ["", "### Tabela P13 - TPS2 (ADC0) forcado em degrau a 12 M ticks, 3000 RPM, plena carga", "",
+      "| tensao [V] | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] |", "|---:|---:|---:|---:|---:|---:|"]
+for r in ex:
+    if r["group"] == "tps2_sweep":
+        o.append(f"| {r['label'][:-1]} | {r['iram60_tps2']} | {r['iram6d']} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} | {f(r,'shaft_power_kw')} |")
+cz = json.load(open(D / "phase4_causal_xram.json"))
+o += ["", "Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem forcagem): 4,5 V -> " + " ".join(x for x in cz["f45"] if x[:4] in ("F84E","F84F","F850","F856","F885")) +
+      "; 5,0 V -> " + " ".join(x for x in cz["f50"] if x[:4] in ("F84E","F84F","F850","F856","F885")) + ".", ""]
+o += ["### Tabela P14 - enriquecimento de plena carga: malha lambda travada nos extremos (ADC5 0 mV = pobre -> ROM enriquece ao maximo; 4500 mV = rico -> ROM empobrece ao maximo)", "",
+      "| RPM | ADC5 | pedal | TPS2 | resultado | lambda dos cilindros | ar [mg/cil] | combustivel injetado [mg] | avanco [graus] |", "|---:|---:|---:|---|---|---:|---:|---:|---:|"]
+for r in ex:
+    if r["group"] == "enrich":
+        l = r["label"].split()
+        ok = r["state"] == "ACCEPTED"
+        o.append(f"| {int(float(r['target_rpm']))} | {l[0][5:]} | {l[1][6:]} | {l[2][5:]} | {r['state']}{'' if ok else ':' + r['reason']} | {f(r,'lambda',3) if ok else '-'} | {f(r,'air_mg_cyl',1) if ok else '-'} | {f(r,'inj_mass_mg',0) if ok else '-'} | {f(r,'adv_mean_deg') if ok else '-'} |")
+cp = list(csv.DictReader(open(D / "phase4_causal.csv")))
+cw = list(csv.DictReader(open(D / "coolant_window_points.csv")))
+o += ["", "### Tabela P15 - janela de agua 65-90 C (bancada padrao: arranque de 495 000 ticks) e pontos com arranque de 1,5 M ticks", "",
+      "| agua [C] | resultado com arranque padrao, 3000 RPM |", "|---:|---|"]
+for r in ex:
+    if r["group"] == "coolant_stall":
+        o.append(f"| {r['label'][:-1]} | {r['state']}{'' if r['state']=='ACCEPTED' else ':' + r['reason']} |")
+o += ["", "| caso (arranque 1,5 M ticks) | RPM | resultado | potencia [kW] | avanco [graus] | lambda |", "|---|---:|---|---:|---:|---:|"]
+for r in cw:
+    o.append(f"| {r['label']} | {int(float(r['target_rpm']))} | {r['state']} | {f(r,'shaft_power_kw')} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
+o += ["", "### Tabela P16 - limiar ROM[721Dh] em copia temporaria da ROM (original = 21h; arquivo original intocado), 3000 RPM", "",
+      "| caso | resultado | potencia [kW] |", "|---|---|---:|"]
+for r in cp:
+    if r["group"] == "patch_721D":
+        o.append(f"| {r['label']} | {r['state']}{'' if r['state']=='ACCEPTED' else ':' + r['reason']} | {f(r,'shaft_power_kw') if r['state']=='ACCEPTED' else '-'} |")
+lh = json.load(open(D / "long_history_idle.json")); lp = list(csv.DictReader(open(D / "long_history_points.csv")))
+o += ["", "### Tabela P17 - historico longo: 300 M ticks (~5 min simulados) de marcha lenta, XRAM retida carregada em pontos de plena carga", "",
+      "| janela [M ticks] | RPM | avanco [graus] | lambda | combustivel [g/s] | agua [C] |", "|---|---:|---:|---:|---:|---:|"]
+for t in lh["trajectory"]:
+    o.append(f"| {t['window_M']} | {t['rpm']} | {t['spark']} | {t['lam']} | {t['fuel']} | {t['coolant_c']} |")
+o += ["", "| RPM | estado inicial | potencia [kW] | avanco [graus] | lambda |", "|---:|---|---:|---:|---:|"]
+for r in lp:
+    o.append(f"| {int(float(r['target_rpm']))} | {r['case']} | {f(r,'shaft_power_kw')} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} |")
+tc = list(csv.DictReader(open(D / "tps2_curve.csv")))
+o += ["", "### Tabela P18 - curva continua da trilha 2 chegando a V a 90 graus (`--exp tps2_end_v`), sem degrau", "",
+      "| V final [V] | RPM | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | bits de falha F84E-50 |", "|---:|---:|---:|---:|---:|---:|---:|---|"]
+for r in tc:
+    o.append(f"| {r['end_v']} | {int(float(r['target_rpm']))} | {r['iram60_tps2']} | {r['iram6d']} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} | {f(r,'shaft_power_kw')} | {r['faults']} |")
+tt = list(csv.DictReader(open(D / "tps2_force_timing.csv")))
+o += ["", "### Tabela P19 - TPS2 forcado a 5 V em instantes diferentes (3000 RPM, degrau de pedal a 12 M ticks, rampa de 0,2 s)", "",
+      "| instante | IRAM 60h | IRAM 6Dh | bits de falha F84E-50 | avanco [graus] | lambda | potencia [kW] |", "|---|---:|---:|---|---:|---:|---:|"]
+for r in tt:
+    o.append(f"| {r['label']} | {r['iram60_tps2']} | {r['iram6d']} | {r['faults']} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} | {f(r,'shaft_power_kw')} |")
+tp = list(csv.DictReader(open(D / "tps_pair.csv")))
+o += ["", "### Tabela P20 - as duas trilhas em seus valores finais (`--exp tps1_end_v` = trilha 1 aos 24 graus; `tps2_end_v` = trilha 2 aos 90 graus; \"model\" = curva do modelo: 4,65 V e 4,5 V)", "",
+      "| T1 final | T2 final | RPM | IRAM 66h | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | falhas F84E-50 |", "|---|---|---:|---:|---:|---:|---:|---:|---:|---|"]
+for r in tp:
+    o.append(f"| {r['t1_end']} | {r['t2_end']} | {int(float(r['target_rpm']))} | {r['iram66_tps1']} | {r['iram60_tps2']} | {r['iram6d']} | {f(r,'adv_mean_deg')} | {f(r,'lambda',4)} | {f(r,'shaft_power_kw')} | {r['faults']} |")
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))

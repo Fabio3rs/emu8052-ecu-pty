@@ -1,0 +1,6 @@
+label,tick,state,reason,shaft_power_kw,adv_mean_deg,lambda,iram60_tps2,iram6d,faults
+T1_closed_(idle)_force_at_8M,8000000,ACCEPTED,none,32.1444,26.046,0.9946,255,61,00 04 00
+ramp_start_12.0M,12000000,ACCEPTED,none,32.0277,26.046,1.0005,255,61,00 04 00
+ramp_mid_12.1M,12100000,ACCEPTED,none,31.2918,18.564,1.0062,255,61,00 00 00
+ramp_end_T1_high_12.5M,12500000,ACCEPTED,none,31.3167,18.565,1.0052,255,61,00 00 00
+steady_WOT_13.5M,13500000,ACCEPTED,none,31.3139,18.565,1.0052,255,61,00 00 00

@@ -72,6 +72,7 @@ struct TpsSources {
     long long air_open_tick; // --exp air_open_tick=N: ADC2 (air NTC) open at 5 V from tick N
     long long ntc_force_tick; // --exp ntc_force_tick=N with ect_force_v / air_force_v [V]
     double ect_force_v, air_force_v; // < 0 = off
+    double tps2_force_v; // --exp tps2_force_v=V from ntc_force_tick (< 0 = off)
     bool swap_ntc; // --exp swap_ntc=1: ADC2 reads the coolant NTC, ADC3 the air NTC
 };
 
@@ -85,6 +86,11 @@ static bool read_tps_voltage(uint8_t channel, void *context,
         (!sources.tps_restore_tick ||
          sources.ticks < sources.tps_restore_tick)) {
         voltage = sources.tps_open_v;
+        return true;
+    }
+    if (channel == 0 && sources.ntc_force_tick && sources.ticks >= sources.ntc_force_tick &&
+        sources.tps2_force_v >= 0.0) {
+        voltage = sources.tps2_force_v;
         return true;
     }
     if (channel == 0)
@@ -289,10 +295,26 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     g_ports.set_idle_contact_open_fault(config->idle_contact_open_tick,
                                         config->idle_contact_restore_tick);
     g_ports.set_idle_contact_closed_fault(config->idle_contact_closed_tick);
-    ecu_hw::Ma17TpsCircuit tps_circuit{
-        config->tps_bench_profile
-            ? ecu_hw::TpsCircuitParameters::bench_typical()
-            : ecu_hw::TpsCircuitParameters{}};
+    ecu_hw::TpsCircuitParameters tps_parameters =
+        config->tps_bench_profile ? ecu_hw::TpsCircuitParameters::bench_typical()
+                                  : ecu_hw::TpsCircuitParameters{};
+    if (const auto it = config->experiments.find("tps2_end_v"); it != config->experiments.end()) {
+        // --exp tps2_end_v=V: continuous track-2 curve reaching V at 90 degrees (owner: track 2 spans
+        // 18..90 degrees, 0 V..~4.7-5 V). Only the wide-range slope changes; the 18-24 degree part is kept.
+        constexpr double ninety = 1.5707963267948966;
+        const double at_overlap_end = tps_parameters.track2_rest_v +
+            (tps_parameters.track2_overlap_end_rad - tps_parameters.track2_transition_rad) *
+                tps_parameters.track2_high_slope_v_per_rad;
+        tps_parameters.track2_wide_slope_v_per_rad =
+            (it->second - at_overlap_end) / (ninety - tps_parameters.track2_overlap_end_rad);
+    }
+    if (const auto it = config->experiments.find("tps1_end_v"); it != config->experiments.end()) {
+        // --exp tps1_end_v=V: track 1 reaches V at 24 degrees and stays there (owner: VCC above 24 degrees).
+        tps_parameters.track1_slope_v_per_rad =
+            (it->second - tps_parameters.track1_rest_v) /
+            (tps_parameters.track1_end_rad - tps_parameters.rest_angle_rad);
+    }
+    ecu_hw::Ma17TpsCircuit tps_circuit{tps_parameters};
     engine::ThermalState thermal{20.0, config->initial_coolant_c};
     engine::IntakeFuelParameters intake_parameters;
     if (config->throttle_leak_mm2 >= 0)
@@ -339,6 +361,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
                                : 0,
                            config->experiments.count("ect_force_v") ? config->experiments.at("ect_force_v") : -1.0,
                            config->experiments.count("air_force_v") ? config->experiments.at("air_force_v") : -1.0,
+                           config->experiments.count("tps2_force_v") ? config->experiments.at("tps2_force_v") : -1.0,
                            config->experiments.count("swap_ntc") && config->experiments.at("swap_ntc") != 0.0};
     sim.target_rpm = config->crank_rpm;
     sim.update_pulse_interval(990000); // 11.88 MHz / 12 = 990k ticks/sec

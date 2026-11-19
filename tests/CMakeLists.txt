@@ -240,3 +240,9 @@ add_test(NAME PhysicalDiagnostics.NtcSensorIdentity
             $<TARGET_FILE:emu8051-tty>
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
 set_tests_properties(PhysicalDiagnostics.NtcSensorIdentity PROPERTIES TIMEOUT 600)
+
+add_test(NAME PhysicalDiagnostics.Tps2TrackConsistency
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_tps2_consistency.py
+            $<TARGET_FILE:emu8051-tty>
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+set_tests_properties(PhysicalDiagnostics.Tps2TrackConsistency PROPERTIES TIMEOUT 1500)

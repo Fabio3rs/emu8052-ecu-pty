@@ -177,3 +177,174 @@ Bytes retidos que diferem apos o reinicio frio (sem estado retido) em relacao ao
 | 6000 | no_reboot | 39.21 | 29.35 | 0.9959 |
 | 6000 | warm_reboot_5M | 39.24 | 29.34 | 0.9951 |
 | 6000 | cold_reboot_5M | 39.24 | 29.34 | 0.9950 |
+
+### Tabela P13 - TPS2 (ADC0) forcado em degrau a 12 M ticks, 3000 RPM, plena carga
+
+| tensao [V] | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] |
+|---:|---:|---:|---:|---:|---:|
+| 4.5 | 230 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.6 | 235 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.65 | 238 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.7 | 241 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.71 | 241 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.72 | 242 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.75 | 243 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.8 | 246 | 61 | 26.05 | 0.9995 | 32.05 |
+| 5.0 | 255 | 61 | 26.05 | 1.0005 | 32.03 |
+
+Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem forcagem): 4,5 V -> F84F:00->04 F856:00->0A F885:00->04; 5,0 V -> F84F:00->04 F856:00->0A F885:00->04.
+
+### Tabela P14 - enriquecimento de plena carga: malha lambda travada nos extremos (ADC5 0 mV = pobre -> ROM enriquece ao maximo; 4500 mV = rico -> ROM empobrece ao maximo)
+
+| RPM | ADC5 | pedal | TPS2 | resultado | lambda dos cilindros | ar [mg/cil] | combustivel injetado [mg] | avanco [graus] |
+|---:|---:|---:|---|---|---:|---:|---:|---:|
+| 3000 | 0mV | 0.5 | model | ACCEPTED | 1.001 | 359.3 | 4220 | 22.65 |
+| 3000 | 0mV | 0.5 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 0mV | 0.7 | model | ACCEPTED | 1.036 | 414.0 | 4700 | 20.47 |
+| 3000 | 0mV | 0.7 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 0mV | 1.0 | model | ACCEPTED | 0.981 | 427.3 | 5124 | 18.43 |
+| 3000 | 0mV | 1.0 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 4500mV | 0.5 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 3000 | 4500mV | 0.5 | 5V | INVALID:stall | - | - | - | - |
+| 3000 | 4500mV | 0.7 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 3000 | 4500mV | 0.7 | 5V | INVALID:stall | - | - | - | - |
+| 3000 | 4500mV | 1.0 | model | ACCEPTED | 1.050 | 427.2 | 4869 | 18.64 |
+| 3000 | 4500mV | 1.0 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 0mV | 0.5 | model | ACCEPTED | 0.952 | 295.5 | 3655 | 30.69 |
+| 4500 | 0mV | 0.5 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 0mV | 0.7 | model | ACCEPTED | 1.046 | 394.2 | 4434 | 28.23 |
+| 4500 | 0mV | 0.7 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 0mV | 1.0 | model | ACCEPTED | 0.992 | 423.1 | 5019 | 25.57 |
+| 4500 | 0mV | 1.0 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 4500mV | 0.5 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 4500 | 4500mV | 0.5 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 4500mV | 0.7 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 4500 | 4500mV | 0.7 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 4500mV | 1.0 | model | ACCEPTED | 1.051 | 423.0 | 4816 | 25.57 |
+| 4500 | 4500mV | 1.0 | 5V | INVALID:stall | - | - | - | - |
+
+### Tabela P15 - janela de agua 65-90 C (bancada padrao: arranque de 495 000 ticks) e pontos com arranque de 1,5 M ticks
+
+| agua [C] | resultado com arranque padrao, 3000 RPM |
+|---:|---|
+| 65 | ACCEPTED |
+| 70 | INVALID:stall |
+| 72 | INVALID:stall |
+| 74 | INVALID:stall |
+| 75 | INVALID:stall |
+| 76 | INVALID:stall |
+| 78 | INVALID:stall |
+| 80 | INVALID:stall |
+| 85 | ACCEPTED |
+| 90 | ACCEPTED |
+
+| caso (arranque 1,5 M ticks) | RPM | resultado | potencia [kW] | avanco [graus] | lambda |
+|---|---:|---|---:|---:|---:|
+| coolant=70 starter=1.5M | 3000 | ACCEPTED | 31.47 | 19.01 | 1.0031 |
+| coolant=70 starter=1.5M | 6000 | ACCEPTED | 39.23 | 29.87 | 0.9902 |
+| coolant=75 starter=1.5M | 3000 | ACCEPTED | 31.39 | 18.84 | 1.0045 |
+| coolant=75 starter=1.5M | 6000 | ACCEPTED | 39.08 | 29.67 | 0.9868 |
+| coolant=80 starter=1.5M | 3000 | ACCEPTED | 31.28 | 18.70 | 1.0064 |
+| coolant=80 starter=1.5M | 6000 | ACCEPTED | 38.94 | 29.67 | 0.9976 |
+
+### Tabela P16 - limiar ROM[721Dh] em copia temporaria da ROM (original = 21h; arquivo original intocado), 3000 RPM
+
+| caso | resultado | potencia [kW] |
+|---|---|---:|
+| 721D=00 coolant=70C | INVALID:stall | - |
+| 721D=00 coolant=75C | INVALID:stall | - |
+| 721D=00 coolant=80C | INVALID:stall | - |
+| 721D=00 coolant=90C | ACCEPTED | 31.34 |
+| 721D=FF coolant=70C | INVALID:stall | - |
+| 721D=FF coolant=75C | INVALID:stall | - |
+| 721D=FF coolant=80C | INVALID:stall | - |
+| 721D=FF coolant=90C | ACCEPTED | 31.33 |
+| 721D=60 coolant=70C | INVALID:stall | - |
+| 721D=60 coolant=75C | INVALID:stall | - |
+| 721D=60 coolant=80C | INVALID:stall | - |
+| 721D=60 coolant=90C | ACCEPTED | 31.31 |
+| original coolant=70C | INVALID:stall | - |
+| original coolant=75C | INVALID:stall | - |
+| original coolant=80C | INVALID:stall | - |
+
+### Tabela P17 - historico longo: 300 M ticks (~5 min simulados) de marcha lenta, XRAM retida carregada em pontos de plena carga
+
+| janela [M ticks] | RPM | avanco [graus] | lambda | combustivel [g/s] | agua [C] |
+|---|---:|---:|---:|---:|---:|
+| 0-50 | 914.0 | 8.46 | 0.993 | 0.2317 | 91.1 |
+| 50-100 | 912.1 | 8.44 | 1.005 | 0.2276 | 91.9 |
+| 100-150 | 911.6 | 8.51 | 1.006 | 0.2273 | 88.8 |
+| 150-200 | 910.8 | 8.53 | 1.006 | 0.2272 | 88.1 |
+| 200-250 | 910.9 | 8.61 | 1.004 | 0.2277 | 87.9 |
+| 250-300 | 910.6 | 8.65 | 1.005 | 0.2275 | 87.9 |
+
+| RPM | estado inicial | potencia [kW] | avanco [graus] | lambda |
+|---:|---|---:|---:|---:|
+| 1500 | fresh | 14.81 | 7.12 | 0.9995 |
+| 1500 | after_5min_idle | 14.78 | 7.47 | 1.0071 |
+| 3000 | fresh | 31.31 | 18.56 | 1.0052 |
+| 3000 | after_5min_idle | 31.19 | 18.56 | 1.0064 |
+| 6000 | fresh | 39.21 | 29.35 | 0.9959 |
+| 6000 | after_5min_idle | 39.06 | 29.34 | 0.9972 |
+
+### Tabela P18 - curva continua da trilha 2 chegando a V a 90 graus (`--exp tps2_end_v`), sem degrau
+
+| V final [V] | RPM | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | bits de falha F84E-50 |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 4.5 | 1500 | 230 | 60 | 7.13 | 0.9992 | 14.82 | 00 00 00 |
+| 4.5 | 3000 | 230 | 60 | 18.57 | 1.0052 | 31.32 | 00 00 00 |
+| 4.5 | 4500 | 230 | 60 | 25.58 | 1.0006 | 42.38 | 00 00 00 |
+| 4.5 | 6000 | 230 | 60 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| 4.65 | 1500 | 238 | 60 | 7.13 | 0.9997 | 14.81 | 00 00 00 |
+| 4.65 | 3000 | 238 | 60 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| 4.65 | 4500 | 238 | 60 | 25.58 | 1.0006 | 42.40 | 00 00 00 |
+| 4.65 | 6000 | 238 | 60 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 4.7 | 1500 | 241 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.7 | 3000 | 241 | 61 | 18.56 | 1.0052 | 31.31 | 00 00 00 |
+| 4.7 | 4500 | 241 | 61 | 25.57 | 1.0006 | 42.39 | 00 00 00 |
+| 4.7 | 6000 | 241 | 61 | 29.35 | 0.9959 | 39.29 | 00 00 00 |
+| 4.75 | 1500 | 243 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.75 | 3000 | 243 | 61 | 18.57 | 1.0052 | 31.32 | 00 00 00 |
+| 4.75 | 4500 | 243 | 61 | 25.58 | 1.0006 | 42.42 | 00 00 00 |
+| 4.75 | 6000 | 243 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 4.8 | 1500 | 246 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.8 | 3000 | 246 | 61 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| 4.8 | 4500 | 246 | 61 | 25.57 | 1.0006 | 42.43 | 00 00 00 |
+| 4.8 | 6000 | 246 | 61 | 29.35 | 0.9959 | 39.26 | 00 00 00 |
+| 5.0 | 1500 | 255 | 61 | 7.12 | 0.9995 | 14.81 | 00 00 00 |
+| 5.0 | 3000 | 255 | 61 | 18.57 | 1.0053 | 31.32 | 00 00 00 |
+| 5.0 | 4500 | 255 | 61 | 25.57 | 1.0006 | 42.43 | 00 00 00 |
+| 5.0 | 6000 | 255 | 61 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+
+### Tabela P19 - TPS2 forcado a 5 V em instantes diferentes (3000 RPM, degrau de pedal a 12 M ticks, rampa de 0,2 s)
+
+| instante | IRAM 60h | IRAM 6Dh | bits de falha F84E-50 | avanco [graus] | lambda | potencia [kW] |
+|---|---:|---:|---|---:|---:|---:|
+| T1_closed_(idle)_force_at_8M | 255 | 61 | 00 04 00 | 26.05 | 0.9946 | 32.14 |
+| ramp_start_12.0M | 255 | 61 | 00 04 00 | 26.05 | 1.0005 | 32.03 |
+| ramp_mid_12.1M | 255 | 61 | 00 00 00 | 18.56 | 1.0062 | 31.29 |
+| ramp_end_T1_high_12.5M | 255 | 61 | 00 00 00 | 18.57 | 1.0052 | 31.32 |
+| steady_WOT_13.5M | 255 | 61 | 00 00 00 | 18.57 | 1.0052 | 31.31 |
+
+### Tabela P20 - as duas trilhas em seus valores finais (`--exp tps1_end_v` = trilha 1 aos 24 graus; `tps2_end_v` = trilha 2 aos 90 graus; "model" = curva do modelo: 4,65 V e 4,5 V)
+
+| T1 final | T2 final | RPM | IRAM 66h | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | falhas F84E-50 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| model | model | 3000 | 238 | 230 | 60 | 18.56 | 1.0052 | 31.31 | 00 00 00 |
+| model | model | 6000 | 238 | 230 | 60 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| model | 4.8 | 3000 | 238 | 246 | 61 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| model | 4.8 | 6000 | 238 | 246 | 61 | 29.35 | 0.9959 | 39.26 | 00 00 00 |
+| model | 5.0 | 3000 | 238 | 255 | 61 | 18.57 | 1.0053 | 31.32 | 00 00 00 |
+| model | 5.0 | 6000 | 238 | 255 | 61 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| 4.9 | model | 3000 | 251 | 230 | 60 | 18.57 | 1.0051 | 31.33 | 00 00 00 |
+| 4.9 | model | 6000 | 251 | 230 | 60 | 29.34 | 0.9959 | 39.29 | 00 00 00 |
+| 4.9 | 4.8 | 3000 | 251 | 246 | 61 | 18.57 | 1.0058 | 31.32 | 00 00 00 |
+| 4.9 | 4.8 | 6000 | 251 | 246 | 61 | 29.34 | 0.9959 | 39.27 | 00 00 00 |
+| 4.9 | 5.0 | 3000 | 251 | 255 | 61 | 18.57 | 1.0047 | 31.35 | 00 00 00 |
+| 4.9 | 5.0 | 6000 | 251 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 5.0 | model | 3000 | 255 | 230 | 60 | 18.57 | 1.0046 | 31.34 | 00 00 00 |
+| 5.0 | model | 6000 | 255 | 230 | 60 | 29.34 | 0.9959 | 39.31 | 00 00 00 |
+| 5.0 | 4.8 | 3000 | 255 | 246 | 61 | 18.58 | 1.0048 | 31.32 | 00 00 00 |
+| 5.0 | 4.8 | 6000 | 255 | 246 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 5.0 | 5.0 | 3000 | 255 | 255 | 61 | 18.57 | 1.0049 | 31.31 | 00 00 00 |
+| 5.0 | 5.0 | 6000 | 255 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |

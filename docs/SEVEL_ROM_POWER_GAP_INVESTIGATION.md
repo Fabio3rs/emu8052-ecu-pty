@@ -130,7 +130,7 @@ Cada coluna e o ganho de potencia ao aplicar UMA intervencao sobre a ROM origina
 | Mistura pobre/rica ou WOT sem enriquecimento | λ ROM ≈ 1,00 em toda a varredura | Leitura de λ, ar e combustível | λ 0,996–1,005; planta isolada também usa λ = 1; eta_i quase igual | Não é parcela do déficit com este modelo; ausência de enriquecimento de plena carga na ROM **não** foi avaliada | Média | Inconclusiva quanto à estratégia da ROM; refutada como causa do déficit |
 | Histórico de funcionamento (adaptação) | Hipótese do proprietário | Marcha lenta livre de 6 M, 12 M, 24 M ticks | Potência varia < 0,6 %, avanço < 0,1°; XRAM F8E8 (contador de tabela lambda) varia 2–8 | Há estado de ROM que muda com o tempo, sem efeito mensurável na potência | Média (3 históricos, 4 RPM) | Refutada para este ponto |
 | Bancada/freio perturba a ROM | Oscilação de RPM | Critérios de aceitação, resíduo de energia | Todos ACCEPTED; resíduo ~1e-13; saturação 0 | Medição consistente | Alta | Refutada |
-| ROM não reconhece plena carga (TPS2 < F0h) | Avanço 7–13° abaixo do MBT; limiar F0h em `1047h` | IRAM 60h forçado a 5 V a partir do degrau de pedal | 6Dh.0 liga; avanço +5,6 a +8,0°; potência +0,2 a +1,1 kW | O modelo de TPS não alcança o limiar de 4,71 V a 90°; o recurso existe na ROM | Média-alta (cadeia medida; semântica do bit hipotética) | Confirmada (efeito), semântica em aberto |
+| ROM não reconhece plena carga (TPS2 < F0h) | Avanço 7–13° abaixo do MBT; limiar F0h em `1047h` | Degrau de ADC0 a 5 V (P2, P13, P19) e curva contínua da trilha 2 até 5 V (P18) | Degrau com T1 baixa: falha F84F.2 e avanço +7,5° (fallback do TPS); curva contínua: sem falha, `6Dh.0` liga a 4,7 V, avanço/λ/potência inalterados | O ganho de avanço era o modo de falha do TPS (contradição entre pistas); plena carga com TPS2 alto não altera esta ROM | Alta (duas formas de forçar, teste de regressão) | Refutada (leitura anterior corrigida)
 | Sensores de temperatura (água × ar) invertidos | Pedido do proprietário | DTC transmitido na K-line com aberto/curto em ADC2 e ADC3; limites e limiares | ADC3 → 0A02, ADC2 → 0B02; limiares coerentes | Atribuição consistente com a ROM e com o carro real (ar desligado → 0B02, informado pelo proprietário) | Alta | Refutada |
 | Dependência de TPS parcial/histórico térmico | Fase 4 | Pedal 30–100 %; água 60/75/105 °C; sonda forçada; reinícios mornos | Ver tabelas P1, P3, P4, P5 | Sem enriquecimento nem adaptação que reduza potência; anomalia de estol a 75 °C | Média | Inconclusiva na parte térmica |
 | PMS assumido altera o avanço | PMS não confirmado | Varredura 117/120/123 (GOAL_DYNO_ROM) | Já documentada: picos 42,4–44,3 kW | Resposta ao PMS assumido, não determina o PMS físico | Média | Inconclusiva |
@@ -343,24 +343,208 @@ Bytes retidos que diferem apos o reinicio frio (sem estado retido) em relacao ao
 | 6000 | warm_reboot_5M | 39.24 | 29.34 | 0.9951 |
 | 6000 | cold_reboot_5M | 39.24 | 29.34 | 0.9950 |
 
+### Tabela P13 - TPS2 (ADC0) forcado em degrau a 12 M ticks, 3000 RPM, plena carga
+
+| tensao [V] | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] |
+|---:|---:|---:|---:|---:|---:|
+| 4.5 | 230 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.6 | 235 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.65 | 238 | 52 | 26.05 | 0.9901 | 32.41 |
+| 4.7 | 241 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.71 | 241 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.72 | 242 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.75 | 243 | 61 | 26.05 | 0.9995 | 32.05 |
+| 4.8 | 246 | 61 | 26.05 | 0.9995 | 32.05 |
+| 5.0 | 255 | 61 | 26.05 | 1.0005 | 32.03 |
+
+Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem forcagem): 4,5 V -> F84F:00->04 F856:00->0A F885:00->04; 5,0 V -> F84F:00->04 F856:00->0A F885:00->04.
+
+### Tabela P14 - enriquecimento de plena carga: malha lambda travada nos extremos (ADC5 0 mV = pobre -> ROM enriquece ao maximo; 4500 mV = rico -> ROM empobrece ao maximo)
+
+| RPM | ADC5 | pedal | TPS2 | resultado | lambda dos cilindros | ar [mg/cil] | combustivel injetado [mg] | avanco [graus] |
+|---:|---:|---:|---|---|---:|---:|---:|---:|
+| 3000 | 0mV | 0.5 | model | ACCEPTED | 1.001 | 359.3 | 4220 | 22.65 |
+| 3000 | 0mV | 0.5 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 0mV | 0.7 | model | ACCEPTED | 1.036 | 414.0 | 4700 | 20.47 |
+| 3000 | 0mV | 0.7 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 0mV | 1.0 | model | ACCEPTED | 0.981 | 427.3 | 5124 | 18.43 |
+| 3000 | 0mV | 1.0 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 3000 | 4500mV | 0.5 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 3000 | 4500mV | 0.5 | 5V | INVALID:stall | - | - | - | - |
+| 3000 | 4500mV | 0.7 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 3000 | 4500mV | 0.7 | 5V | INVALID:stall | - | - | - | - |
+| 3000 | 4500mV | 1.0 | model | ACCEPTED | 1.050 | 427.2 | 4869 | 18.64 |
+| 3000 | 4500mV | 1.0 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 0mV | 0.5 | model | ACCEPTED | 0.952 | 295.5 | 3655 | 30.69 |
+| 4500 | 0mV | 0.5 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 0mV | 0.7 | model | ACCEPTED | 1.046 | 394.2 | 4434 | 28.23 |
+| 4500 | 0mV | 0.7 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 0mV | 1.0 | model | ACCEPTED | 0.992 | 423.1 | 5019 | 25.57 |
+| 4500 | 0mV | 1.0 | 5V | INVALID:fuel_cut | - | - | - | - |
+| 4500 | 4500mV | 0.5 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 4500 | 4500mV | 0.5 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 4500mV | 0.7 | model | INVALID:rpm_out_of_band | - | - | - | - |
+| 4500 | 4500mV | 0.7 | 5V | INVALID:stall | - | - | - | - |
+| 4500 | 4500mV | 1.0 | model | ACCEPTED | 1.051 | 423.0 | 4816 | 25.57 |
+| 4500 | 4500mV | 1.0 | 5V | INVALID:stall | - | - | - | - |
+
+### Tabela P15 - janela de agua 65-90 C (bancada padrao: arranque de 495 000 ticks) e pontos com arranque de 1,5 M ticks
+
+| agua [C] | resultado com arranque padrao, 3000 RPM |
+|---:|---|
+| 65 | ACCEPTED |
+| 70 | INVALID:stall |
+| 72 | INVALID:stall |
+| 74 | INVALID:stall |
+| 75 | INVALID:stall |
+| 76 | INVALID:stall |
+| 78 | INVALID:stall |
+| 80 | INVALID:stall |
+| 85 | ACCEPTED |
+| 90 | ACCEPTED |
+
+| caso (arranque 1,5 M ticks) | RPM | resultado | potencia [kW] | avanco [graus] | lambda |
+|---|---:|---|---:|---:|---:|
+| coolant=70 starter=1.5M | 3000 | ACCEPTED | 31.47 | 19.01 | 1.0031 |
+| coolant=70 starter=1.5M | 6000 | ACCEPTED | 39.23 | 29.87 | 0.9902 |
+| coolant=75 starter=1.5M | 3000 | ACCEPTED | 31.39 | 18.84 | 1.0045 |
+| coolant=75 starter=1.5M | 6000 | ACCEPTED | 39.08 | 29.67 | 0.9868 |
+| coolant=80 starter=1.5M | 3000 | ACCEPTED | 31.28 | 18.70 | 1.0064 |
+| coolant=80 starter=1.5M | 6000 | ACCEPTED | 38.94 | 29.67 | 0.9976 |
+
+### Tabela P16 - limiar ROM[721Dh] em copia temporaria da ROM (original = 21h; arquivo original intocado), 3000 RPM
+
+| caso | resultado | potencia [kW] |
+|---|---|---:|
+| 721D=00 coolant=70C | INVALID:stall | - |
+| 721D=00 coolant=75C | INVALID:stall | - |
+| 721D=00 coolant=80C | INVALID:stall | - |
+| 721D=00 coolant=90C | ACCEPTED | 31.34 |
+| 721D=FF coolant=70C | INVALID:stall | - |
+| 721D=FF coolant=75C | INVALID:stall | - |
+| 721D=FF coolant=80C | INVALID:stall | - |
+| 721D=FF coolant=90C | ACCEPTED | 31.33 |
+| 721D=60 coolant=70C | INVALID:stall | - |
+| 721D=60 coolant=75C | INVALID:stall | - |
+| 721D=60 coolant=80C | INVALID:stall | - |
+| 721D=60 coolant=90C | ACCEPTED | 31.31 |
+| original coolant=70C | INVALID:stall | - |
+| original coolant=75C | INVALID:stall | - |
+| original coolant=80C | INVALID:stall | - |
+
+### Tabela P17 - historico longo: 300 M ticks (~5 min simulados) de marcha lenta, XRAM retida carregada em pontos de plena carga
+
+| janela [M ticks] | RPM | avanco [graus] | lambda | combustivel [g/s] | agua [C] |
+|---|---:|---:|---:|---:|---:|
+| 0-50 | 914.0 | 8.46 | 0.993 | 0.2317 | 91.1 |
+| 50-100 | 912.1 | 8.44 | 1.005 | 0.2276 | 91.9 |
+| 100-150 | 911.6 | 8.51 | 1.006 | 0.2273 | 88.8 |
+| 150-200 | 910.8 | 8.53 | 1.006 | 0.2272 | 88.1 |
+| 200-250 | 910.9 | 8.61 | 1.004 | 0.2277 | 87.9 |
+| 250-300 | 910.6 | 8.65 | 1.005 | 0.2275 | 87.9 |
+
+| RPM | estado inicial | potencia [kW] | avanco [graus] | lambda |
+|---:|---|---:|---:|---:|
+| 1500 | fresh | 14.81 | 7.12 | 0.9995 |
+| 1500 | after_5min_idle | 14.78 | 7.47 | 1.0071 |
+| 3000 | fresh | 31.31 | 18.56 | 1.0052 |
+| 3000 | after_5min_idle | 31.19 | 18.56 | 1.0064 |
+| 6000 | fresh | 39.21 | 29.35 | 0.9959 |
+| 6000 | after_5min_idle | 39.06 | 29.34 | 0.9972 |
+
+### Tabela P18 - curva continua da trilha 2 chegando a V a 90 graus (`--exp tps2_end_v`), sem degrau
+
+| V final [V] | RPM | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | bits de falha F84E-50 |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 4.5 | 1500 | 230 | 60 | 7.13 | 0.9992 | 14.82 | 00 00 00 |
+| 4.5 | 3000 | 230 | 60 | 18.57 | 1.0052 | 31.32 | 00 00 00 |
+| 4.5 | 4500 | 230 | 60 | 25.58 | 1.0006 | 42.38 | 00 00 00 |
+| 4.5 | 6000 | 230 | 60 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| 4.65 | 1500 | 238 | 60 | 7.13 | 0.9997 | 14.81 | 00 00 00 |
+| 4.65 | 3000 | 238 | 60 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| 4.65 | 4500 | 238 | 60 | 25.58 | 1.0006 | 42.40 | 00 00 00 |
+| 4.65 | 6000 | 238 | 60 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 4.7 | 1500 | 241 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.7 | 3000 | 241 | 61 | 18.56 | 1.0052 | 31.31 | 00 00 00 |
+| 4.7 | 4500 | 241 | 61 | 25.57 | 1.0006 | 42.39 | 00 00 00 |
+| 4.7 | 6000 | 241 | 61 | 29.35 | 0.9959 | 39.29 | 00 00 00 |
+| 4.75 | 1500 | 243 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.75 | 3000 | 243 | 61 | 18.57 | 1.0052 | 31.32 | 00 00 00 |
+| 4.75 | 4500 | 243 | 61 | 25.58 | 1.0006 | 42.42 | 00 00 00 |
+| 4.75 | 6000 | 243 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 4.8 | 1500 | 246 | 61 | 7.13 | 0.9993 | 14.82 | 00 00 00 |
+| 4.8 | 3000 | 246 | 61 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| 4.8 | 4500 | 246 | 61 | 25.57 | 1.0006 | 42.43 | 00 00 00 |
+| 4.8 | 6000 | 246 | 61 | 29.35 | 0.9959 | 39.26 | 00 00 00 |
+| 5.0 | 1500 | 255 | 61 | 7.12 | 0.9995 | 14.81 | 00 00 00 |
+| 5.0 | 3000 | 255 | 61 | 18.57 | 1.0053 | 31.32 | 00 00 00 |
+| 5.0 | 4500 | 255 | 61 | 25.57 | 1.0006 | 42.43 | 00 00 00 |
+| 5.0 | 6000 | 255 | 61 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+
+### Tabela P19 - TPS2 forcado a 5 V em instantes diferentes (3000 RPM, degrau de pedal a 12 M ticks, rampa de 0,2 s)
+
+| instante | IRAM 60h | IRAM 6Dh | bits de falha F84E-50 | avanco [graus] | lambda | potencia [kW] |
+|---|---:|---:|---|---:|---:|---:|
+| T1_closed_(idle)_force_at_8M | 255 | 61 | 00 04 00 | 26.05 | 0.9946 | 32.14 |
+| ramp_start_12.0M | 255 | 61 | 00 04 00 | 26.05 | 1.0005 | 32.03 |
+| ramp_mid_12.1M | 255 | 61 | 00 00 00 | 18.56 | 1.0062 | 31.29 |
+| ramp_end_T1_high_12.5M | 255 | 61 | 00 00 00 | 18.57 | 1.0052 | 31.32 |
+| steady_WOT_13.5M | 255 | 61 | 00 00 00 | 18.57 | 1.0052 | 31.31 |
+
+### Tabela P20 - as duas trilhas em seus valores finais (`--exp tps1_end_v` = trilha 1 aos 24 graus; `tps2_end_v` = trilha 2 aos 90 graus; "model" = curva do modelo: 4,65 V e 4,5 V)
+
+| T1 final | T2 final | RPM | IRAM 66h | IRAM 60h | IRAM 6Dh | avanco [graus] | lambda | potencia [kW] | falhas F84E-50 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| model | model | 3000 | 238 | 230 | 60 | 18.56 | 1.0052 | 31.31 | 00 00 00 |
+| model | model | 6000 | 238 | 230 | 60 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| model | 4.8 | 3000 | 238 | 246 | 61 | 18.56 | 1.0052 | 31.32 | 00 00 00 |
+| model | 4.8 | 6000 | 238 | 246 | 61 | 29.35 | 0.9959 | 39.26 | 00 00 00 |
+| model | 5.0 | 3000 | 238 | 255 | 61 | 18.57 | 1.0053 | 31.32 | 00 00 00 |
+| model | 5.0 | 6000 | 238 | 255 | 61 | 29.35 | 0.9959 | 39.21 | 00 00 00 |
+| 4.9 | model | 3000 | 251 | 230 | 60 | 18.57 | 1.0051 | 31.33 | 00 00 00 |
+| 4.9 | model | 6000 | 251 | 230 | 60 | 29.34 | 0.9959 | 39.29 | 00 00 00 |
+| 4.9 | 4.8 | 3000 | 251 | 246 | 61 | 18.57 | 1.0058 | 31.32 | 00 00 00 |
+| 4.9 | 4.8 | 6000 | 251 | 246 | 61 | 29.34 | 0.9959 | 39.27 | 00 00 00 |
+| 4.9 | 5.0 | 3000 | 251 | 255 | 61 | 18.57 | 1.0047 | 31.35 | 00 00 00 |
+| 4.9 | 5.0 | 6000 | 251 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 5.0 | model | 3000 | 255 | 230 | 60 | 18.57 | 1.0046 | 31.34 | 00 00 00 |
+| 5.0 | model | 6000 | 255 | 230 | 60 | 29.34 | 0.9959 | 39.31 | 00 00 00 |
+| 5.0 | 4.8 | 3000 | 255 | 246 | 61 | 18.58 | 1.0048 | 31.32 | 00 00 00 |
+| 5.0 | 4.8 | 6000 | 255 | 246 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+| 5.0 | 5.0 | 3000 | 255 | 255 | 61 | 18.57 | 1.0049 | 31.31 | 00 00 00 |
+| 5.0 | 5.0 | 6000 | 255 | 255 | 61 | 29.34 | 0.9959 | 39.30 | 00 00 00 |
+
 Leitura dos resultados:
 
-1. **Reconhecimento de plena carga (cadeia causal medida).** No modelo elétrico atual a trilha 2 do TPS chega a 4,5 V a 90°
-   (IRAM 60h = 230 = E6h, **abaixo de F0h**), então IRAM 6Dh.0 nunca é ligado (6Dh = 60h). Forçar ADC0 a 5 V (IRAM 60h = 255)
-   liga o bit (6Dh = 61h) e a ROM passa a **avançar de +5,6° a +8,0°** (3000 RPM: 18,6° → 26,0°, perto do MBT de 27,4°),
-   com ganho de potência de apenas 0,2 a 1,1 kW (Tabela P2). Cadeia: IRAM 60h >= F0h → IRAM 6Dh.0 → avanço maior → trabalho
-   indicado maior. Limite da evidência: a forçagem a 5 V pode ter outros efeitos (é também o nível de "curto ao VCC"); o
-   nexo direto bit → rotina de avanço não foi rastreado instrução a instrução. E o limiar F0h (4,71 V) só importa se o TPS
-   real chegar lá a 90°; a curva elétrica do modelo é estimativa de bancada ("não é medição deste corpo de borboleta").
+1. **Reconhecimento de plena carga: hipótese anterior REFUTADA; o que vale é a consistência entre as trilhas.**
+   Primeira leitura (Tabela P2): forçar ADC0 a 5 V elevou o avanço em 5,6–8,0°. Duas verificações a corrigem:
+   - Curva **contínua** da trilha 2 chegando a 4,5, 4,65, 4,7, 4,75, 4,8 ou 5,0 V a 90° (Tabela P18, `--exp tps2_end_v`, coerente com a descrição do
+     proprietário: trilha 2 de 18° a 90°, de 0 V a ~4,7–5 V): **nenhuma falha liga** (F84E–F850 = 0), o bit `6Dh.0` liga a partir de 4,7 V
+     (IRAM 60h = 241), e avanço (18,56° a 3000 RPM), λ e potência **não mudam** em nenhum RPM testado.
+   - Forçar ADC0 a 5 V em **degrau** (Tabela P19): com a borboleta ainda fechada (ocioso ou início da rampa) liga F84F.2 e o contador F856h = 0Ah, a falha
+     `0602/1E` do teste `KlineFaultHistory`, e o avanço vai a 26,05° (fallback do TPS, `R4=ROM[72A1h]`, `116Dh`, cai num ponto de menor carga do mapa);
+     forçado depois que a trilha 1 já está alta (a partir de 12,1 M ticks) não gera falha e o avanço fica em 18,56°.
+   Interpretação (hipótese do proprietário, compatível com os dados, não provada no assembly): a ROM verifica a **contradição entre pistas**
+   (pista 1 baixa com pista 2 alta; o pull-up de sinal ausente levaria a pista 2 a 5 V). Logo o avanço de 26° é o modo de falha do TPS e **não** um
+   reconhecimento de plena carga, e um TPS real que chegue a 4,7–5 V a 90° (consistente com a pista 1 alta) não muda a potência desta ROM.
+   Com as duas pistas em seus valores finais descritos pelo proprietário (pista 1 em VCC acima de 24°: IRAM 66h = 251–255, acima do `FAh` que `1047h` compara; pista 2 até 4,8–5,0 V a 90°),
+   a Tabela P20 mostra nenhuma falha e avanço, λ e potência inalterados (≤ 0,1 %) em 3000 e 6000 RPM: o modelo elétrico do TPS (4,65 V e 4,5 V) não afeta a conclusão.
+   Teste de regressão: `PhysicalDiagnostics.Tps2TrackConsistency`. O mapa de avanço contra a carga é o da Tabela P1 (3000 RPM: 28,5°, 22,8°, 19,4°
+   para pedal 30, 50, 70 %; 18,57° constante de 80 a 100 %).
 2. **Trilha 1 do TPS satura em 24° no modelo** (IRAM 66h = 238 para qualquer pedal >= 30 %, Tabela P1). Portanto IRAM 66h não
    distingue plena carga; **corrijo minha leitura anterior**, que tratava 238 como "TPS saturado em plena carga".
 3. **Sem enriquecimento de plena carga:** λ = 0,99 a 1,01 de pedal 70 % a 100 % (Tabela P1); a ROM está em malha fechada
    (forçar a sonda muda λ de 0,98 a 1,08, Tabela P4). Em meia carga a 6000 RPM λ cai a 0,79 (pedal 50 %, 6000 RPM, fora da faixa útil).
-   Sem evidência de enriquecimento por TPS no regime testado.
-4. **Estado térmico:** 60 °C e 105 °C mudam potência em menos de 2 % e avanço em ≤ 0,9°. Água a 75 °C **estola** o motor em 3000 e
-   6000 RPM (`INVALID:stall`), anomalia não explicada: o limiar `ROM[721Dh]=27h` em IRAM 63h cai nesta faixa (~75 °C);
-   hipótese, não demonstrada, de que a troca da matriz de avanço/combustível nesse limiar desestabiliza a marcha lenta
-   da bancada (ver G).
+   Sem evidência de enriquecimento por TPS no regime testado. **Teste com a malha lambda travada nos extremos (Tabela P14):** com a sonda
+   dizendo "pobre" o tempo todo (ADC5 = 0 mV) a ROM enriquece ao máximo e atinge só λ = 0,98 (3000 RPM) e 0,99 (4500 RPM) em plena carga;
+   com "rico" (4500 mV) vai a λ = 1,05. A autoridade total da malha em plena carga é ≈ ±3 %, centrada acima de 1,0; um enriquecimento de
+   plena carga (λ ≈ 0,85–0,9) não aparece em nenhum dos dois extremos. A interpretação é de que **esta ROM não tem enriquecimento de plena carga** dentro do
+   alcance do integrador; não exclui lógica ativada por condição não testada (carga, rotação ou temperatura fora da faixa).
+4. **Estado térmico e o "estol" a 70–80 °C (resolvido).** Água a 60, 65, 85, 90 e 105 °C mudam a potência em ≤ 2 % e o avanço em ≤ 0,9°. Entre 70 e 80 °C o ponto
+   saía `INVALID:stall`. Investigado: nessa faixa o motor **não pega** com o arranque padrão da bancada (495 000 ticks ≈ 0,5 s; nenhuma janela de planta, bit F850.1 ligado);
+   com 1,5 M ticks de arranque ele pega, marcha lenta de 909–912 RPM, e a plena carga é normal (Tabelas P15; 3000 RPM 31,3–31,5 kW, 6000 RPM 38,9–39,2 kW).
+   A hipótese anterior de que o limiar `ROM[721Dh]` (21h no arquivo) causasse o estol foi **refutada**: modificar esse byte numa cópia temporária da ROM (00h, 60h, FFh) não mudou a janela (Tabela P16).
+   O mecanismo (a ROM precisa de arranque mais longo nessa faixa, provavelmente lógica de partida) não foi decodificado; é artefato do tempo de arranque do cenário e não afeta a plena carga.
 5. **Histórico e reinícios (itens 6 e 7 dos experimentos temporais, agora como experimentos separados):**
    - *Item 6, reinício com estado retido:* `MA17_WARM_REBOOT_TICK` (reinício da CPU preservando toda a RAM) no meio da marcha
      lenta e partida morna encadeada (Tabela P5, POF = 0). Marcha lenta 908,6 → 934,1 RPM (+2,8 %), avanço 8,62° → 8,21°; plena carga
@@ -371,6 +555,8 @@ Leitura dos resultados:
      para F80Ch (estado do integrador lambda), F83Dh (posição do atuador de marcha lenta: 07h → 0Ch no reboot frio),
      F869h (adaptação de purga) e F8E8h/F8E9h (contador da tabela lambda). Não variaram F86Ch (correção de longo prazo) e F86Fh
      (aditivo de marcha lenta). A potência de plena carga não depende desse estado (≤ 0,1 %).
+   - *Histórico longo (~5 min simulados):* 300 M ticks de marcha lenta com XRAM retida e depois pontos de plena carga com esse estado (Tabela P17): marcha lenta
+     de 914 a 911 RPM, avanço 8,46° → 8,65°, λ ≈ 1,005; plena carga com estado longo vs fresco: −0,03 a −0,15 kW (−0,3 % a −0,4 %), avanço ≤ 0,35°.
    - Histórico por tempo de marcha lenta (6, 12, 24 M ticks) e temperatura da água (60/105 °C): ≤ 2 % (Tabelas 6 e P3). Carga parcial
      prolongada e longas operações em várias temperaturas: cobertas só por esta cadeia de pontos, não por horas simuladas.
 6. **Autoadaptação não demonstrada:** nenhum caso exibiu a cadeia estado → rotina → avanço/combustível → potência, com exceção
@@ -432,10 +618,11 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 
 - Ordem de grandeza real da bomba-d'água e razão de polias (medição no carro ou ficha técnica).
 - Lei de energia/carga da bobina e seu efeito físico no torque (hoje proporcional ao dwell).
-- Tensão real da trilha 2 do TPS a 90° no carro (o limiar F0h da ROM = 4,71 V decide se o recurso de maior avanço, IRAM 6Dh.0, liga).
+- Tensão real da trilha 2 do TPS a 90° no carro: deixou de afetar a potência (Tabela P18), só decide se IRAM 6Dh.0 liga; o pull-up de TPS ausente e a regra exata
+  de contradição entre pistas não foram decodificados.
 - Qual rotina consome IRAM 6Dh.0 para elevar o avanço (nexo medido, não rastreado instrução a instrução) e se há enriquecimento por TPS:
   nenhum foi observado até 100 % de pedal, mas só com TPS2 abaixo de F0h ou forçado a 5 V.
-- Estol com água a 75 °C na bancada (60 e 105 °C não estolam): mecanismo desconhecido (limiar `ROM[721Dh]=27h` é hipótese).
+- Janela 70–80 °C: a ROM precisa de arranque maior que 0,5 s para pegar (Tabela P15); o mecanismo de partida não foi decodificado. Não é pane nem limiar `721Dh`.
 - Decodificação completa do deslocamento R7 da tabela de DTC `6E27h`; polaridade física dos divisores NTC e curvas reais.
 - Histórico de longa duração (horas) e carga parcial prolongada; a lógica de congelar/restaurar F86Ch (`1722h`) não teve suas condições (`27h.6`, `2Fh.1`) decodificadas.
 - Temperatura de admissão real do carro em plena carga (modelo térmico não validado).
@@ -447,6 +634,6 @@ Regressão: `ctest` completo, 350 de 350 testes passam com as flags `--exp` pres
 1. Substituir o modelo da bomba por uma curva limitada (potência de dezenas a poucas centenas de W) e recalibrar o conjunto; maior ganho (até 13 kW a 6000 RPM).
 2. Decidir a lei do torque × carga da bobina; a opção `spark_torque_saturate` mostra +4–5 kW.
 3. Padronizar a comparação isolada × ROM (acessórios, temperatura do ar, força de centelha).
-4. Medir a tensão real da trilha 2 do TPS a 90° e, se passar de 4,71 V, ajustar a curva elétrica do TPS (a ROM ganha 5,6–8° de avanço).
-   Rastrear o consumo de IRAM 6Dh.0 e investigar o estol a 75 °C.
+4. Medir a tensão real das duas trilhas do TPS (curva elétrica do modelo é estimativa) e decodificar a regra de contradição entre pistas e o consumo de IRAM 6Dh.0.
+   Investigar por que a janela 70–80 °C exige arranque mais longo.
 5. Repetir a matriz com mais pontos de RPM e com 117/123° de PMS.

@@ -1,0 +1,7 @@
+label,target_rpm,state,reason,shaft_power_kw,adv_mean_deg,lambda
+coolant=70 starter=1.5M,3000.0,ACCEPTED,none,31.4697,19.007,1.0031
+coolant=70 starter=1.5M,6000.0,ACCEPTED,none,39.2281,29.872,0.9902
+coolant=75 starter=1.5M,3000.0,ACCEPTED,none,31.3858,18.841,1.0045
+coolant=75 starter=1.5M,6000.0,ACCEPTED,none,39.075,29.672,0.9868
+coolant=80 starter=1.5M,3000.0,ACCEPTED,none,31.2837,18.7,1.0064
+coolant=80 starter=1.5M,6000.0,ACCEPTED,none,38.9369,29.673,0.9976

@@ -1,0 +1,20 @@
+group,label,target_rpm,state,reason,shaft_power_kw,adv_mean_deg,lambda,iram60_tps2,iram6d
+xram,base,3000.0,ACCEPTED,none,31.3103,18.562,1.0052,230,60
+xram,tps2_force_4.5V_step,3000.0,ACCEPTED,none,32.4057,26.047,0.9901,230,52
+xram,tps2_force_5.0V_step,3000.0,ACCEPTED,none,32.0277,26.046,1.0005,255,61
+xram,tps2_force_0.5V_step,3000.0,INVALID,timeout,0.0,0.0,0.0,0,0
+patch_721D,721D=00 coolant=70C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=00 coolant=75C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=00 coolant=80C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=00 coolant=90C,3000.0,ACCEPTED,none,31.3402,18.571,1.0046,230,60
+patch_721D,721D=FF coolant=70C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=FF coolant=75C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=FF coolant=80C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=FF coolant=90C,3000.0,ACCEPTED,none,31.3262,18.583,1.0049,230,60
+patch_721D,721D=60 coolant=70C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=60 coolant=75C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=60 coolant=80C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,721D=60 coolant=90C,3000.0,ACCEPTED,none,31.3103,18.562,1.0052,230,60
+patch_721D,original coolant=70C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,original coolant=75C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
+patch_721D,original coolant=80C,3000.0,INVALID,stall,0.0,0.0,0.0,0,0
