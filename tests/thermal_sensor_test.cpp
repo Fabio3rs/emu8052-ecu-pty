@@ -39,12 +39,35 @@ TEST(ThermalState, ThermostatOpensAt87CAndFanUsesHysteresis) {
     EXPECT_FALSE(state.fan_on());
     state.advance_ticks(990000, 0.0, 2000.0);
     EXPECT_GT(state.thermostat_open_fraction(), 0.0);
-    engine::ThermalState hot(20.0, 101.0, parameters);
+    // Cool-down with the ambient path on: the radiator stops at the thermostat (87 C),
+    // so only the ambient conduction can bring the coolant under the fan-off 86 C.
+    engine::ThermalParameters cooling = parameters;
+    cooling.coolant_capacity_j_per_k = 100.0;
+    cooling.coolant_ambient_w_per_k = 5.0;
+    engine::ThermalState hot(20.0, 101.0, cooling);
     hot.advance_ticks(990);
     EXPECT_TRUE(hot.fan_on());
-    hot.advance_ticks(9900000);
+    hot.advance_ticks(300000000);
     EXPECT_FALSE(hot.fan_on());
-    EXPECT_LT(hot.coolant_c(), 95.0);
+    EXPECT_LT(hot.coolant_c(), 92.0); // old limit 95 (fan on 100 / off 95); manual p.17 now
+}
+
+TEST(ThermalState, ManualThermostatAndFanThresholds) { // manual B.500.837 p.17
+    engine::ThermalParameters p;
+    p.coolant_capacity_j_per_k = 1.0e9; // frozen temperature
+    p.coolant_wall_w_per_k = 0.0;
+    p.coolant_ambient_w_per_k = 0.0;
+    EXPECT_DOUBLE_EQ(engine::ThermalState(20.0, 98.0, p).thermostat_open_fraction(), 1.0);
+    EXPECT_NEAR(engine::ThermalState(20.0, 92.5, p).thermostat_open_fraction(), 0.5, 1e-9);
+    EXPECT_DOUBLE_EQ(engine::ThermalState(20.0, 87.0, p).thermostat_open_fraction(), 0.0);
+    engine::ThermalState below(20.0, 91.5, p);
+    below.advance_ticks(990);
+    EXPECT_FALSE(below.fan_on());
+    engine::ThermalState above(20.0, 92.5, p);
+    above.advance_ticks(990);
+    EXPECT_TRUE(above.fan_on());
+    above.advance_ticks(990);
+    EXPECT_TRUE(above.fan_on()); // hysteresis holds between 86 and 92
 }
 
 TEST(ThermalState, VehicleAirflowIncreasesRadiatorCooling) {

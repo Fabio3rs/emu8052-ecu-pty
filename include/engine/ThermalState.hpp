@@ -13,13 +13,18 @@ struct ThermalParameters {
     double wall_air_w_per_k = 12.0;
     double air_ambient_w_per_k = 20.0;
     double coolant_ambient_w_per_k = 5.0;
+    // Manual B.500.837 p.17: thermostat starts to open at 85-89 C and is fully open
+    // at 96-100 C (centres 87 / 98). Previous code: 87 / 95.
     double thermostat_open_c = 87.0;
-    double thermostat_full_open_c = 95.0;
+    double thermostat_full_open_c = 98.0;
     double radiator_still_w_per_k = 30.0;
     double radiator_speed_w_per_k_per_kmh = 3.0;
     double radiator_fan_w_per_k = 260.0;
-    double fan_on_c = 100.0;
-    double fan_off_c = 95.0;
+    // Manual p.17: fan on at 90-94 C (centre 92), off at 85-89 C. Off is set to 86 C,
+    // inside that range and 1 K below the thermostat start, so the hysteresis can
+    // complete (the radiator conductance vanishes at 87 C). Previous code: 100 / 95.
+    double fan_on_c = 92.0;
+    double fan_off_c = 86.0;
     double air_sensor_tau_s = 0.3;
     double coolant_sensor_tau_s = 1.0;
 };

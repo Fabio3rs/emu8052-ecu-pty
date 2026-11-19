@@ -95,8 +95,8 @@ e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
 | `dilution_k`, `dilution_x0` | 1,0 / 0,10 | — | estimativa (F-34) |
 | g(λ) | picos 0,875 (+5,5%) e 1,10 (+3%), queda acima de 1,45 | — | calibrado: propriedades de F-32 |
 | Atrito (`FrictionParams`) | c0=0,95 bar, c1=0,06 bar·s/m, c2=0,0035 bar·s²/m² | — | calibrado: 12,6–16 N·m na lenta e 25–35 N·m a 6000 (F-42) |
-| Ventilador | liga 92 / desliga 87 | °C | manual p.17 (centros) |
-| Termostato | 87 → 98 | °C | manual p.17 (centros) |
+| Ventilador | liga 92 / desliga 86 | °C | manual p.17 (liga 90–94, desliga 85–89); 86 para a histerese completar (radiador zera em 87) |
+| Termostato | 87 → 98 (ligado em `ThermalState`) | °C | manual p.17 (início 85–89, total 96–100) |
 | Embreagem | μ·F·n·r_e, r_e = 81,8 mm | mm | manual (Ø 190/134), F-49 |
 
 ## 5. O que continua estimado
@@ -159,4 +159,6 @@ Todos os valores antigos estão nos comentários dos arquivos. Preset único:
 | `test_lab_physical_motion` | Número mágico (aliasing de 50 ms a 1200 RPM) | melhor par consecutivo de quadros muda > 5% |
 | `runner_snapshot_smoke` (DrivetrainCli) | Número mágico | carga 24→1 N·m e capacidade de embreagem 200→40 N·m (10% de 200 N·m estola o motor calibrado) |
 | `LabCapture.BatteryDebugCompact900x620` | GUI (texto longo demais) | linha do inspetor encurtada: `P1.1? 138 #13` em vez de `(13 pulses)` |
+| `thermal_sensor_test`, `test_sevel_long_run` | Fórmula antiga | térmica do manual (87→98 °C; ventilador 92/86); refrigerante oscila e fica entre 86 e 100 °C |
+| `test_tps_bench_profile`, `test_sevel_long_run` (rpm), `test_physical_intake` | Número mágico (amostra única) | média da janela (5 s ou 30 s) em vez de uma amostra final; só o 1º evento CC3 após a falha precisa coincidir |
 | `physics_formulas_test`, `test_dyno_sweep`, `test_idle_acceptance` | Novos | fórmulas puras, contrato do CSV do Dyno e aceitação da lenta sem carga |

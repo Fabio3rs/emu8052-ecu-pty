@@ -1,5 +1,6 @@
 """Fiat ROM response to an independently sourced TPS electrical profile."""
 
+import json
 import os
 import re
 import subprocess
@@ -33,8 +34,17 @@ def run(extra, stop_ticks=20000000):
         assert match, result.stdout[-2000:]
         return dict(part.split("=") for part in match.group(1).split())
 
-    return {name: summary(name) for name in
-            ("CRANK", "TPS", "INTAKE", "DIAG", "IDLE")}
+    parsed = {name: summary(name) for name in
+              ("CRANK", "TPS", "INTAKE", "DIAG", "IDLE")}
+    # Mean physical rpm over the last 5 s (one "combustion" event per second): the ROM
+    # idle loop swings by +-100 rpm over ~10 s, so one end sample is not a regulation
+    # metric (it moved 830..1075 rpm in the same run).
+    tail = [json.loads(line)["rpm"] for line in result.stdout.splitlines()
+            if line.startswith('{"type":"combustion"') and
+            json.loads(line)["tick"] > stop_ticks - 5_000_000]
+    assert len(tail) >= 4, tail
+    parsed["CRANK"]["tail_mean_rpm"] = str(sum(tail) / len(tail))
+    return parsed
 
 
 invalid = subprocess.run(
@@ -61,7 +71,9 @@ assert int(bench["TPS"]["ram6f"]) < int(default["TPS"]["ram6f"])
 # run settles inside that tolerance, not a requirement, so it is not asserted.
 for result in (default, bench):
     target = int(result["CRANK"]["ram46"]) * 25
-    assert abs(float(result["CRANK"]["rpm"]) - target) <= max(50.0, 0.05 * target), (result["CRANK"]["rpm"], target)
+    # Old: the final sample within max(50 rpm, 5 %) of the target.
+    assert abs(float(result["CRANK"]["tail_mean_rpm"]) - target) <= max(50.0, 0.05 * target), (
+        result["CRANK"]["tail_mean_rpm"], result["CRANK"]["rpm"], target)
 
 # 9–12 mm spans approximately 18–25 degrees through the two-track overlap.
 # The earlier straight-line track 2 fit raised ROM TPS fault bits at 10/11 mm.
