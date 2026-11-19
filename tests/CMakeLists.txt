@@ -220,3 +220,8 @@ add_test(NAME PhysicalEnergy.RomIdleLedger
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_rom_energy_balance.py
             $<TARGET_FILE:emu8051-tty>
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+
+add_test(NAME ControlLimits.CliAndPlant
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_control_limits.py
+            $<TARGET_FILE:emu8051-tty>
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)

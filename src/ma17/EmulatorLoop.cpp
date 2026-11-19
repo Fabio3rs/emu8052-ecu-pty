@@ -48,7 +48,7 @@ static void print_plant_line(const EmulatorLoopContext &context) {
                     "\"pumping_nm\":%.3f,\"accessory_nm\":%.3f,"
                     "\"shaft_nm\":%.3f,\"brake_absorbed_nm\":%.3f,\"net_nm\":%.4f,"
                     "\"shaft_kw\":%.4f,\"kinetic_j\":%.4f,\"energy_residual_rel\":%.3e,"
-                    "\"window_id\":%llu,\"tick_start\":%lld,\"tick_end\":%lld,"
+                    "\"throttle_rad\":%.5f,\"window_id\":%llu,\"tick_start\":%lld,\"tick_end\":%lld,"
                     "\"imep_bar\":%.3f,\"bmep_bar\":%.3f,"
                     "\"work_cycle_j\":%.2f,\"ve_ambient\":%.4f,"
                     "\"ve_manifold\":%.4f,\"air_mg_cyl_cycle\":%.2f,"
@@ -60,7 +60,7 @@ static void print_plant_line(const EmulatorLoopContext &context) {
                     w.friction_torque_nm, w.pumping_torque_nm,
                     w.accessory_torque_nm, w.shaft_torque_nm, w.brake_absorbed_nm,
                     w.net_torque_nm, w.shaft_power_kw, w.kinetic_j, w.energy_residual_rel,
-                    w.window_id, w.tick_start, w.tick_end,
+                    w.throttle_angle_rad, w.window_id, w.tick_start, w.tick_end,
                     w.imep_bar, w.bmep_bar, w.work_per_cycle_j, w.ve_ambient,
                     context.intake->last_ve_manifold(), w.air_mg_per_cyl_cycle,
                     w.fuel_g_s, w.bsfc_g_kwh, w.lambda_cylinders,
@@ -763,6 +763,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
                 torques.starter_nm = plant_starter_nm;
                 torques.drivetrain_nm =
                     context.drivetrain ? context.drivetrain->crank_torque_nm() : 0.0;
+                torques.throttle_angle_rad =
+                    context.throttle ? context.throttle->angle_rad() : 0.0;
                 context.plant_window.set_inertia(context.physical_crank->inertia_kg_m2());
                 context.plant_window.accumulate(
                     context.ticks, 1.0 / 990000.0,

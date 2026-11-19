@@ -1,3 +1,4 @@
+#include "engine/ControlLimits.hpp"
 #include "lab/SdlDisplay.hpp"
 
 #include "lab/AnalogTrigger.hpp"
@@ -1075,7 +1076,7 @@ void draw_lab_buttons(const LayoutState &layout_state, SDL_Renderer *screen,
             const SDL_FRect fill_bar{
                 box.x + 2.0f, box.y + box.h - 5.0f * scale,
                 (box.w - 4.0f) *
-                    static_cast<float>(std::clamp(load_nm / 60.0, 0.0, 1.0)),
+                    static_cast<float>(std::clamp(load_nm / engine::lab_load_slider_span_nm, 0.0, 1.0)),
                 3.0f * scale};
             SDL_SetRenderDrawColor(screen, 99, 211, 220, 255);
             SDL_RenderFillRect(screen, &fill_bar);
@@ -1256,7 +1257,7 @@ void draw_pedal_slider(const LayoutState &layout_state, SDL_Renderer *screen,
     const SDL_FRect box = pedal_slider_rect(layout_state, width, height);
     const float scale = lab_ui_scale(width, height);
     const float fraction =
-        static_cast<float>(std::clamp(pedal_pull_m / 0.025, 0.0, 1.0));
+        static_cast<float>(std::clamp(pedal_pull_m / engine::max_pedal_pull_m(), 0.0, 1.0));
     SDL_SetRenderDrawColor(screen, 29, 43, 55, 255);
     SDL_RenderFillRect(screen, &box);
     SDL_SetRenderDrawColor(screen, enabled ? 99 : 65, enabled ? 211 : 75,
@@ -1626,7 +1627,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 std::clamp(pedal_pull_m + (action == LabButtonAction::PedalUp
                                                ? pedal_step_m
                                                : -pedal_step_m),
-                           0.0, 0.025);
+                           0.0, engine::max_pedal_pull_m());
             break;
         }
         case LabButtonAction::Load:
@@ -1677,7 +1678,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     const auto set_pedal_from_pointer = [&](float x, int width, int height) {
         const SDL_FRect box = pedal_slider_rect(layout_state, width, height);
         pedal_user_override = true;
-        pedal_pull_m = 0.025 * static_cast<double>(
+        pedal_pull_m = engine::max_pedal_pull_m() * static_cast<double>(
                                    std::clamp((x - box.x) / box.w, 0.0f, 1.0f));
     };
     const auto set_load_from_pointer = [&](float x, int width, int height) {
@@ -1685,7 +1686,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             static_cast<std::size_t>(LabButtonAction::Load), width, height,
             layout_for(layout_state, width, height).left.w);
         load_user_override = true;
-        load_nm = 60.0 * static_cast<double>(
+        load_nm = engine::lab_load_slider_span_nm * static_cast<double>(
                              std::clamp((x - box.x) / box.width, 0.0f, 1.0f));
         if (load_nm > 0.0)
             remembered_load_nm = load_nm;

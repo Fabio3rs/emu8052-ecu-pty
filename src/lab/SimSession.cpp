@@ -1,3 +1,4 @@
+#include "engine/ControlLimits.hpp"
 #include "lab/SimSession.hpp"
 
 #include <cstdio>
@@ -245,9 +246,9 @@ bool valid_control(const AppliedControl &control) {
         return false;
     switch (control.type) {
     case ControlType::Pedal:
-        return control.value >= 0.0 && control.value <= 0.025;
+        return control.value >= 0.0 && control.value <= engine::max_pedal_pull_m();
     case ControlType::Load:
-        return control.value >= 0.0 && control.value <= 60.0;
+        return control.value >= 0.0 && control.value <= engine::max_brake_nm();
     case ControlType::VehicleSpeed:
         return control.value >= 0.0 && control.value <= 200.0;
     case ControlType::Gear:
@@ -502,11 +503,11 @@ void SimSession::set_speed(double speed) {
 }
 
 void SimSession::set_pedal(double pull_m) {
-    schedule_control({0, ControlType::Pedal, std::clamp(pull_m, 0.0, 0.025)});
+    schedule_control({0, ControlType::Pedal, std::clamp(pull_m, 0.0, engine::max_pedal_pull_m())});
 }
 
 void SimSession::set_load(double torque_nm) {
-    schedule_control({0, ControlType::Load, std::clamp(torque_nm, 0.0, 60.0)});
+    schedule_control({0, ControlType::Load, std::clamp(torque_nm, 0.0, engine::max_brake_nm())});
 }
 
 void SimSession::set_vehicle_speed(double kmh) {

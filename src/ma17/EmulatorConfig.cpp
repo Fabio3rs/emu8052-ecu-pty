@@ -1,6 +1,10 @@
 #include "ma17/EmulatorConfig.hpp"
 
+#include "engine/ControlLimits.hpp"
+#include "ma17/DynoScenario.hpp"
+
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -212,7 +216,8 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
             parse_positive(argv[++index], config.load_step_tick)) continue;
         if (index + 1 < argc && strcmp(argv[index], "--load-nm") == 0) {
             long long torque_nm = 0;
-            if (parse_positive(argv[++index], torque_nm) && torque_nm <= 100) {
+            if (parse_positive(argv[++index], torque_nm) &&
+                static_cast<double>(torque_nm) <= engine::max_brake_nm()) {
                 config.load_torque_nm = static_cast<double>(torque_nm);
                 continue;
             }
@@ -396,12 +401,23 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
             }
         }
         if (index + 1 < argc && strcmp(argv[index], "--pedal-mm") == 0) {
-            long long millimetres = 0;
-            if (parse_positive(argv[++index], millimetres) &&
-                millimetres <= 40) {
-                config.pedal_pull_m = static_cast<double>(millimetres) / 1000.0;
+            errno = 0;
+            char *end = nullptr;
+            const double millimetres = std::strtod(argv[++index], &end);
+            if (!errno && end != argv[index] && *end == '\0' &&
+                std::isfinite(millimetres) && millimetres > 0.0 &&
+                millimetres / 1000.0 <= engine::max_pedal_pull_m()) {
+                config.pedal_pull_m = millimetres / 1000.0;
                 continue;
             }
+        }
+        if (strcmp(argv[index], "--dyno-scenario") == 0) {
+            DynoScenario{}.apply(config); // later options override single fields
+            continue;
+        }
+        if (strcmp(argv[index], "--pedal-full-open") == 0) {
+            config.pedal_pull_m = engine::max_pedal_pull_m();
+            continue;
         }
         fprintf(stderr, "Invalid emulator argument: %s\n", argv[index]);
         return std::nullopt;

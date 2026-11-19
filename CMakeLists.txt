@@ -1109,6 +1109,12 @@ if(ENABLE_SEVEL_MA17_LAB)
         add_test(NAME LabSession.PauseAndControls
             COMMAND lab_session_smoke
                 ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+        add_executable(lab_control_limits tests/lab_control_limits_test.cpp
+            src/lab/SimSession.cpp)
+        target_link_libraries(lab_control_limits PRIVATE emu8051-tty_lib)
+        add_test(NAME ControlLimits.LabPath
+            COMMAND lab_control_limits
+                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
         add_executable(lab_session_fault tests/lab_session_fault_test.cpp
             src/lab/SimSession.cpp)
         target_link_libraries(lab_session_fault PRIVATE emu8051-tty_lib)

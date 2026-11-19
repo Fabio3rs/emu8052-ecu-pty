@@ -31,6 +31,7 @@ struct PlantWindowResult {
     // Energy ledger of the window [J]: sources positive, sinks as magnitudes.
     double w_indicated_j = 0.0, w_friction_j = 0.0, w_pumping_j = 0.0, w_accessory_j = 0.0;
     double w_brake_j = 0.0, w_starter_j = 0.0, w_drivetrain_j = 0.0;
+    double throttle_angle_rad = 0.0;   // time-weighted mean effective throttle angle
     double omega_start_rad_s = 0.0, omega_end_rad_s = 0.0;
     double inertia_kg_m2 = 0.0;
     double kinetic_j = 0.0;            // 1/2 J (omega_end^2 - omega_start^2)
@@ -59,6 +60,7 @@ struct TickTorques {
     double brake_nm = 0.0;       // external brake / scenario load (absorbing, >= 0)
     double starter_nm = 0.0;     // driving, >= 0 while the starter is engaged
     double drivetrain_nm = 0.0;  // signed torque of the clutch on the crank
+    double throttle_angle_rad = 0.0; // effective plate angle this tick
 };
 
 class PlantWindow {
@@ -89,6 +91,7 @@ class PlantWindow {
         w_brake_ += t.brake_nm * d_angle_rad;
         w_start_ += t.starter_nm * d_angle_rad;
         w_drv_ += t.drivetrain_nm * d_angle_rad;
+        throttle_time_ += t.throttle_angle_rad * dt_s;
     }
     void add_mass(double air_to_cylinders_kg, double injected_fuel_kg,
                   double delivered_fuel_kg) {
@@ -121,6 +124,7 @@ class PlantWindow {
         r.w_brake_j = w_brake_;
         r.w_starter_j = w_start_;
         r.w_drivetrain_j = w_drv_;
+        r.throttle_angle_rad = time_ > 0.0 ? throttle_time_ / time_ : 0.0;
         r.omega_start_rad_s = omega_start_;
         r.omega_end_rad_s = omega_end_;
         r.inertia_kg_m2 = inertia_;
@@ -159,14 +163,14 @@ class PlantWindow {
 
   private:
     void reset() {
-        angle_ = time_ = w_ind_ = w_fric_ = w_pump_ = w_acc_ = w_brake_ = w_start_ = w_drv_ = 0.0;
+        angle_ = time_ = w_ind_ = w_fric_ = w_pump_ = w_acc_ = w_brake_ = w_start_ = w_drv_ = throttle_time_ = 0.0;
         air_kg_ = inj_kg_ = fuel_cyl_kg_ = 0.0;
     }
     double displacement_m3_;
     int cylinders_;
     double window_angle_rad_;
     double angle_ = 0, time_ = 0, w_ind_ = 0, w_fric_ = 0, w_pump_ = 0, w_acc_ = 0, w_brake_ = 0,
-           w_start_ = 0, w_drv_ = 0;
+           w_start_ = 0, w_drv_ = 0, throttle_time_ = 0;
     long long tick_start_ = 0, tick_end_ = 0;
     double omega_start_ = 0, omega_end_ = 0, inertia_ = 0.2;
     double air_kg_ = 0, inj_kg_ = 0, fuel_cyl_kg_ = 0;

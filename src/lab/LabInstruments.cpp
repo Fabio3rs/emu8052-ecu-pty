@@ -1,3 +1,4 @@
+#include "engine/ControlLimits.hpp"
 #include "lab/LabInstruments.hpp"
 
 #include "constants.h"
@@ -2275,7 +2276,7 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
 
     const float pedal_frac = cable_available
                                  ? static_cast<float>(std::clamp(
-                                       snapshot.pedal_pull_m / 0.025, 0.0, 1.0))
+                                       snapshot.pedal_pull_m / engine::max_pedal_pull_m(), 0.0, 1.0))
                                  : 0.0f;
     const float fill_h = (slider_box.h - 2.0f) * pedal_frac;
     const SDL_FRect slider_fill{slider_box.x + 1.0f,
