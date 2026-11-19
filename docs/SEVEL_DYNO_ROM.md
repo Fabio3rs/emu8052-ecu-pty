@@ -237,7 +237,7 @@ Fases 1–2 no commit `f5ff2b6`; as Fases 5–6 em `b09207d`.
 | 4 Limites de controle e cenário | ACEITA | `c4e292b` |
 | 5 Bancada com a ROM (3000 RPM) | ACEITA | `8e437df` |
 | 6 Varredura × PMS | ACEITA | `b09207d` |
-| 7 Documentação | ver `git log` | — |
+| 7 Documentação | ACEITA | `ceace3f` (correções de proveniência: `f5ff2b6`, `3c7aa78`, `2e8af74`) |
 
 ## Limitações
 
