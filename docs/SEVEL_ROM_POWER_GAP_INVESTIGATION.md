@@ -159,8 +159,17 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   14 dinâmicos, 339 de estado lento e 44 só de inicialização/quase constantes. A classificação é por contagem e **não** prova adaptação
   (muitos endereços de estado lento são buffers e contadores); serve de índice para quem decodificar as rotinas. Cada linha traz os PCs que escrevem (±1 instrução).
 - **Regra de falha do TPS (`1047h`..`1150h`, decodificação parcial).** Limiares por pista geram os bits B.0–B.7 (TPS2 ≥ F0h liga B.7 e `6Dh.0`; TPS1 é comparado com FAh e 07h); `RAM_28.1` = OR de B.0–B.4 e
-  `RAM_28.2` = OR de B.4–B.7; esses flags são debouncados por contadores (confirmação em 0Ah) para os bits de F84F e, ligados, selecionam o TPS de fallback `ROM[72A1h]` e zeram R2. A regra
-  exata de contradição entre as duas pistas (e o pull-up de sinal ausente) não foi decodificada além disso; o comportamento é caracterizado pelos testes P18 a P20.
+  `RAM_28.2` = OR de B.4–B.7; esses flags são debouncados por contadores (confirmação em 0Ah) para os bits de F84F e, ligados, selecionam o TPS de fallback `ROM[72A1h]` e zeram R2. Condições por limiar lidas em `1047h`..`110Ch` (R2 = IRAM 60h = TPS2, R4 = IRAM 66h = TPS1; volts = código × 5/255), atribuições de bit por leitura do assembly e não verificadas
+  instrução a instrução em simulação:
+  - TPS1 < 07h (0,14 V): `B.0` (pista 1 em curto ao GND/aberta).
+  - TPS2 ≥ F0h (4,71 V): `B.7`, `PSW.5` e `6Dh.0`; com TPS1 ≥ FAh (4,90 V) também `B.3`.
+  - TPS1 ≥ DCh (4,31 V) com TPS2 < 12h (0,35 V): `B.2`/`B.6` (pista 1 alta com pista 2 baixa, contradição).
+  - TPS1 < DFh (4,37 V) com TPS2 ≥ 8Dh (2,76 V): `B.1`/`B.5` (pista 2 alta sem a pista 1 no topo, contradição).
+  - TPS2 > TPS1 − 5 na faixa intermediária: `B.4` (pistas fora de proporção).
+  Agregação: `RAM_28.1` = OR(B.0..B.4), `RAM_28.2` = OR(B.4..B.7), depois debounce (confirmação em 0Ah).
+  Confirmações dinâmicas: TPS2 em 5 V com a pista 1 baixa liga F84F.2 (regra B.1/B.5); TPS1 em 5 V com a pista 2 baixa liga F84F.1 (B.2/B.6); curvas contínuas com TPS1 ≥ DFh e
+  TPS2 até 5 V não ligam falha (Tabelas P18–P20). **Não explicado por essas regras:** os dois canais abertos em 5 V ou em 2,5 V a partir de ocioso ligam F84F = 06h (bits 1 e 2; o caso 2,5 V é coerente com B.4, o de 5 V
+  exigiria também a condição do interruptor de lenta, não decodificada), e o pull-up de sinal ausente em si. A regra fica caracterizada, não provada.
 - **Salvar/restaurar da correção de longo prazo** (`1722h`..`176Dh`, IRAM A7h-ABh): quando `RAM_27.6` está ligado e `B.1` limpo, o byte XRAM F86Ch (correção de
   combustível de longo prazo, posição 5 da coleta F4) é copiado para a IRAM superior @AAh; após uma contagem regressiva em IRAM @97h (decrementada com
   `RAM_2D.5` e `.6`) e `RAM_29.5` ligado, o valor salvo é escrito de volta em F86Ch. É a única escrita direta de F86Ch na ROM, um mecanismo de
