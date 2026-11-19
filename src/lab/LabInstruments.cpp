@@ -2824,8 +2824,27 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                       snapshot.intake_available);
 
     const SDL_FRect ve_box = cell(layout.volumetric_efficiency);
+    // VE and the energy balance come from the plant window (N/D until the first
+    // 20-cycle window closes or while the crank is not turning).
+    const bool plant_ok = snapshot.crank_available && snapshot.plant_window.valid &&
+                          snapshot.plant_window.mean_rpm > 50.0;
+    const double ve_percent = snapshot.plant_window.ve_ambient * 100.0;
+    char ve_str[24];
+    std::snprintf(ve_str, sizeof(ve_str), plant_ok ? "%.0f %%" : "N/D",
+                  ve_percent);
     draw_profile_dial(renderer, font, ve_box, profile::volumetric_efficiency,
-                      0.0, "N/D", -1.0f, ui_scale, false);
+                      plant_ok ? ve_percent : 0.0, ve_str, -1.0f, ui_scale,
+                      plant_ok);
+    char ve_note[160];
+    const auto &pw = snapshot.plant_window;
+    std::snprintf(ve_note, sizeof(ve_note),
+                  plant_ok
+                      ? "T_b %.1f N.m  P %.1f kW (%.0f cv)  BMEP %.1f bar  "
+                        "air %.0f mg/cyl  window %.2f s"
+                      : "no plant window yet",
+                  pw.brake_torque_nm, pw.brake_power_kw,
+                  pw.brake_power_kw / 0.7355, pw.bmep_bar,
+                  pw.air_mg_per_cyl_cycle, pw.window_s);
     const std::string tach_note = p11_note(snapshot);
     draw_profile_tooltip(renderer, font, tach_box, profile::rpm, snapshot.tick,
                          snapshot.crank_available &&
@@ -2857,7 +2876,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
         snapshot.intake_available && std::isfinite(snapshot.air_in_kg_s), stale,
         ui_scale);
     draw_profile_tooltip(renderer, font, ve_box, profile::volumetric_efficiency,
-                         snapshot.tick, false, stale, ui_scale);
+                         snapshot.tick, plant_ok, stale, ui_scale, ve_note);
     const float fuel_row_h = 16.0f * ui_scale;
     const auto fuel_row = [&](float y) {
         return SDL_FRect{fuel_box.x, fuel_box.y + y * ui_scale, fuel_box.w,

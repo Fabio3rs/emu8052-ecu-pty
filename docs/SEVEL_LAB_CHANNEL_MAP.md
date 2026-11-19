@@ -230,8 +230,10 @@ first window closes (`plant_window.valid == false`) the channels are `N/D`:
 | Manifold air mass / temperature | `manifold_air_mass_kg`, `manifold_air_c` | `manifold_air_c` is the physical temperature; `intake_air_c` is the delayed ECU sensor |
 | Spark advance, MBT, spark efficiency, residual | `spark_advance_deg`, `mbt_deg`, `spark_efficiency`, `residual_fraction` | advance is deg BTDC measured from the spark event; depends on the candidate `tdc_phase_rad` |
 
-Torque/power gauges, the Torque/Power x RPM panel and the VE gauge in the GUI
-still need to be wired to these fields. Intake AFR, tank level, cylinder
+The **VE gauge** ("VE REF. AMBIENTE") is live from `plant_window.ve_ambient`; its
+tooltip shows brake torque, brake power (kW and cv), BMEP, air per cylinder-cycle and
+the window length. It is `N/D` until the first window closes or below 50 rpm. The
+Torque/Power x RPM panel (Oscilloscope) is not wired yet; use `sevel-dyno` CSVs. Intake AFR, tank level, cylinder
 pressure and exhaust flow are not published; their gauges must show `N/D` or
 remain absent; no widget may synthesize them from throttle angle or pulse count.
 An instrument with a defined channel but no valid current reading shows `--`

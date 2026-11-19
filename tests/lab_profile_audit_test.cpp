@@ -86,12 +86,15 @@ TEST(LabProfileAudit, EveryScaleIsConsistentInMetricAndImperial) {
 }
 
 TEST(LabProfileAudit, UnavailableInstrumentsAreMarkedNotZeroed) {
+    // VE now comes from the plant window (GOAL_SEVEL_FISICA); no instrument is
+    // left without a model. An instrument may still be marked undefined later,
+    // in which case it must say so in its source instead of being zeroed.
     const auto &ve = lab::profile::volumetric_efficiency;
-    EXPECT_TRUE(ve.undefined);
-    EXPECT_STREQ(ve.source, "unavailable");
+    EXPECT_FALSE(ve.undefined);
+    EXPECT_NE(std::string(ve.source).find("plant window"), std::string::npos);
     for (const Instrument *i : lab::profile::all_instruments)
         if (i->undefined)
-            EXPECT_EQ(i, &ve) << "only instruments without a model may be N/D";
+            EXPECT_STREQ(i->source, "unavailable") << i->title;
 }
 
 TEST(LabProfileAudit, SpecScalesMatchTheDocument) {

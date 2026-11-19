@@ -263,17 +263,20 @@ inline constexpr Instrument injector_pulses{
     0.0,
     0.0,
     0.0};
-inline constexpr Instrument volumetric_efficiency{"volumetric_efficiency",
-                                                  "VOLUMETRIC EFF.",
-                                                  "%",
-                                                  "unavailable",
-                                                  0.0,
-                                                  120.0,
-                                                  20.0,
-                                                  5.0,
-                                                  {},
-                                                  0,
-                                                  true};
+// Ambient-referenced VE of the calibrated plant (GOAL_SEVEL_FISICA, F-16/F-48):
+// sum(air to cylinders) / (rho_ref * Vd * cycles) over a 20-cycle window.
+inline constexpr Instrument volumetric_efficiency{
+    "volumetric_efficiency",
+    "VE REF. AMBIENTE",
+    "%",
+    "plant window ve_ambient: 20 cycles, rho_ref 100 kPa / 20 C",
+    0.0,
+    120.0,
+    20.0,
+    5.0,
+    {},
+    0,
+    false};
 
 // Every instrument, for audits (tests/lab_profile_audit_test.cpp).
 inline constexpr std::array<const Instrument *, 30> all_instruments{

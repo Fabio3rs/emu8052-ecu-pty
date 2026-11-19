@@ -130,8 +130,9 @@ Fases 5–6 parcialmente (CSVs e este documento).
    (λ_cil 1,88 medido na janela) contra o "penhasco" de f(λ) (centro 1,50) e interação
    com a lenta da ROM. O teste verifica o aumento 0,6 s após o pedal (10,6 M).
 2. **Lenta a 850 ± 50**: medida 908 RPM (ROM alvo 925), 8 RPM acima da banda do manual (seção 3).
-3. **Gauges da GUI** de VE, torque e potência, painel Torque/Potência × RPM e a malha PI da
-   bancada no `SimSession` ainda não foram ligados (dados já publicados, seção 1).
+3. **GUI:** o gauge de VE (`VE REF. AMBIENTE`) está ligado, e o tooltip traz torque, potência,
+   BMEP e ar por ciclo. Faltam o painel Torque/Potência × RPM e a malha PI da bancada no
+   `SimSession` (o controlador `DynoPi` existe e é testado).
 4. **Fases 4 (parte) e 5 pendentes**: borboleta compressível (F-10/F-11), contrapressão de
    escape (F-41), atrito Chen–Flynn no `CrankDynamics`, térmica do manual
    (termostato 87→98, ventilador 92/87), filme/evaporação (F-28/F-29), curva CEE digitalizada.
