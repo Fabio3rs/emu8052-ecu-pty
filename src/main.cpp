@@ -2,6 +2,7 @@
 // Renault MA1.7 uses a different clock and port wiring; no Renault runtime
 // profile is configured here.
 
+#include "engine/ControlLimits.hpp"
 #include <atomic>
 #include <array>
 #include <cerrno>
@@ -250,6 +251,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     CrankshaftSimulator sim;
     engine::CrankDynamics physical_crank;
     std::optional<engine::Drivetrain> drivetrain;
+    std::optional<ma17::DynoBench> dyno_bench;
     if (config->drivetrain) {
         drivetrain.emplace(config->vehicle_mass_kg,
             engine::transmission::reference_tire_radius_m, config->clutch_max_nm,
@@ -524,6 +526,16 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         loop.pedal_release_tick = config->pedal_release_tick;
         loop.pedal_rise_ticks = config->pedal_rise_ticks;
         loop.pedal_pull_m = config->pedal_pull_m;
+        if (config->dyno_point_rpm != 0.0) {
+            ma17::DynoBenchConfig bench_config;
+            bench_config.target_rpm = config->dyno_point_rpm;
+            bench_config.cycles = config->dyno_cycles;
+            dyno_bench.emplace(bench_config);
+            loop.bench = &*dyno_bench;
+            loop.pedal_step_tick = bench_config.settle_end_tick; // full open at the ramp start
+            loop.pedal_rise_ticks = bench_config.ramp_ticks;
+            loop.pedal_pull_m = engine::max_pedal_pull_m();
+        }
         loop.load_step_tick = config->load_step_tick;
         loop.load_torque_nm = config->load_torque_nm;
         loop.tps1_high_tick = config->tps1_high_tick;

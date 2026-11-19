@@ -411,6 +411,24 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                 continue;
             }
         }
+        if (index + 1 < argc && strcmp(argv[index], "--dyno-point") == 0) {
+            errno = 0;
+            char *end = nullptr;
+            const double rpm = std::strtod(argv[++index], &end);
+            if (!errno && end != argv[index] && *end == '\0' && rpm >= 800.0 && rpm <= 6500.0) {
+                config.dyno_point_rpm = rpm;
+                continue;
+            }
+        }
+        if (index + 1 < argc && strcmp(argv[index], "--dyno-cycles") == 0) {
+            errno = 0;
+            char *end = nullptr;
+            const double cycles = std::strtod(argv[++index], &end);
+            if (!errno && end != argv[index] && *end == '\0' && cycles >= 4.0 && cycles <= 400.0) {
+                config.dyno_cycles = cycles;
+                continue;
+            }
+        }
         if (strcmp(argv[index], "--dyno-scenario") == 0) {
             DynoScenario{}.apply(config); // later options override single fields
             continue;
@@ -513,6 +531,12 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                             "within the run\n");
             return std::nullopt;
         }
+        if (config.dyno_point_rpm != 0.0 &&
+            (config.pedal_step_tick || config.pedal_release_tick || config.pedal_pull_m != 0.0 ||
+             config.load_step_tick || config.load_torque_nm != 0.0)) {
+            fprintf(stderr, "--dyno-point owns the pedal and the brake: no pedal/load options\n");
+            return std::nullopt;
+        }
         const long long pedal_limit_tick = config.pedal_release_tick
                                                ? config.pedal_release_tick
                                                : config.stop_ticks;
@@ -612,7 +636,7 @@ std::optional<EmulatorConfig> parse_emulator_config(int argc, char **argv) {
                config.crank_sensor_restore_tick ||
                config.pedal_step_tick || config.pedal_release_tick ||
                config.pedal_rise_ticks ||
-               config.pedal_pull_m != 0.0 ||
+               config.pedal_pull_m != 0.0 || config.dyno_point_rpm != 0.0 ||
                config.tps_bench_profile ||
                config.idle_bridge_p15_p16 ||
                config.idle_bridge_reverse ||

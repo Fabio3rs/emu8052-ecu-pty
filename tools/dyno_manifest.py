@@ -1,6 +1,7 @@
 """Manifest helper shared by the dyno tools (GOAL_DYNO_ROM rule 6). LLM-written (Claude)."""
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -19,9 +20,12 @@ def git_state():
     def run(*args):
         return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
                               text=True).stdout.strip()
-    return {"commit": run("rev-parse", "HEAD"),
-            "dirty_files": [l for l in run("status", "--porcelain").splitlines()
-                            if not l.startswith("??")]}
+    # The native_lab sandbox cannot see .git: pass DYNO_CODE_SHA / DYNO_CODE_DIRTY from outside.
+    commit = run("rev-parse", "HEAD") or os.environ.get("DYNO_CODE_SHA", "")
+    dirty = [l for l in run("status", "--porcelain").splitlines() if not l.startswith("??")]
+    if not dirty and os.environ.get("DYNO_CODE_DIRTY"):
+        dirty = os.environ["DYNO_CODE_DIRTY"].split(",")
+    return {"commit": commit, "dirty_files": dirty}
 
 
 def write_manifest(directory, **fields):

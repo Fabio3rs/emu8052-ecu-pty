@@ -23,6 +23,8 @@ struct EmulatorConfig {
     long long pedal_release_tick = 0;
     long long pedal_rise_ticks = 0;
     double pedal_pull_m = 0.0;
+    double dyno_point_rpm = 0.0; // --dyno-point: ROM bench at this rpm (0 = off)
+    double dyno_cycles = 40.0;   // --dyno-cycles: measurement window
     bool tps_bench_profile = false;
     bool idle_bridge_p15_p16 = false;
     bool idle_bridge_reverse = false;
