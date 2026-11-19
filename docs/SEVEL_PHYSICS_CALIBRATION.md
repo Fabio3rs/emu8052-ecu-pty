@@ -32,34 +32,48 @@ de melhor consumo fica ~5% abaixo do piso, registrado, não ajustado).
 
 ## 3. Marcha lenta quente (ROM, `--physical-crank`, `--tps-bench-profile`)
 
-O ar de lenta é a soma do vazamento fixo da borboleta (`--throttle-leak-mm2`) e do
-batente variável que a ROM move (o atuador de lenta é o batente da borboleta: ele muda
-o TPS mínimo). A ROM continua controlando todos os sensores e atuadores; só o modelo
-físico e a calibração foram alterados.
+O ar de lenta é o vazamento fixo da borboleta (`--throttle-leak-mm2`) mais o batente
+variável que a ROM move (o atuador de lenta é o batente da borboleta e muda o TPS
+mínimo). A ROM continua controlando todos os sensores e atuadores; só o modelo físico
+e a calibração mudaram.
 
-Varredura do vazamento, 60 s ou 40 s simulados, coolant 90 °C, carga 24 N·m:
+**Cenário de aceitação** (`tests/test_idle_acceptance.py`): 90 °C, **sem carga externa,
+acessórios ligados** (`--accessory-load`: alternador 20 A + bomba d'água, F-45, ~2,9 N·m
+a 925 RPM, rampa de carga do alternador 550–750 RPM do virabrequim), vazamento 5 mm²,
+`--tdc-reference-deg 117`. Média das janelas de 20 ciclos após 25 M ticks:
 
-| Vazamento | RPM física (ROM alvo 925) | λ de escape | Observação |
-|---|---|---|---|
-| 3 mm² | 899–914 | ~1,00 | falha em cenários sem perfil de bancada (525 RPM) |
-| 5 mm² | 958–968 | 0,98–1,02 | malha de λ fecha tarde |
-| 6 mm² | 900–960 | rica 0,87 → 1,0 em ~10 s | malha de λ só fecha após ~12 M ticks |
-| 7 mm² | 900–960 | 0,95–1,0 | fecha em ~5 M ticks |
-| **8 mm² (preset)** | **900–975** | **0,95–1,03** | fecha em ~2–3 M ticks |
+| Grandeza | Medido | Alvo do manual (p.18) |
+|---|---|---|
+| Rotação física | 908 RPM (±2 na janela) | 850 ± 50 (ROM: 925) |
+| λ dos cilindros | 1,01 | 0,97–1,03 |
+| Avanço medido (evento de centelha) | 5,7° | 6 ± 2° |
+| Torque ao freio | ≈ 0 (±0,1 N·m) | balanço fechado |
+| MAP | ~33 kPa | faixa plausível 30–45 kPa |
+| Indicado / atrito / bombeamento / acessórios | 25,6 / 14,4 / 8,4 / 2,9 N·m | — |
 
-Com o preset: MAP ~33 kPa, avanço medido 7,5–9° (alvo 6 ± 2°), η_i ≈ 0,29–0,33, torque
-indicado 22,8 N·m, atrito 14,4 N·m (1,14 bar), bombeamento 8,4 N·m, freio ≈ 0 (±0,05 N·m).
+O que continua fora do alcance da planta:
 
-Achados que **não** são da planta:
-
-* O alvo da ROM é `RAM46 × 25 = 925 RPM` em toda temperatura quente testada (80–100 °C).
-  O manual pede 850 ± 50. A ROM é a variante "IE ÁLCOOL"; a diferença é calibração da
-  ROM e a planta não tem como mudá-la (a malha fecha em torno do alvo da ROM).
+* O alvo da ROM é `RAM46 × 25 = 925 RPM` em toda temperatura quente testada (80–105 °C) e
+  com bateria de 11,5 a 14,4 V. O manual pede 850 ± 50. A ROM é a variante "IE ÁLCOOL";
+  a diferença é de calibração da ROM. A rotação física (908) fica 8 RPM acima do teto da
+  banda do manual (900) e o teste a aceita até 925 (uma contagem de ROM de 25 RPM).
 * A ECU resolve a rotação em passos de 25 RPM (`RAM47`) e a malha oscila ("humor" da ECU e
-  micro calibração dos sensores). A lenta é verificada pela **média física da janela de
-  ciclos** (banda ±50 RPM ou 5%) e a intenção da ECU pela RAM (`RAM46` alvo, `RAM47`
-  medido). Nenhum teste exige valor exato e a 850 RPM estrita não é sempre atingida.
-* O avanço depende do `tdc_phase_rad` (candidato, fase real não validada).
+  micro calibração dos sensores). Por isso a lenta é verificada pela **média física da
+  janela de ciclos**, e a intenção da ECU pela RAM (`RAM46` alvo, `RAM47` medido).
+* O avanço depende da fase do PMS, que é um candidato: o manual dá 120° ± um dente (6°)
+  entre a falha da roda e o PMS 1/4. Com 120° o avanço medido é 8,6°; com 117° é 5,7°;
+  com 123° é 11,5°. 117° é uma **calibração para o alvo do manual**, dentro da incerteza
+  de um dente, e só vale até alguém medir a fase real no osciloscópio. O padrão do
+  simulador continua 120°; 117° está no preset sem carga do Lab e no teste de aceitação.
+
+Varredura do vazamento (cenário com carga de 24 N·m dos testes, planta sem acessórios):
+3 mm² → 899–914 RPM, mas falha em cenários sem perfil de bancada; 6 mm² → a malha de λ
+só fecha após ~12 M ticks; **8 mm² → fecha em ~2–3 M ticks**, λ 0,95–1,03, 900–975 RPM.
+**Sem carga e sem acessórios**, 8 mm² dá λ 1,2–1,3 (pobre) e 920 RPM à deriva: é o
+sintoma original do goal. A carga de 24 N·m dos testes já representa "carga + acessórios".
+
+Regra do preset do Lab (`--bench-preset`): se o cenário define `--load-nm`, vazamento 8 mm²
+e sem acessórios; sem carga externa, vazamento 5 mm² e `--accessory-load`.
 
 ## 4. Tabela de parâmetros
 
@@ -115,7 +129,7 @@ Fases 5–6 parcialmente (CSVs e este documento).
    mesmo cenário sustenta ~1800 RPM. Hipóteses não separadas: mistura pobre transitória
    (λ_cil 1,88 medido na janela) contra o "penhasco" de f(λ) (centro 1,50) e interação
    com a lenta da ROM. O teste verifica o aumento 0,6 s após o pedal (10,6 M).
-2. **Lenta a 850 ± 50 não é atingida pela ROM**: alvo 925 (ver seção 3).
+2. **Lenta a 850 ± 50**: medida 908 RPM (ROM alvo 925), 8 RPM acima da banda do manual (seção 3).
 3. **Gauges da GUI** de VE, torque e potência, painel Torque/Potência × RPM e a malha PI da
    bancada no `SimSession` ainda não foram ligados (dados já publicados, seção 1).
 4. **Fases 4 (parte) e 5 pendentes**: borboleta compressível (F-10/F-11), contrapressão de
@@ -127,7 +141,7 @@ Fases 5–6 parcialmente (CSVs e este documento).
 ## 8. Testes alterados (política da seção 6 do goal)
 
 Todos os valores antigos estão nos comentários dos arquivos. Preset único:
-`tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 8`), espelhado em C++ nos testes do Lab.
+`tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 8`, para cenários com a carga de 24 N·m), espelhado em C++ nos testes do Lab.
 
 | Teste | Classe | Mudança e justificativa |
 |---|---|---|
@@ -143,4 +157,5 @@ Todos os valores antigos estão nos comentários dos arquivos. Preset único:
 | `test_lab_audio_scenarios` | Número mágico | efeito do pedal medido em 10,6 M (ver achado 1) |
 | `test_lab_physical_motion` | Número mágico (aliasing de 50 ms a 1200 RPM) | melhor par consecutivo de quadros muda > 5% |
 | `runner_snapshot_smoke` (DrivetrainCli) | Número mágico | carga 24→1 N·m e capacidade de embreagem 200→40 N·m (10% de 200 N·m estola o motor calibrado) |
-| `physics_formulas_test`, `test_dyno_sweep` | Novos | fórmulas puras e contrato do CSV do Dyno |
+| `LabCapture.BatteryDebugCompact900x620` | GUI (texto longo demais) | linha do inspetor encurtada: `P1.1? 138 #13` em vez de `(13 pulses)` |
+| `physics_formulas_test`, `test_dyno_sweep`, `test_idle_acceptance` | Novos | fórmulas puras, contrato do CSV do Dyno e aceitação da lenta sem carga |

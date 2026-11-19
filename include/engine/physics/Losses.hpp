@@ -52,6 +52,29 @@ inline double hydrodynamic_scale(double nu, double nu_ref, double n = 0.4) {
 inline double valvetrain_spring_force_n(double h_mm, double k_n_per_mm, double preload_n) {
     return preload_n + k_n_per_mm * h_mm; // F-44 helper
 }
+// F-45 accessory load of the running engine: alternator + water pump.
+struct AccessoryParams {
+    double electrical_current_a = 20.0; // estimativa F-45 (ECU + bomba + injetor + bobina, 15-20 A)
+    double alternator_efficiency = 0.55; // F-45 (0,5-0,6)
+    double alternator_ratio = 2.0;       // estimativa: relacao de polias desconhecida
+    double pump_nm_at_ref = 0.5;         // estimativa: bomba d'agua a rotacao de referencia
+    double pump_ref_rad_s = 96.9;        // 925 rpm
+    // Alternator starts charging at 1050-1150 alternator rpm (manual p.18); below
+    // that the battery feeds the loads and the crank sees no electrical torque.
+    // Ramp over crank 550..750 rpm (alternator_ratio 2.0 => ~1100..1500 rpm).
+    double charge_start_rpm = 550.0;
+    double charge_full_rpm = 750.0;
+};
+inline double accessory_torque_nm(const AccessoryParams &a, double v_sys, double omega) {
+    if (omega <= 0.0) return 0.0;
+    const double rpm = omega * 60.0 / (2.0 * pi);
+    const double ramp = std::clamp(
+        (rpm - a.charge_start_rpm) / (a.charge_full_rpm - a.charge_start_rpm), 0.0, 1.0);
+    const double alt = ramp * v_sys * a.electrical_current_a /
+                       (a.alternator_efficiency * a.alternator_ratio * omega);
+    const double r = omega / a.pump_ref_rad_s;
+    return alt + a.pump_nm_at_ref * r * r;
+}
 inline double alternator_torque_nm(double p_el_w, double eta, double omega_alt) { // F-45
     return p_el_w / (eta * omega_alt);
 }

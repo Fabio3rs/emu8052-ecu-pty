@@ -92,6 +92,7 @@ struct EmulatorLoopContext {
     engine::PlantWindow plant_window{};
     // Oil-temperature friction (F-43) follows the coolant temperature when true.
     bool physical_plant_friction_temp = false;
+    bool physical_plant_accessories = false; // F-45, --accessory-load
     double coolant_heat_pending_j = 0.0;
     engine::ExhaustLambda exhaust{};
     bool pump_relay_p34_candidate = false;

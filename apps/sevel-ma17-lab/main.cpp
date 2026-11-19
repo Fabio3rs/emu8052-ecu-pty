@@ -267,14 +267,25 @@ int main(int argc, char **argv) {
             harness_args.emplace_back("--idle-bridge-p15-p16");
         if (!has_option(harness_args, "--tps-bench-profile"))
             harness_args.emplace_back("--tps-bench-profile");
-        constexpr std::array<std::pair<const char *, const char *>, 6> values{{
+        const std::array<std::pair<const char *, const char *>, 7> values{{
             {"--adc7-mv", "1232"},
             {"--coolant-c", "90"},
             {"--idle-min-stop-mrad", "5"},
             {"--idle-motor-speed-mm-s", "50"},
-            {"--throttle-leak-mm2", "8"}, // kBenchThrottleLeakMm2: calibrated plant, docs/SEVEL_PHYSICS_CALIBRATION.md
+            // No-load hot idle of the calibrated plant (docs/SEVEL_PHYSICS_CALIBRATION.md
+            // s.3): lambda 1.01, ~908 rpm, brake torque ~0 with accessories on. When a
+            // scenario sets an external load (--load-nm, e.g. the 24 N.m of the live
+            // tests) that load stands in for the accessories and needs 8 mm2
+            // (tests/sevel_preset.py), so the leak is 8 and accessories stay off.
+            {"--throttle-leak-mm2", has_option(harness_args, "--load-nm") ? "8" : "5"},
+            // Candidate TDC reference: manual says 120 deg +-1 tooth (6 deg); 117 deg
+            // gives the manual idle advance of 6 +-2 deg (5.7 measured).
+            {"--tdc-reference-deg", "117"},
             {"--lambda-adc-gain", "5"},
         }};
+        if (!has_option(harness_args, "--accessory-load") &&
+            !has_option(harness_args, "--load-nm"))
+            harness_args.emplace_back("--accessory-load"); // F-45: alternator + pump
         for (const auto &[option, value] : values) {
             if (!has_option(harness_args, option)) {
                 harness_args.emplace_back(option);

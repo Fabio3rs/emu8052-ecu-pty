@@ -87,10 +87,16 @@ class PlantWindow {
             fuel_cyl_kg_ > 0.0 ? air_kg_ / (fuel_cyl_kg_ * afr_st) : 0.0;
         (void)pci_j_kg;
         last_ = r;
+        ++windows_closed_;
         reset();
         return true;
     }
     const PlantWindowResult &last() const { return last_; }
+    // Diagnostic only: shorter windows for transient analysis (>= 1 cycle).
+    void set_window_cycles(double cycles) {
+        if (cycles >= 1.0) window_angle_rad_ = cycles * 4.0 * physics::pi;
+    }
+    unsigned long long windows_closed() const { return windows_closed_; }
 
   private:
     void reset() {
@@ -103,6 +109,7 @@ class PlantWindow {
     double angle_ = 0, time_ = 0, w_ind_ = 0, w_fric_ = 0, w_pump_ = 0, w_load_ = 0;
     double air_kg_ = 0, inj_kg_ = 0, fuel_cyl_kg_ = 0;
     PlantWindowResult last_{};
+    unsigned long long windows_closed_ = 0;
 };
 
 } // namespace engine

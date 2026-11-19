@@ -203,3 +203,8 @@ add_test(NAME PhysicalPower.RetainedXramAcrossKeyAndProcess
 
 add_test(NAME Dyno.SweepCsvContract
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_dyno_sweep.py $<TARGET_FILE:sevel-dyno>)
+
+add_test(NAME PhysicalIdle.HotAcceptanceNoLoad
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_idle_acceptance.py
+            $<TARGET_FILE:emu8051-tty>
+            ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)

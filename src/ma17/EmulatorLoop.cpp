@@ -34,6 +34,41 @@ extern "C" {
 #include <vector>
 
 namespace ma17 {
+// Diagnostic switch read once (never per tick): finer plant windows, one line each.
+static bool fine_plant_windows() {
+    static const bool enabled = std::getenv("SEVEL_PLANT_WINDOW_CYCLES") != nullptr;
+    return enabled;
+}
+
+static void print_plant_line(const EmulatorLoopContext &context) {
+    const auto &w = context.plant_window.last();
+            fprintf(stdout,
+                    "{\"type\":\"plant\",\"tick\":%lld,\"rpm\":%.1f,"
+                    "\"indicated_nm\":%.3f,\"friction_nm\":%.3f,"
+                    "\"pumping_nm\":%.3f,\"accessory_nm\":%.3f,"
+                    "\"brake_nm\":%.3f,\"brake_kw\":%.4f,"
+                    "\"imep_bar\":%.3f,\"bmep_bar\":%.3f,"
+                    "\"work_cycle_j\":%.2f,\"ve_ambient\":%.4f,"
+                    "\"ve_manifold\":%.4f,\"air_mg_cyl_cycle\":%.2f,"
+                    "\"fuel_g_s\":%.4f,\"bsfc\":%.1f,\"lambda_cyl\":%.3f,"
+                    "\"spark_deg\":%.2f,\"mbt_deg\":%.2f,"
+                    "\"spark_eff\":%.4f,\"residual\":%.4f,"
+                    "\"air_throttle_kg_s\":%.6f,\"air_cyl_kg_s\":%.6f}\n",
+                    context.ticks, w.mean_rpm, w.indicated_torque_nm,
+                    w.friction_torque_nm, w.pumping_torque_nm,
+                    w.accessory_torque_nm, w.brake_torque_nm, w.brake_power_kw,
+                    w.imep_bar, w.bmep_bar, w.work_per_cycle_j, w.ve_ambient,
+                    context.intake->last_ve_manifold(), w.air_mg_per_cyl_cycle,
+                    w.fuel_g_s, w.bsfc_g_kwh, w.lambda_cylinders,
+                    context.combustion.last_spark_advance_deg(),
+                    context.combustion.last_mbt_deg(),
+                    context.combustion.last_spark_efficiency(),
+                    context.combustion.last_residual_fraction(),
+                    context.intake->last_air_in_kg_s(),
+                    context.intake->last_air_to_cylinders_kg_s());
+}
+
+
 
 static double tps1_pin_voltage(const EmulatorLoopContext &context) {
     if (context.tps1_high_tick && context.ticks >= context.tps1_high_tick &&
@@ -681,6 +716,17 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     : 0.0;
             const double plant_pump_nm =
                 context.intake ? context.intake->pumping_torque_nm() : 0.0;
+            // Accessories (F-45): alternator + water pump, calibrated plant only.
+            double plant_acc_nm = 0.0;
+            if (context.physical_plant_accessories &&
+                context.physical_crank->speed_rad_s() > 1.0) {
+                const double omega = context.physical_crank->speed_rad_s();
+                const double v_sys = context.sensor_circuit
+                                         ? context.sensor_circuit->supply_voltage()
+                                         : 14.0;
+                plant_acc_nm = engine::physics::accessory_torque_nm(
+                    engine::physics::AccessoryParams{}, v_sys, omega);
+            }
             tick_physical_crank_input(&cpu, *context.physical_crank,
                                       *context.physical_input,
                                       context.ticks <= context.starter_stop_tick,
@@ -690,6 +736,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                                                context.ticks >= context.load_step_tick
                                            ? context.load_torque_nm
                                            : 0.0) +
+                                          plant_acc_nm +
                                           (context.intake
                                                ? context.intake->pumping_torque_nm()
                                                : 0.0),
@@ -700,13 +747,16 @@ static void run_tick_batch(EmulatorLoopContext &context,
                 context.plant_window.accumulate(
                     1.0 / 990000.0,
                     context.physical_crank->angle_rad() - plant_angle_before,
-                    plant_comb_nm, plant_friction_nm, plant_pump_nm, plant_load_nm);
+                    plant_comb_nm, plant_friction_nm, plant_pump_nm,
+                    plant_load_nm + plant_acc_nm);
                 const auto &ip = context.intake->parameters();
                 const double rho_ref = ip.ambient_pressure_pa /
                     (287.05 * (ip.ambient_temperature_c + 273.15));
-                context.plant_window.finish_if_ready(
-                    rho_ref, context.combustion.stoichiometric_afr(),
-                    context.combustion.fuel_energy_j_per_kg());
+                if (context.plant_window.finish_if_ready(
+                        rho_ref, context.combustion.stoichiometric_afr(),
+                        context.combustion.fuel_energy_j_per_kg()) &&
+                    fine_plant_windows())
+                    print_plant_line(context);
             }
             if (context.physical_input->missing_positions != gaps_before) {
                 fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
@@ -1155,33 +1205,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     by_cylinder[1], by_cylinder[2], by_cylinder[3]);
         }
         if (context.intake && context.physical_crank &&
-            context.ticks % 990000 == 0 && context.plant_window.last().valid) {
-            const auto &w = context.plant_window.last();
-            fprintf(stdout,
-                    "{\"type\":\"plant\",\"tick\":%lld,\"rpm\":%.1f,"
-                    "\"indicated_nm\":%.3f,\"friction_nm\":%.3f,"
-                    "\"pumping_nm\":%.3f,\"accessory_nm\":%.3f,"
-                    "\"brake_nm\":%.3f,\"brake_kw\":%.4f,"
-                    "\"imep_bar\":%.3f,\"bmep_bar\":%.3f,"
-                    "\"work_cycle_j\":%.2f,\"ve_ambient\":%.4f,"
-                    "\"ve_manifold\":%.4f,\"air_mg_cyl_cycle\":%.2f,"
-                    "\"fuel_g_s\":%.4f,\"bsfc\":%.1f,\"lambda_cyl\":%.3f,"
-                    "\"spark_deg\":%.2f,\"mbt_deg\":%.2f,"
-                    "\"spark_eff\":%.4f,\"residual\":%.4f,"
-                    "\"air_throttle_kg_s\":%.6f,\"air_cyl_kg_s\":%.6f}\n",
-                    context.ticks, w.mean_rpm, w.indicated_torque_nm,
-                    w.friction_torque_nm, w.pumping_torque_nm,
-                    w.accessory_torque_nm, w.brake_torque_nm, w.brake_power_kw,
-                    w.imep_bar, w.bmep_bar, w.work_per_cycle_j, w.ve_ambient,
-                    context.intake->last_ve_manifold(), w.air_mg_per_cyl_cycle,
-                    w.fuel_g_s, w.bsfc_g_kwh, w.lambda_cylinders,
-                    context.combustion.last_spark_advance_deg(),
-                    context.combustion.last_mbt_deg(),
-                    context.combustion.last_spark_efficiency(),
-                    context.combustion.last_residual_fraction(),
-                    context.intake->last_air_in_kg_s(),
-                    context.intake->last_air_to_cylinders_kg_s());
-        }
+            context.ticks % 990000 == 0 && !fine_plant_windows() && context.plant_window.last().valid)
+            print_plant_line(context);
         if (context.physical_crank && context.ticks % 990000 == 0)
             fprintf(stdout, "{\"type\":\"lambda\",\"tick\":%lld,"
                             "\"physical\":%.3f,"

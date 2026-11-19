@@ -73,6 +73,9 @@ struct EmulatorConfig {
     // Calibrated plant: eta_v(N,p_m) map + physical indicated efficiency
     // (GOAL_SEVEL_FISICA fase 4). --legacy-plant restores the old constant-VE plant.
     bool physical_plant = true;
+    // F-45 accessory torque (alternator + water pump) on the crank. Off by default:
+    // scenarios with an explicit external load (24 N.m) already stand in for it.
+    bool accessory_load = false;
     int fluid_step_ticks = 990;
 };
 

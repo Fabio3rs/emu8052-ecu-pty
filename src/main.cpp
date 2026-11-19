@@ -471,6 +471,9 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         loop.drivetrain = drivetrain ? &*drivetrain : nullptr;
         loop.physical_pty_realtime = config->physical_pty_realtime;
         loop.physical_plant_friction_temp = config->physical_plant;
+        loop.physical_plant_accessories = config->physical_plant && config->accessory_load;
+        if (const char *cycles = std::getenv("SEVEL_PLANT_WINDOW_CYCLES"))
+            loop.plant_window.set_window_cycles(std::atof(cycles));
         loop.physical_input = &physical_input;
         if (config->tdc_reference_deg >= 0 || config->swap_ignition_coils ||
             config->ethanol_percent != 0 || config->physical_plant) {

@@ -3775,7 +3775,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             // RAM values are raw retained bytes, not a fresh timer capture.
             std::snprintf(
                 status, sizeof(status),
-                "RPM PHY %s | RAM47 %u | IDLE46 %u | P1.1? %s (%s pulses)",
+                "RPM PHY %s | RAM47 %u | IDLE46 %u | P1.1? %s #%s",
                 readings[0].data(),
                 static_cast<unsigned>(displayed.ram47) * 25U,
                 static_cast<unsigned>(displayed.ram46) * 25U, tach_value,
