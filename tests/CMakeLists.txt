@@ -231,3 +231,6 @@ add_test(NAME DynoBench.RomPoint3000
             $<TARGET_FILE:emu8051-tty>
             ${PROJECT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
 set_tests_properties(DynoBench.RomPoint3000 PROPERTIES TIMEOUT 1500)
+
+add_test(NAME DynoBench.SweepArtifacts
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/test_dyno_sweep_artifacts.py ${PROJECT_SOURCE_DIR})

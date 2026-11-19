@@ -96,7 +96,7 @@ struct DynoBenchConfig {
     double stabilize_band = 0.02;            // +-2 % of the filtered speed
     double accept_band = 0.01;               // mean rpm within +-1 %
     double min_run_rpm = 300.0;              // below this after the crank phase: stall
-    double rev_limit_rpm = 6000.0;
+    double rev_limit_rpm = 6500.0;
     long long fuel_cut_ticks = 400'000;      // no injector opening for this long: fuel cut
 };
 
@@ -246,7 +246,9 @@ class DynoBench {
         if (running_phase) {
             if (diag_fault) return invalid(DynoInvalid::DiagnosticFault);
             if (rpm < cfg_.min_run_rpm) return invalid(DynoInvalid::Stall);
-            if (rpm > cfg_.rev_limit_rpm) return invalid(DynoInvalid::RevLimiter);
+            // Filtered (180 deg) speed: the instantaneous rpm swings a few percent within a cycle.
+            if (brake_.filtered_omega() * 30.0 / engine::physics::pi > cfg_.rev_limit_rpm)
+                return invalid(DynoInvalid::RevLimiter);
             if (tick - last_open_tick_ > cfg_.fuel_cut_ticks) return invalid(DynoInvalid::FuelCut);
             if (tick - ramp_start_ > cfg_.timeout_ticks) return invalid(DynoInvalid::Timeout);
             if (static_cast<double>(saturated_ticks_) * bench_tick_s > 0.05)

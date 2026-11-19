@@ -1,0 +1,76 @@
+{
+  "accessories": true,
+  "ambient_c": 20.0,
+  "args": {
+    "base": [
+      "--physical-crank",
+      "--starter-ticks",
+      "495000",
+      "--stop-ticks",
+      "90000000",
+      "--adc7-mv",
+      "1232",
+      "--idle-bridge-p15-p16",
+      "--idle-contact-p46",
+      "--tps-bench-profile",
+      "--idle-motor-speed-mm-s",
+      "50",
+      "--idle-min-stop-mrad",
+      "5",
+      "--lambda-adc-gain",
+      "5"
+    ],
+    "per_point": [
+      "--dyno-scenario",
+      "--tdc-reference-deg",
+      "<117|120|123>",
+      "--dyno-point",
+      "<rpm>",
+      "--dyno-cycles",
+      "40"
+    ]
+  },
+  "code": {
+    "commit": "8e437df7c8fca5ba18c54eebfb9033e545302471",
+    "dirty_files": [
+      "include/ma17/DynoBench.hpp",
+      "tools/dyno_sweep.py"
+    ]
+  },
+  "coolant_c": 90.0,
+  "dt_us": "ROM tick (1 us)",
+  "fuel": "E22",
+  "leak_mm2": 9,
+  "pms_assumed_deg": [
+    117,
+    120,
+    123
+  ],
+  "rom": "FiatTipo_MA17_dump_27c256.bin",
+  "rom_sha256": "a34734350611cf561eb39ac1a63097defcaaff642cd7780526f632dda40f8e1f",
+  "rpms": [
+    1500,
+    2000,
+    2500,
+    3000,
+    3500,
+    4000,
+    4500,
+    5000,
+    5500,
+    6000
+  ],
+  "scenario": {
+    "accessories": true,
+    "ambient_c": 20.0,
+    "coolant_c": 90.0,
+    "ethanol_percent": 22,
+    "throttle_leak_mm2": 9
+  },
+  "tdc_deg": [
+    117,
+    120,
+    123
+  ],
+  "tool": "tools/dyno_sweep.py run"
+}
