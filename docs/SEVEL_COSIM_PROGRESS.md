@@ -2759,10 +2759,15 @@ Escrito com ajuda de LLM (Claude). Detalhes, tabelas e divergências em
 - Fase 2: telemetria publicada (`EmulatorSnapshot`, JSONL `{"type":"plant"}`,
   `engine::PlantWindow` com janelas de 20 ciclos de 4π).
 - Fase 3: `sevel-dyno` (varredura a rotação constante) gera CSV com curva esperada
-  e erro; `DynoPi` (malha PI com anti-windup) testado, ainda não ligado ao `SimSession`.
+  e erro; `DynoPi` (malha PI com anti-windup) testado. GOAL_DYNO_ROM: integração exata do
+  pulso, telemetria de eixo com balanço de energia, e a bancada headless `--dyno-point` com a ROM
+  controlando o motor (ainda não ligada ao `SimSession`). Os números "atendidos" de potência e
+  torque anteriores usavam a integração por amostra e foram substituídos; ver `docs/SEVEL_DYNO_ROM.md`.
 - Fase 4: `eta_v(N, p_m)` (F-18/F-22), eficiência indicada física (F-30..F-34, MBT por
   Wiebe) ligadas como padrão (`--legacy-plant` volta ao modelo antigo). Plena carga:
-  59,8 kW (81 cv) a 6000 RPM, 131–132 N·m a 3000 RPM (antes 35 cv / 57 N·m).
+  59,8 kW (81 cv) a 6000 RPM, 131–132 N·m a 3000 RPM (antes 35 cv / 57 N·m) [valores da integração
+  por amostra, substituídos: hoje 60,1 kW a 6000 e 128,6 N·m a 3000 RPM após o refit da VE, que é
+  um ajuste e não uma validação; ver `docs/SEVEL_DYNO_ROM.md`].
   Lenta quente com `--throttle-leak-mm2 3`: ~900–915 RPM, MAP ~33 kPa, λ≈1,00,
   avanço ~8° (alvo da ROM 925 RPM; manual 850 ± 50).
 - Preset único da bancada: `tests/sevel_preset.py` (`BENCH_LEAK_MM2 = 3`).

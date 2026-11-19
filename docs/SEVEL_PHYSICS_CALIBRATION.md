@@ -19,14 +19,18 @@ Comandos (todos pelo NativeLab):
 
 ## 2. Resultado em plena carga (`sevel-dyno`, E22, 100 kPa / 20 °C)
 
-| Critério | Alvo | Medido |
+> **Correção (GOAL_DYNO_ROM).** Os números desta seção antes vinham de uma integração que amostrava o torque do pulso
+> no início de cada passo (desvio de +3 a +6 % acima de 4000 RPM com dt = 100 µs) e eram citados como "atendidos". Desde a
+> Fase 1 a integração é exata e a curva de VE foi **reajustada** (Fase 2). O que segue é um **ajuste** aos alvos, não uma
+> validação independente: a VE do motor é desconhecida. Números e tabelas completas: `docs/SEVEL_DYNO_ROM.md`,
+> `docs/dyno/fase2/` (`fit_result.json`, CSVs, manifesto).
+
+| Grandeza | Alvo | Ajustado (integração exata) |
 |---|---|---|
-| Potência máxima | 60,3 kW ± 5% entre 5750–6000 | 62,5 kW (5750) e 61,9 kW (84,2 cv, 6000), +3,7% e +2,6% |
-| Torque máximo | 125–133 N·m entre 2750–3250 | 130,4 N·m a 3000 RPM |
-| Queda após 6000 | sim | 56,8 kW a 6500 |
-| Formato | ±8% da CEE × 1,1 (2000–6000) | máx. 7,7% (`dyno_summary.csv`) |
-| E0 vs E22 | poucos % | 62,9 vs 62,8 kW (0,1%) |
-| Antes (planta antiga) | — | 57 N·m a 3000, 35 cv a 6000 |
+| Potência máxima | 60,3 kW ± 5 % entre 5750–6000 | pico 61,64 kW (83,8 cv) a 5500 RPM; 60,06 kW a 6000 |
+| Torque máximo | 125–133 N·m entre 2750–3250 | 128,6 N·m a 3000 RPM (−3,3 % do alvo de 133) |
+| Formato | ±8 % da CEE × 1,1 (2000–6000) | erro máximo 8,2 % (`dyno_summary.csv`), um pouco acima da banda |
+| E0 vs E22 | poucos % | 61,70 vs 61,64 kW |
 
 BSFC (CSV corrigido; o `sevel-dyno` usava o fator 3,6e9 em vez de 3,6e6): E22 ≈ 287 g/kWh a 3000 e 322 a 6000 RPM. Valores antigos citados aqui: E22 282–321 g/kWh; E0 257–292 g/kWh (faixa de F-38 para E0: 270–340; o ponto
 de melhor consumo fica ~5% abaixo do piso, registrado, não ajustado).
@@ -48,7 +52,7 @@ a 925 RPM, rampa de carga do alternador 550–750 RPM do virabrequim), vazamento
 | Rotação física | 908 RPM (±2 na janela) | 850 ± 50 (ROM: 925) |
 | λ dos cilindros | 1,01 | 0,97–1,03 |
 | Avanço medido (evento de centelha) | 5,7° | 6 ± 2° |
-| Torque ao freio | ≈ 0 (±0,1 N·m) | balanço fechado |
+| Balanço de energia | resíduo ≈ 5e-13; potência de eixo ≈ 0,00 kW | fecha (`energy_residual_rel`; o antigo "torque ao freio ≈ 0" era J·dω/dt, tautológico) |
 | MAP | ~33 kPa | faixa plausível 30–45 kPa |
 | Indicado / atrito / bombeamento / acessórios | 25,6 / 14,4 / 8,4 / 2,9 N·m | — |
 
@@ -229,8 +233,8 @@ sensibilidade seria 15·0,133/256·`RAM[36:37]`, ou 0,0078·`RAM[36:37]`; com `R
 
 Fase 1 (fórmulas puras F-01…F-57 em `include/engine/physics/`, 26 testes) feita.
 Fase 2 (telemetria) feita no snapshot e no JSONL; falta o gauge de VE na GUI e o mapa de canais.
-Fase 3 (bancada): `sevel-dyno` (rotação constante) feito; falta a malha PI com `DynoPi` ligada
-ao `SimSession` (o controlador e seus testes existem em `Dynamics.hpp`).
+Fase 3 (bancada): `sevel-dyno` (rotação constante) e, desde o GOAL_DYNO_ROM, a bancada headless com a ROM
+(`--dyno-point`, `DynoPi` ligado ao laço) feitos; falta ligar o `DynoPi` ao `SimSession`/Lab.
 Fase 4: VE(N, p_m), eficiência física, janela de centelha e MBT ligados (padrão); falta
 compressível na borboleta, contrapressão de escape, atrito Chen–Flynn no `CrankDynamics`,
 térmica do manual, filme/evaporação.
@@ -247,7 +251,7 @@ Fases 5–6 parcialmente (CSVs e este documento).
 2. **Lenta a 850 ± 50**: medida 908 RPM (ROM alvo 925), 8 RPM acima da banda do manual (seção 3).
 3. **GUI:** o gauge de VE (`VE REF. AMBIENTE`) está ligado, e o tooltip traz torque, potência,
    BMEP e ar por ciclo. Faltam o painel Torque/Potência × RPM e a malha PI da bancada no
-   `SimSession` (o controlador `DynoPi` existe e é testado).
+   `SimSession` (a bancada existe só no CLI headless: `--dyno-point`; ver `SEVEL_DYNO_ROM.md`).
 4. **Fase 4, o que falta no laço**: atrito Chen–Flynn no `CrankDynamics` e filme/evaporação (F-28/F-29);
    curva CEE digitalizada. Ligados: VE(N, p_m), eficiência física, contrapressão de escape, borboleta
    compressível (Heywood + F-11), atrito por temperatura do óleo, acessórios (opcional) e térmica do manual.

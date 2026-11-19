@@ -31,11 +31,8 @@
     ]
   },
   "code": {
-    "commit": "8e437df7c8fca5ba18c54eebfb9033e545302471",
-    "dirty_files": [
-      "include/ma17/DynoBench.hpp",
-      "tools/dyno_sweep.py"
-    ]
+    "commit": "b09207d4125466155e13a5f44068a336d9570909",
+    "dirty_files": []
   },
   "coolant_c": 90.0,
   "dt_us": "ROM tick (1 us)",
