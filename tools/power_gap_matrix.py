@@ -13,7 +13,7 @@ from dyno_point import run_point  # noqa: E402
 
 KEYS = ["state", "reason", "target_rpm", "mean_rpm", "shaft_power_kw", "shaft_torque_nm",
         "indicated_nm", "friction_nm", "pumping_nm", "accessory_nm", "adv_mean_deg", "lambda",
-        "inj_mass_mg", "ve_ambient", "air_mg_cyl", "fuel_g_s", "mbt_mean_deg", "eta_i_mean", "xr_mean", "spark_strength_mean", "spark_strength_min", "ram69_end", "iram66_tps1", "iram47_rpm", "iram61_vbat", "iram65_adc5", "xram_f8e8", "brake_saturated_s", "energy_residual_rel", "bmep_bar",
+        "inj_mass_mg", "ve_ambient", "air_mg_cyl", "fuel_g_s", "mbt_mean_deg", "eta_i_mean", "xr_mean", "spark_strength_mean", "spark_strength_min", "ram69_end", "iram66_tps1", "iram47_rpm", "iram61_vbat", "iram65_adc5", "xram_f8e8", "iram60_tps2", "iram6d", "brake_saturated_s", "energy_residual_rel", "bmep_bar",
         "code_sha", "code_dirty", "rom_sha256"]
 
 def exp(*kv):

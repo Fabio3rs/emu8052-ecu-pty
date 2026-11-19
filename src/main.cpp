@@ -69,10 +69,16 @@ struct TpsSources {
     double lambda_stuck_v;
     long long lambda_stuck_tick;
     long long lambda_restore_tick;
+    long long air_open_tick; // --exp air_open_tick=N: ADC2 (air NTC) open at 5 V from tick N
+    long long ntc_force_tick; // --exp ntc_force_tick=N with ect_force_v / air_force_v [V]
+    double ect_force_v, air_force_v; // < 0 = off
+    bool swap_ntc; // --exp swap_ntc=1: ADC2 reads the coolant NTC, ADC3 the air NTC
 };
 
 static bool read_tps_voltage(uint8_t channel, void *context,
                              double &voltage) {
+    if (static_cast<TpsSources *>(context)->swap_ntc && (channel == 2 || channel == 3))
+        channel = static_cast<uint8_t>(5 - channel);
     auto &sources = *static_cast<TpsSources *>(context);
     if ((channel == 0 || channel == 6) && sources.tps_open_tick &&
         sources.ticks >= sources.tps_open_tick &&
@@ -92,9 +98,17 @@ static bool read_tps_voltage(uint8_t channel, void *context,
     else if (channel == 1)
         voltage = sources.sensors.battery_voltage();
     else if (channel == 2)
-        voltage = sources.sensors.air_voltage(sources.thermal.air_sensor_c());
+        voltage = sources.ntc_force_tick && sources.ticks >= sources.ntc_force_tick &&
+                          sources.air_force_v >= 0.0
+                      ? sources.air_force_v
+                  : sources.air_open_tick && sources.ticks >= sources.air_open_tick
+                      ? 5.0
+                      : sources.sensors.air_voltage(sources.thermal.air_sensor_c());
     else if (channel == 3)
-        voltage = sources.ect_open_tick &&
+        voltage = sources.ntc_force_tick && sources.ticks >= sources.ntc_force_tick &&
+                          sources.ect_force_v >= 0.0
+                      ? sources.ect_force_v
+                  : sources.ect_open_tick &&
                           sources.ticks >= sources.ect_open_tick &&
                           (!sources.ect_restore_tick ||
                            sources.ticks < sources.ect_restore_tick)
@@ -316,7 +330,16 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
                            config->adc7_step_v, config->adc7_step_tick,
                            config->lambda_stuck_v,
                            config->lambda_stuck_tick,
-                           config->lambda_restore_tick};
+                           config->lambda_restore_tick,
+                           config->experiments.count("air_open_tick")
+                               ? static_cast<long long>(config->experiments.at("air_open_tick"))
+                               : 0,
+                           config->experiments.count("ntc_force_tick")
+                               ? static_cast<long long>(config->experiments.at("ntc_force_tick"))
+                               : 0,
+                           config->experiments.count("ect_force_v") ? config->experiments.at("ect_force_v") : -1.0,
+                           config->experiments.count("air_force_v") ? config->experiments.at("air_force_v") : -1.0,
+                           config->experiments.count("swap_ntc") && config->experiments.at("swap_ntc") != 0.0};
     sim.target_rpm = config->crank_rpm;
     sim.update_pulse_interval(990000); // 11.88 MHz / 12 = 990k ticks/sec
     if (config->crank_immediate)
@@ -546,7 +569,8 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
             loop.bench = &*dyno_bench;
             loop.pedal_step_tick = bench_config.settle_end_tick; // full open at the ramp start
             loop.pedal_rise_ticks = bench_config.ramp_ticks;
-            loop.pedal_pull_m = engine::max_pedal_pull_m();
+            // --exp dyno_pedal_fraction=f: partial pedal (sensor/WOT-recognition probe); 1 = original.
+            loop.pedal_pull_m = engine::max_pedal_pull_m() * experiment("dyno_pedal_fraction", 1.0);
         }
         loop.load_step_tick = config->load_step_tick;
         loop.load_torque_nm = config->load_torque_nm;

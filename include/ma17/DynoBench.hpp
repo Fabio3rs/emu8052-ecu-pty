@@ -115,7 +115,7 @@ struct DynoPointResult {
     double inj_mass_mg = 0.0, inj_width_ms = 0.0, inj_freq_hz = 0.0, inj_duty = 0.0;
     unsigned long long inj_pulses = 0;
     int ram69_end = 0, ram69_min = 0, ram69_max = 0;
-    int probe_tps1 = 0, probe_rpm47 = 0, probe_vbat61 = 0, probe_adc65 = 0, probe_xf8e8 = 0;
+    int probe_tps1 = 0, probe_rpm47 = 0, probe_vbat61 = 0, probe_adc65 = 0, probe_xf8e8 = 0, probe_tps2 = 0, probe_6d = 0;
     long long ramp_start_tick = 0, measure_start_tick = 0;
 };
 
@@ -187,9 +187,10 @@ class DynoBench {
             ++abs_n_[cylinder];
         }
     }
-    void on_probes(int tps1, int rpm47, int vbat, int adc65, int xf8e8) {
+    void on_probes(int tps1, int rpm47, int vbat, int adc65, int xf8e8, int tps2 = 0, int r6d = 0) {
         if (state_ != DynoState::Measure) return;
         p_tps1_ = tps1; p_rpm47_ = rpm47; p_vbat_ = vbat; p_adc65_ = adc65; p_xf8e8_ = xf8e8;
+        p_tps2_ = tps2; p_6d_ = r6d;
     }
     void on_ram69(int value) {
         if (state_ != DynoState::Measure) return;
@@ -244,7 +245,7 @@ class DynoBench {
         r.inj_freq_hz = t > 0.0 ? static_cast<double>(pulses_) / t : 0.0;
         r.inj_duty = t > 0.0 ? static_cast<double>(open_ticks_) * bench_tick_s / t : 0.0;
         r.probe_tps1 = p_tps1_; r.probe_rpm47 = p_rpm47_; r.probe_vbat61 = p_vbat_;
-        r.probe_adc65 = p_adc65_; r.probe_xf8e8 = p_xf8e8_;
+        r.probe_adc65 = p_adc65_; r.probe_tps2 = p_tps2_; r.probe_6d = p_6d_; r.probe_xf8e8 = p_xf8e8_;
         r.ram69_end = ram69_; r.ram69_min = ram_min_; r.ram69_max = ram_max_;
         r.ramp_start_tick = ramp_start_;
         r.measure_start_tick = measure_start_;
@@ -339,7 +340,7 @@ class DynoBench {
     bool inj_prev_open_ = false;
     // ignition
     std::vector<double> advances_;
-    int p_tps1_ = 0, p_rpm47_ = 0, p_vbat_ = 0, p_adc65_ = 0, p_xf8e8_ = 0;
+    int p_tps2_ = 0, p_6d_ = 0, p_tps1_ = 0, p_rpm47_ = 0, p_vbat_ = 0, p_adc65_ = 0, p_xf8e8_ = 0;
     double str_sum_ = 0.0, str_min_ = 0.0, mbt_sum_ = 0.0, eta_sum_ = 0.0, xr_sum_ = 0.0;
     double abs_sum_[4] = {0, 0, 0, 0};
     unsigned long long abs_n_[4] = {0, 0, 0, 0};

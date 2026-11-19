@@ -70,7 +70,7 @@ static void print_dyno_point(const EmulatorLoopContext &context) {
             "\"mbt_mean_deg\":%.3f,\"eta_i_mean\":%.4f,\"xr_mean\":%.4f,"
             "\"spark_strength_mean\":%.4f,\"spark_strength_min\":%.4f,"
             "\"iram66_tps1\":%d,\"iram47_rpm\":%d,\"iram61_vbat\":%d,\"iram65_adc5\":%d,"
-            "\"xram_f8e8\":%d}\n",
+            "\"xram_f8e8\":%d,\"iram60_tps2\":%d,\"iram6d\":%d}\n",
             dyno_state_name(r.state), dyno_invalid_name(r.reason), r.target_rpm, r.mean_rpm,
             w.window_id, w.tick_start, w.tick_end, w.window_s,
             context.bench->config().cycles, r.ramp_start_tick, r.measure_start_tick,
@@ -85,7 +85,7 @@ static void print_dyno_point(const EmulatorLoopContext &context) {
             context.combustion.tdc_phase_rad() * 180.0 / engine::physics::pi, w.bmep_bar,
             w.bsfc_g_kwh, w.ve_ambient, w.air_mg_per_cyl_cycle, w.fuel_g_s, r.mbt_mean,
             r.eta_mean, r.xr_mean, r.strength_mean, r.strength_min, r.probe_tps1, r.probe_rpm47,
-            r.probe_vbat61, r.probe_adc65, r.probe_xf8e8);
+            r.probe_vbat61, r.probe_adc65, r.probe_xf8e8, r.probe_tps2, r.probe_6d);
 }
 
 static void print_plant_line(const EmulatorLoopContext &context) {
@@ -835,7 +835,8 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.bench->on_ram69(cpu.mLowerData[0x69]);
                     context.bench->on_probes(cpu.mLowerData[0x66], cpu.mLowerData[0x47],
                                              cpu.mLowerData[0x61], cpu.mLowerData[0x65],
-                                             cpu.mExtData[0xF8E8]);
+                                             cpu.mExtData[0xF8E8], cpu.mLowerData[0x60],
+                                             cpu.mLowerData[0x6D]);
                     context.bench->finish_measure_if_ready(
                         context.ticks, rho_ref, context.combustion.stoichiometric_afr(),
                         context.combustion.fuel_energy_j_per_kg());

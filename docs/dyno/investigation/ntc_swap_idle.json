@@ -1,0 +1,58 @@
+[
+ {
+  "case": "idle_base_90",
+  "rpm_mean": 911.7,
+  "rpm_min": 910.4,
+  "rpm_max": 912.3,
+  "ram62": 74,
+  "ram63": 19,
+  "coolant_c": 91.281,
+  "iat_c": 42.559,
+  "spark": 8.41,
+  "fault_bits": "00 00 00",
+  "counters": "00 00 00 00 00 00 00 00 00 00 00",
+  "windows": 20
+ },
+ {
+  "case": "idle_swap_90",
+  "rpm_mean": 1081.4,
+  "rpm_min": 1080.6,
+  "rpm_max": 1082.9,
+  "ram62": 18,
+  "ram63": 74,
+  "coolant_c": 91.914,
+  "iat_c": 42.227,
+  "spark": 8.13,
+  "fault_bits": "00 00 00",
+  "counters": "00 00 00 00 00 00 00 00 00 00 00",
+  "windows": 20
+ },
+ {
+  "case": "idle_base_100",
+  "rpm_mean": 911.4,
+  "rpm_min": 910.0,
+  "rpm_max": 912.0,
+  "ram62": 69,
+  "ram63": 20,
+  "coolant_c": 89.307,
+  "iat_c": 44.931,
+  "spark": 8.47,
+  "fault_bits": "00 00 00",
+  "counters": "00 00 00 00 00 00 00 00 00 00 00",
+  "windows": 20
+ },
+ {
+  "case": "idle_swap_100",
+  "rpm_mean": 1072.1,
+  "rpm_min": 1071.0,
+  "rpm_max": 1073.7,
+  "ram62": 20,
+  "ram63": 70,
+  "coolant_c": 89.501,
+  "iat_c": 44.591,
+  "spark": 8.32,
+  "fault_bits": "00 00 00",
+  "counters": "00 00 00 00 00 00 00 00 00 00 00",
+  "windows": 20
+ }
+]
