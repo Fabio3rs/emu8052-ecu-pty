@@ -234,8 +234,8 @@ Nenhuma fase está BLOQUEADA. Todos os critérios de aceite foram atendidos; nad
 * Lenta de 850 RPM: indicativa, fora do escopo.
 * O freio do dyno usa a velocidade média de 180° e os ganhos padrão do `DynoPi`; ganhos diferentes não foram explorados.
 * `FuelBlend` não modela a água do etanol hidratado.
-* Os manifestos das Fases 0–2 têm `commit` vazio (o sandbox não enxergava o `.git` quando foram gerados); o commit que
-  produziu cada artefato é o da tabela acima. Os das Fases 5–6 trazem o SHA completo (`DYNO_CODE_SHA`).
+* Os manifestos das Fases 0–2 foram gerados sem acesso ao `.git`; o campo `commit` foi preenchido depois com o commit
+  da fase (com `commit_note`), pois os artefatos saíram da árvore que virou esse commit. Os das Fases 5–6 trazem o SHA completo (`DYNO_CODE_SHA`).
 
 ## Backlog (registrado, não feito)
 

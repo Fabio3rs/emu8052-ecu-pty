@@ -33,6 +33,15 @@ out = run(["--load-step-tick", "1000000", "--load-nm", "300"])
 loads = [json.loads(l) for l in out.splitlines() if l.startswith('{"type":"load_step"')]
 assert loads and loads[-1]["torque_nm"] == 300.0, loads
 run(["--load-step-tick", "1000000", "--load-nm", "401"], expect_rc=2)
+
+
+def final_rpm(text):
+    return float(re.search(r"\[PHYSICAL-CRANK\] ticks=\d+ rpm=([\d.]+)", text).group(1))
+
+
+# the plant response, not just the event: 300 N.m stalls the engine, 10 N.m does not
+light = run(["--load-step-tick", "1000000", "--load-nm", "10"])
+assert final_rpm(out) == 0.0 and final_rpm(light) > 300.0, (final_rpm(out), final_rpm(light))
 # --load-nm changes neither the leak nor the accessories
 a = run(["--load-step-tick", "1000000", "--load-nm", "10"])
 b = run(["--load-step-tick", "1000000", "--load-nm", "200"])

@@ -17,7 +17,8 @@
   ],
   "binary": "build-lab/sevel-dyno",
   "code": {
-    "commit": "",
+    "commit": "efa374f05970dc3b0ccde5093627449ab42dd431",
+    "commit_note": "phase 0 artifacts generated from the working tree that became commit efa374f; commit filled in afterwards because the sandbox could not read .git",
     "dirty_files": []
   },
   "cycles": 40,
