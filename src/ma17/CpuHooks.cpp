@@ -10,6 +10,7 @@ extern "C" {
 #include "emu8051.h"
 }
 
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -48,7 +49,49 @@ uint8_t CpuHooks::port_read(em8051 *cpu, uint8_t address) {
 
 void CpuHooks::port_write(em8051 *, uint8_t) {}
 
+namespace {
+// MA17_XRAM_WRITE_PROFILE=path: per-address write profile of the retained page (F800h..FBFFh): number of writes,
+// number of value changes and up to 6 distinct writer PCs (mPC at the MOVX, +-1 instruction), written at exit.
+struct XramWriteProfile {
+    std::array<unsigned long long, 0x400> writes{};
+    std::array<unsigned long long, 0x400> changes{};
+    std::array<std::array<uint16_t, 6>, 0x400> pcs{};
+    std::array<uint8_t, 0x400> pc_count{};
+    std::array<int, 0x400> last{};
+    const char *path = nullptr;
+    XramWriteProfile() {
+        path = std::getenv("MA17_XRAM_WRITE_PROFILE");
+        last.fill(-1);
+    }
+    ~XramWriteProfile() {
+        if (!path) return;
+        FILE *out = std::fopen(path, "w");
+        if (!out) return;
+        std::fprintf(out, "address,writes,changes,pcs\n");
+        for (unsigned i = 0; i < 0x400; ++i) {
+            if (!writes[i]) continue;
+            std::fprintf(out, "F%03X,%llu,%llu,", 0x800 + i, writes[i], changes[i]);
+            for (unsigned k = 0; k < pc_count[i]; ++k)
+                std::fprintf(out, "%s%04X", k ? " " : "", pcs[i][k]);
+            std::fprintf(out, "\n");
+        }
+        std::fclose(out);
+    }
+};
+XramWriteProfile g_xram_profile;
+} // namespace
+
 void CpuHooks::xram_write(em8051 *cpu, uint16_t address, uint8_t value) {
+    if (g_xram_profile.path && address >= 0xF800 && address < 0xFC00) {
+        const unsigned i = address - 0xF800u;
+        ++g_xram_profile.writes[i];
+        if (g_xram_profile.last[i] != value) ++g_xram_profile.changes[i];
+        g_xram_profile.last[i] = value;
+        const uint16_t pc = static_cast<uint16_t>(cpu->mPC);
+        bool seen = false;
+        for (unsigned k = 0; k < g_xram_profile.pc_count[i]; ++k) seen = seen || g_xram_profile.pcs[i][k] == pc;
+        if (!seen && g_xram_profile.pc_count[i] < 6) g_xram_profile.pcs[i][g_xram_profile.pc_count[i]++] = pc;
+    }
     write_xram(cpu, address, value, active_->ticks_);
 }
 

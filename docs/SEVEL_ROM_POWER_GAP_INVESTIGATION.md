@@ -153,6 +153,11 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   (valor baixo = quente: 19 a 90 °C), o de 62h na faixa ambiente (114 a 24 °C).
 - Memória de falhas: XRAM F84Eh..F850h (24 bits), contadores F851h..F85Bh (confirma a falha ao chegar a 0Ah), tabela de
   registros em `6E27h` (3 bytes por falha) copiada para XRAM CDh..CFh, `515Bh` apaga F84Eh..F860h por comando 05h.
+- **Inventário dinâmico de escritas na página retida (`MA17_XRAM_WRITE_PROFILE`, `tools/xram_write_inventory.py`, `docs/dyno/investigation/xram_write_inventory.csv`).** Em 14 cenários
+  (marcha lenta, partida a 20 e 50 °C, carga parcial, plena carga a 1500/3000/6000 RPM, ECT aberto, ar aberto, TPS2 em degrau, interruptor de lenta aberto, motor do batente desconectado,
+  sonda lambda travada pobre e rica) a ROM escreve em 400 dos 1024 endereços de F800h a FBFFh. Por número de mudanças de valor por execução: 3 endereços de rascunho por ciclo,
+  14 dinâmicos, 339 de estado lento e 44 só de inicialização/quase constantes. A classificação é por contagem e **não** prova adaptação
+  (muitos endereços de estado lento são buffers e contadores); serve de índice para quem decodificar as rotinas. Cada linha traz os PCs que escrevem (±1 instrução).
 - **Regra de falha do TPS (`1047h`..`1150h`, decodificação parcial).** Limiares por pista geram os bits B.0–B.7 (TPS2 ≥ F0h liga B.7 e `6Dh.0`; TPS1 é comparado com FAh e 07h); `RAM_28.1` = OR de B.0–B.4 e
   `RAM_28.2` = OR de B.4–B.7; esses flags são debouncados por contadores (confirmação em 0Ah) para os bits de F84F e, ligados, selecionam o TPS de fallback `ROM[72A1h]` e zeram R2. A regra
   exata de contradição entre as duas pistas (e o pull-up de sinal ausente) não foi decodificada além disso; o comportamento é caracterizado pelos testes P18 a P20.
@@ -160,7 +165,7 @@ Reproduzir: `python3 tools/power_gap_phase4.py ...`, `python3 tools/ntc_fault_pr
   combustível de longo prazo, posição 5 da coleta F4) é copiado para a IRAM superior @AAh; após uma contagem regressiva em IRAM @97h (decrementada com
   `RAM_2D.5` e `.6`) e `RAM_29.5` ligado, o valor salvo é escrito de volta em F86Ch. É a única escrita direta de F86Ch na ROM, um mecanismo de
   congelar/restaurar a adaptação, com semântica das condições (`27h.6`, `2Fh.1`) não identificada. Demais variáveis adaptativas da coleta: F80Ch
-  (escrita em `19D0h`), F83Dh (inicialização no reset, `0C86h` com valor lido da ROM por `MOVC`, e escrita em `2491h`) e F869h (somente leituras diretas). Varredura mecânica dos padrões
+  (escrita em `19D0h`), F83Dh (inicialização no reset, `0C86h` com valor lido da ROM por `MOVC`, e escrita em `2491h`) e F869h (somente leituras diretas). Decisão do proprietário: a varredura semântica completa da ROM não é necessária agora, pois nenhuma contradição explícita foi identificada. Varredura mecânica dos padrões
   `MOV R0/R1,#addr` + `MOVX`; escritas via ponteiros calculados podem não aparecer.
 - Não foi encontrada rotina de autoaprendizado de TPS mínimo/máximo nem adaptação de combustível que dependa do tempo
   de funcionamento, além do contador de limite da tabela lambda (XRAM F8E8h) e das posições do inventário

@@ -1,0 +1,401 @@
+address,total_writes,max_value_changes_per_run,scenarios,writer_pcs,class_
+F800,85038,61,14,0A54 0D2B 3E05 55A1,slow state / adaptation candidate
+F801,85038,60,14,0A51 0D2E 3E33 55A1,slow state / adaptation candidate
+F802,85032,24,14,0A51 0D26 461B 55A1,slow state / adaptation candidate
+F803,42,3,14,0A51 55A1,slow state / adaptation candidate
+F804,82555,47,14,0A51 1B91 1BC8 1C4D 55A1,slow state / adaptation candidate
+F805,82555,3,14,0A51 1B8C 1BC3 1C4A 55A1,slow state / adaptation candidate
+F806,85032,5,14,0A51 0D31 47E0 55A1,slow state / adaptation candidate
+F807,42,3,14,0A51 55A1,slow state / adaptation candidate
+F808,41825,39,14,0A51 0D23 1DD7 55A1,slow state / adaptation candidate
+F809,41811,68,14,0A51 1AEE 55A1,slow state / adaptation candidate
+F80A,42,3,14,0A51 55A1,slow state / adaptation candidate
+F80B,41811,1283,14,0A51 1EF3 55A1,dynamic
+F80C,41811,4570,14,0A51 19D2 55A1,dynamic
+F80D,257,156,14,0A51 19D8 55A1,slow state / adaptation candidate
+F80E,41811,4,14,0A51 20A3 55A1,slow state / adaptation candidate
+F80F,56,4,14,0A51 0AAB 55A1,slow state / adaptation candidate
+F810,42,3,14,0A51 55A1,slow state / adaptation candidate
+F811,42,3,14,0A51 55A1,slow state / adaptation candidate
+F812,42,3,14,0A51 55A1,slow state / adaptation candidate
+F813,42,3,14,0A51 55A1,slow state / adaptation candidate
+F814,42,3,14,0A51 55A1,slow state / adaptation candidate
+F815,42,3,14,0A51 55A1,slow state / adaptation candidate
+F816,41811,19,14,0A51 2220 55A1,slow state / adaptation candidate
+F817,56,4,14,0A51 0C93 55A1,slow state / adaptation candidate
+F818,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F819,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F81A,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F81B,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F81C,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F81D,56,4,14,0A51 0CE5 55A1,slow state / adaptation candidate
+F81E,56,4,14,0A51 0AAB 55A1,slow state / adaptation candidate
+F81F,41825,4,14,0A51 0C98 298A 55A1,slow state / adaptation candidate
+F820,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F821,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F822,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F823,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F824,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F825,56,4,14,0A51 0CF0 55A1,slow state / adaptation candidate
+F826,41811,3,14,0A51 2D15 55A1,slow state / adaptation candidate
+F827,1975,4,14,0A51 2C12 55A1,slow state / adaptation candidate
+F828,41811,3,14,0A51 2CD0 55A1,slow state / adaptation candidate
+F829,42,3,14,0A51 55A1,slow state / adaptation candidate
+F82A,56,4,14,0A51 0CB4 55A1,slow state / adaptation candidate
+F82B,8951,4,14,0A51 280F 55A1,slow state / adaptation candidate
+F82C,31999,4006,14,0A51 0CA2 2290 22AB 55A1,dynamic
+F82D,41811,41,14,0A51 2767 55A1,slow state / adaptation candidate
+F82E,41811,14,14,0A51 263F 55A1,slow state / adaptation candidate
+F82F,2175,3,14,0A51 2573 55A1,slow state / adaptation candidate
+F830,42,3,14,0A51 55A1,slow state / adaptation candidate
+F831,41811,90,14,0A51 2796 55A1,slow state / adaptation candidate
+F832,41811,87,14,0A51 2C32 55A1,slow state / adaptation candidate
+F833,41811,87,14,0A51 2C32 55A1,slow state / adaptation candidate
+F834,41811,87,14,0A51 2C32 55A1,slow state / adaptation candidate
+F835,42,3,14,0A51 55A1,slow state / adaptation candidate
+F836,41811,5858,14,0A51 2619 2632 55A1,scratch/per-cycle
+F837,2053,16,14,0A51 0C9D 263C 55A1,slow state / adaptation candidate
+F838,42,3,14,0A51 55A1,slow state / adaptation candidate
+F839,41811,4,14,0A51 0CA7 2A4B 55A1,slow state / adaptation candidate
+F83A,41825,4,14,0A51 0CAA 2C3B 55A1,slow state / adaptation candidate
+F83B,41825,413,14,0A51 0CAF 2C1B 55A1,dynamic
+F83C,41811,4,14,0A51 0CD9 29FC 55A1,slow state / adaptation candidate
+F83D,40552,60,14,0A51 0C8D 22EF 2494 55A1,slow state / adaptation candidate
+F83E,42,3,14,0A51 55A1,slow state / adaptation candidate
+F83F,56,4,14,0A51 0AAB 55A1,slow state / adaptation candidate
+F840,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F841,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F842,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F843,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F844,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F845,102,11,14,0A51 0C77 2400 55BF 55D2,slow state / adaptation candidate
+F846,102,20,14,0A51 24A2 55BF 55D2,slow state / adaptation candidate
+F847,125363,25,14,0A51 0C85 0CCA 2D56 55BF 55D2,slow state / adaptation candidate
+F848,32916,87,14,0A51 0C63 2803 55BF 55D2,slow state / adaptation candidate
+F849,70,4,14,0A51 0AAB 55BF 55D2,slow state / adaptation candidate
+F84A,70,4,14,0A51 0AAB 55BF 55D2,slow state / adaptation candidate
+F84B,28,2,14,0A51 0A59,init-only or near-constant
+F84C,14,1,14,0A51,init-only or near-constant
+F84D,28,2,14,0A51 0AAB,init-only or near-constant
+F84E,4213,12,14,0A51 0C32 41E5,slow state / adaptation candidate
+F84F,4213,2,14,0A51 0C32 4200,init-only or near-constant
+F850,4213,3,14,0A51 0C32 425D,slow state / adaptation candidate
+F851,28,1,14,0A51 0C32,init-only or near-constant
+F852,41783,1,14,0A51 0C32 3163,init-only or near-constant
+F853,166,2,14,0A51 0C32 41A8,init-only or near-constant
+F854,28,1,14,0A51 0C32,init-only or near-constant
+F855,28,1,14,0A51 0C32,init-only or near-constant
+F856,242,2,14,0A51 0C32 41A8,init-only or near-constant
+F857,242,2,14,0A51 0C32 41A8,init-only or near-constant
+F858,242,2,14,0A51 0C32 41A8,init-only or near-constant
+F859,28,1,14,0A51 0C32,init-only or near-constant
+F85A,17370,3,14,0A51 0C32 0E2D 12E9 41A8,slow state / adaptation candidate
+F85B,28,1,14,0A51 0C32,init-only or near-constant
+F85C,28,1,14,0A51 0C32,init-only or near-constant
+F85D,28,1,14,0A51 0C32,init-only or near-constant
+F85E,46038,11,14,0A51 0C32 1334 3169 41F2,slow state / adaptation candidate
+F85F,4470,1,14,0A51 0C32 1334 4207 4216,init-only or near-constant
+F860,4311,1,14,0A51 0C1D 0C32 1326 1334 429E,init-only or near-constant
+F861,14,1,14,0A51,init-only or near-constant
+F862,85004,2,14,0A51 0C07 4772,init-only or near-constant
+F863,28,2,14,0A51 0AAB,init-only or near-constant
+F864,28,2,14,0A51 0AAB,init-only or near-constant
+F865,14,1,14,0A51,init-only or near-constant
+F866,14,1,14,0A51,init-only or near-constant
+F867,213,153,14,0A51 53D8,slow state / adaptation candidate
+F868,213,153,14,0A51 53D3,slow state / adaptation candidate
+F869,213,4,14,0A51 53D0,slow state / adaptation candidate
+F86A,14,1,14,0A51,init-only or near-constant
+F86B,14,1,14,0A51,init-only or near-constant
+F86C,14,1,14,0A51,init-only or near-constant
+F86D,14,1,14,0A51,init-only or near-constant
+F86E,14,1,14,0A51,init-only or near-constant
+F86F,14,1,14,0A51,init-only or near-constant
+F870,14,1,14,0A51,init-only or near-constant
+F871,14,1,14,0A51,init-only or near-constant
+F872,14,1,14,0A51,init-only or near-constant
+F873,28,1,14,0A51 0C38,init-only or near-constant
+F874,229,2,14,0A51 42AA,init-only or near-constant
+F875,28,2,14,0A51 0B37,init-only or near-constant
+F876,42,2,14,0A51 0B6F 0B9F,init-only or near-constant
+F877,42,1,14,0A51 0B6C 0B84,init-only or near-constant
+F878,154,11,14,0A51 21E2,slow state / adaptation candidate
+F879,14,1,14,0A51,init-only or near-constant
+F87A,14,1,14,0A51,init-only or near-constant
+F87B,14,1,14,0A51,init-only or near-constant
+F87C,14,1,14,0A51,init-only or near-constant
+F87D,14,1,14,0A51,init-only or near-constant
+F87E,14,1,14,0A51,init-only or near-constant
+F87F,85038,4,14,0A51 3E50 55A1 55BF,slow state / adaptation candidate
+F880,56,3,14,0A51 55A1 55BF,slow state / adaptation candidate
+F881,498,217,14,0A51 0C2A 3157 41A0 55A1 55BF,dynamic
+F882,38153,16,14,0A51 3134 55A1 55BF,slow state / adaptation candidate
+F883,56,3,14,0A51 55A1 55BF,slow state / adaptation candidate
+F884,4241,16,14,0A51 41CD 55A1 55BF,slow state / adaptation candidate
+F885,4241,4,14,0A51 41F7 55A1 55BF,slow state / adaptation candidate
+F886,4241,29,14,0A51 423F 55A1 55BF,slow state / adaptation candidate
+F887,45996,6443,14,0A51 314D 407A 55A1 55BF,scratch/per-cycle
+F888,4442,45,14,0A51 0C24 0E26 12EE 55A1 55BF,slow state / adaptation candidate
+F889,41839,4,14,0A51 0BCA 115E 55A1 55BF,slow state / adaptation candidate
+F88A,24837,52,14,0A51 221C 3BE9 55A1,slow state / adaptation candidate
+F88B,85036,59,14,0A51 0D10 3EDF 55A1,slow state / adaptation candidate
+F88C,41825,56,14,0A51 0D0D 302B 55A1,slow state / adaptation candidate
+F88D,85024,26,14,0A51 3E61 55A1,slow state / adaptation candidate
+F88E,85024,20,14,0A51 3E7D 55A1,slow state / adaptation candidate
+F88F,56,4,14,0A51 0AAB 55A1,slow state / adaptation candidate
+F890,41811,76,14,0A51 1368 55A1,slow state / adaptation candidate
+F891,85018,21,14,0A51 4608 55A1,slow state / adaptation candidate
+F892,85036,3,14,0A51 0BDC 4041 55A1,slow state / adaptation candidate
+F893,85036,3,14,0A51 0BDA 403D 55A1,slow state / adaptation candidate
+F894,40671,7,14,0A51 0BE3 30EF 55A1,slow state / adaptation candidate
+F895,56,3,14,0A51 0BDF 55A1,slow state / adaptation candidate
+F896,56,4,14,0A51 0BD6 55A1,slow state / adaptation candidate
+F897,8035,33,14,0A51 0D1E 2F75 2F87 55A1,slow state / adaptation candidate
+F898,454,307,14,0A51 0D16 30AB 3F2A 55A1,dynamic
+F899,241,155,14,0A51 30AF 55A1,slow state / adaptation candidate
+F89A,42,3,14,0A51 55A1,slow state / adaptation candidate
+F89B,17556,160,14,01B2 0A51 0EAC 55A1,slow state / adaptation candidate
+F89C,8921,137,14,01B5 0A51 0F40 0F6A 55A1,slow state / adaptation candidate
+F89D,8707,6,14,0A51 0F6F 55A1,slow state / adaptation candidate
+F89E,68811,23,14,0A51 0BBC 3BDC 4790 55A1,slow state / adaptation candidate
+F89F,83656,1106,14,0A51 1254 3CE2 55A1,dynamic
+F8A0,41811,4,14,0A51 2004 55A1,slow state / adaptation candidate
+F8A1,13060,20,14,0A51 1F51 1F5F 55A1,slow state / adaptation candidate
+F8A2,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8A3,85019,41,14,0A51 45F8 55A1,slow state / adaptation candidate
+F8A4,8979,6,14,0A51 0CDE 2A3E 2A5D 55A1,slow state / adaptation candidate
+F8A5,41811,3,14,0A51 14B9 55A1,slow state / adaptation candidate
+F8A6,41811,3,14,0A51 14B5 55A1,slow state / adaptation candidate
+F8A7,41811,3,14,0A51 14BD 55A1,slow state / adaptation candidate
+F8A8,41811,3,14,0A51 14C1 55A1,slow state / adaptation candidate
+F8A9,41825,3,14,0A51 0BC6 1492 55A1,slow state / adaptation candidate
+F8AA,41811,3,14,0A51 148F 55A1,slow state / adaptation candidate
+F8AB,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8AC,70,4,14,0A51 0B28 4BD1 55A1,slow state / adaptation candidate
+F8AD,56,4,14,0A51 4BD5 55A1,slow state / adaptation candidate
+F8AE,56,3,14,0A51 4BD8 55A1,slow state / adaptation candidate
+F8AF,56,4,14,0A51 4BDC 55A1,slow state / adaptation candidate
+F8B0,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B1,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B2,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B3,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B4,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B5,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B6,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B7,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B8,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8B9,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BA,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BB,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BC,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BD,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BE,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8BF,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C0,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C1,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C2,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C3,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C4,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C5,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C6,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C7,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C8,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8C9,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CA,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CB,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CC,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CD,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CE,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8CF,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8D0,85033,3,14,0A51 0B5C 45DA 55A1,slow state / adaptation candidate
+F8D1,85033,3,14,0A51 0B5F 45DE 55A1,slow state / adaptation candidate
+F8D2,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8D3,70,5,14,0A51 0D39 483A 55A1,slow state / adaptation candidate
+F8D4,70,5,14,0A51 0D3C 4865 55A1,slow state / adaptation candidate
+F8D5,4213,588,14,0A51 20E2 20E6 55A1,dynamic
+F8D6,85032,4,14,0A51 0BEF 4766 55A1,slow state / adaptation candidate
+F8D7,85070,23,14,0A51 0BF2 3286 476E 55A1,slow state / adaptation candidate
+F8D8,85032,3,14,0A51 0BF5 476A 55A1,slow state / adaptation candidate
+F8D9,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8DA,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8DB,41811,3,14,0A51 20B6 55A1,slow state / adaptation candidate
+F8DC,510,4,14,0A51 2732 55A1,slow state / adaptation candidate
+F8DD,434,31,14,07C8 0A51 0D82 3B38 55A1,slow state / adaptation candidate
+F8DE,56,4,14,0A51 0AAB 55A1,slow state / adaptation candidate
+F8DF,41811,3,14,0A51 26C8 55A1,slow state / adaptation candidate
+F8E0,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8E1,20923,11,14,0A51 35C2 55A1,slow state / adaptation candidate
+F8E2,85015,21,14,0A51 49C8 55A1,slow state / adaptation candidate
+F8E3,2126,3,14,0A51 2103 55A1,slow state / adaptation candidate
+F8E4,196,14,14,0A51 1341 1B33 55A1,slow state / adaptation candidate
+F8E5,41811,278,14,0A51 35A8 55A1,dynamic
+F8E6,41811,4,14,0A51 20A9 55A1,slow state / adaptation candidate
+F8E7,32887,4,14,0A51 3861 55A1,slow state / adaptation candidate
+F8E8,171,14,14,0A51 0D61 16EA 55A1,slow state / adaptation candidate
+F8E9,3712,314,14,0A51 0D67 16D8 16DE 55A1,dynamic
+F8EA,180,19,14,0A51 0D6D 16CC 55A1,slow state / adaptation candidate
+F8EB,4021,469,14,0A51 0D73 16BA 16C0 55A1,dynamic
+F8EC,24539,2506,14,0A51 0E0B 55A1,dynamic
+F8ED,41819,3273,14,0A51 0E06 0E12 55A1,dynamic
+F8EE,2129,3,14,0A51 3C8A 55A1,slow state / adaptation candidate
+F8EF,8984,3,14,0A51 2D8E 2E3A 55A1,slow state / adaptation candidate
+F8F0,14723,3,14,0A51 2948 55A1,slow state / adaptation candidate
+F8F1,85015,4,14,0A51 49D4 55A1,slow state / adaptation candidate
+F8F2,8951,4,14,0A51 28AF 55A1,slow state / adaptation candidate
+F8F3,5828,4,14,0A51 0CFA 2870 55A1,slow state / adaptation candidate
+F8F4,56,4,14,0A51 0CFF 55A1,slow state / adaptation candidate
+F8F5,56,4,14,0A51 2E3F 55A1,slow state / adaptation candidate
+F8F6,56,4,14,0A51 0D05 55A1,slow state / adaptation candidate
+F8F7,2126,3,14,0A51 2104 55A1,slow state / adaptation candidate
+F8F8,8844,116,14,0168 0A51 55A1,slow state / adaptation candidate
+F8F9,9670,55,14,0A51 32C3 32CC 55A1,slow state / adaptation candidate
+F8FA,42,3,14,0A51 55A1,slow state / adaptation candidate
+F8FB,85024,4,14,0A51 3E40 55A1,slow state / adaptation candidate
+F8FC,41811,4,14,0A51 1D01 55A1,slow state / adaptation candidate
+F8FD,41783,19,14,0A51 1CE5,slow state / adaptation candidate
+F8FE,41783,5597,14,0A51 1CE8,scratch/per-cycle
+F8FF,112,7,14,089F 08A7 08AE 096A 09C0 0A42,slow state / adaptation candidate
+F900,56,3,14,5757 57C4 57CB 57D1,slow state / adaptation candidate
+F901,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F902,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F903,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F904,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F905,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F906,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F907,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F908,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F909,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F90F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F910,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F911,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F912,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F913,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F914,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F915,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F916,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F917,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F918,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F919,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F91F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F920,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F921,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F922,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F923,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F924,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F925,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F926,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F927,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F928,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F929,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F92F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F930,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F931,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F932,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F933,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F934,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F935,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F936,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F937,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F938,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F939,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F93F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F940,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F941,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F942,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F943,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F944,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F945,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F946,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F947,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F948,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F949,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F94F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F950,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F951,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F952,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F953,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F954,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F955,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F956,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F957,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F958,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F959,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F95F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F960,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F961,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F962,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F963,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F964,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F965,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F966,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F967,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F968,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F969,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F96F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F970,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F971,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F972,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F973,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F974,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F975,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F976,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F977,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F978,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F979,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97A,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97B,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97C,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97D,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97E,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F97F,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F980,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F981,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F982,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F983,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F984,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F985,42,3,14,57C4 57CB 57D1,slow state / adaptation candidate
+F986,41811,3,14,35EE 57C4 57CB 57D1,slow state / adaptation candidate
+F987,17342,99,14,0EE7 57C4 57CB 57D1,slow state / adaptation candidate
+F988,17342,215,14,0E9A 57C4 57CB 57D1,dynamic
+F989,17342,5,14,0E97 57C4 57CB 57D1,slow state / adaptation candidate
+F98A,17342,178,14,0ECA 57C4 57CB 57D1,slow state / adaptation candidate
+F98B,17342,5,14,0ED0 57C4 57CB 57D1,slow state / adaptation candidate
+F98C,42,3,14,578D 5794 579A,slow state / adaptation candidate
+F98D,42,3,14,578D 5794 579A,slow state / adaptation candidate
+F9FE,126,9,14,575A 576E 5775 577B 5782 578A,slow state / adaptation candidate
+F9FF,84,3,14,575D 5764 576C 5779 5788,slow state / adaptation candidate
