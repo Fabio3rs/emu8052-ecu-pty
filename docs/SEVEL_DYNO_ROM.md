@@ -218,13 +218,13 @@ parte do déficit de torque indicado; o resto não foi decomposto (ver backlog).
 * **Hipótese:** o ajuste foi restrito a um parâmetro (`hs_gain`) para não perturbar os testes caóticos da ROM abaixo de
   2500 RPM; a curva base (inalterada) não acompanha a forma alvo ali. Um refit livre foi tentado e flipou 2–3 testes
   por tentativa. Não relaxei a banda nem ajustei parâmetros para forçar o número.
-* **Efeito:** as demais fases não dependem da banda e foram executadas; a Fase 2 fica **ACEITA COM CRITÉRIO DE FORMA BLOQUEADO**.
+* **Efeito:** as demais fases não dependem da banda e foram executadas; a Fase 2 fica **BLOQUEADA** neste critério (o refit entregue é o melhor obtido sem perturbar a suíte).
 
 ### Proveniência dos manifestos
 
-Os manifestos das Fases 1 e 2 foram **regenerados** no commit `f5ff2b6` com o SHA real (`DYNO_CODE_SHA`). O da Fase 0
-(baseline da integração antiga) não é regenerável: o `commit` é o que introduziu as opções da ferramenta e foi preenchido
-depois; a proveniência dele é afirmada, não verificada por máquina (ver `commit_note`).
+Todos os manifestos trazem o SHA real (`DYNO_CODE_SHA`, pois o sandbox não lê o `.git`). O baseline da Fase 0 foi
+**regenerado** com o binário antigo reconstruído num worktree do commit `efa374f` (integração por amostra); as
+Fases 1–2 no commit `f5ff2b6`; as Fases 5–6 em `b09207d`.
 
 ## Estado das fases
 
@@ -232,7 +232,7 @@ depois; a proveniência dele é afirmada, não verificada por máquina (ver `com
 |---|---|---|
 | 0 Linha de base | ACEITA | `efa374f` |
 | 1 Integração exata | ACEITA | `7f4a478` |
-| 2 Refit da VE | ACEITA COM RESSALVA: forma 8,2 % > 8 % (B1) | `48bd7ab` |
+| 2 Refit da VE | BLOQUEADA (B1: forma 8,2 % > 8 %; demais alvos atendidos) | `48bd7ab` |
 | 3 Telemetria de eixo e balanço | ACEITA | `91a854e` |
 | 4 Limites de controle e cenário | ACEITA | `c4e292b` |
 | 5 Bancada com a ROM (3000 RPM) | ACEITA | `8e437df` |

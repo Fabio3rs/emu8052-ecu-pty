@@ -15,10 +15,9 @@
     "--rpm-step",
     "1000"
   ],
-  "binary": "build-lab/sevel-dyno",
+  "binary": ".work/baseline-wt/build/sevel-dyno",
   "code": {
     "commit": "efa374f05970dc3b0ccde5093627449ab42dd431",
-    "commit_note": "baseline of the OLD point-sampled integration; the old integration no longer exists, so it cannot be regenerated. The commit is the one that added the tool options (--dt-us) used to produce it; the SHA was filled in afterwards (the sandbox cannot read .git). Provenance is therefore asserted, not machine-verified.",
     "dirty_files": []
   },
   "cycles": 40,

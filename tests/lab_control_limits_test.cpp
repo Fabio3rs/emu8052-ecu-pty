@@ -29,6 +29,14 @@ int main(int argc, char **argv) {
     if (std::abs(s.pedal_pull_m - engine::max_pedal_pull_m()) > 1e-9) return 5;
     if (std::abs(s.throttle_angle_rad - half_pi) > 1e-6) return 6;
     if (std::abs(s.applied_load_nm - 300.0) > 1e-9) return 7;
+    // The plant response, not just the command: 300 N.m stalls the engine.
+    const auto stall_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    while (std::chrono::steady_clock::now() < stall_deadline) {
+        if (session.latest(s) && s.tick >= 2000000) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (s.tick < 2000000) return 8;
+    if (s.rpm > 1.0) return 9;
     std::printf("lab control limits ok: pull %.5f m, angle %.6f rad, load %.1f N.m\n",
                 s.pedal_pull_m, s.throttle_angle_rad, s.applied_load_nm);
     return 0;
