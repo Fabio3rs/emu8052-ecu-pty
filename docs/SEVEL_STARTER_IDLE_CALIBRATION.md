@@ -104,3 +104,11 @@ Achados abertos (não escondidos pela troca de limites):
 - Arranque a 400–520 rpm, acima do real: falta arrasto de compressão/óleo frio.
 - Relação 122/9 vem de informação do usuário, não conferida com o código da peça.
 - `F860=64` após um breve corte do sensor: significado não decodificado.
+
+## Atualização 2026-11-20: relação da coroa e comparação do modelo com a curva do arranque
+
+- **Relação 122/9 = 13,56:1 (plausível, não confirmada no carro).** O proprietário encontrou, em anúncios e catálogos de peças originais (cremalheira Fiat 5927398 com 122 dentes; pinhão Fiat 9941306, impulsor BZM 99.1206.0, com 9 dentes; o ePER registra a troca de partida em 15/02/1995, ambos os motores com pinhão de 9 dentes), a contagem usada pelo modelo (`starter_ratio = 122/9`). A fonte é secundária e a referência gravada no arranque não foi lida: trata-se de um valor plausível, não medido. Consequência: 2200 RPM no motor de partida são ~162 RPM no virabrequim e os 3,8 N·m do ensaio de funcionamento são ~51,5 N·m no virabrequim, antes das perdas.
+- **Modelo contra a curva P3F083A04 (E80-1/12, rotação, torque e potência contra a corrente).** `CrankDynamics::starter_torque_at_crank_nm` interpola em linha reta três pontos do banco de provas (12,5 N·m parado, 3,8 N·m a 2200 RPM, 0 a 11850 RPM). Entre ~2500 e ~8000 RPM do motor de partida (185 a 590 RPM no virabrequim, a faixa de giro da partida) essa reta fica acima do que um motor série entrega e a potência calculada chega a **1448 W a 5920 RPM do motor** (437 RPM no virabrequim), contra a potência máxima de ~1,0 kW da curva e do valor nominal de 1 kW. Pontos calculados do modelo: 1034 W a 1600 RPM (118 no virabrequim), 1295 W a 4000 (295), 1412 W a 5000 (369). Não foi alterado; fica como item de recalibração (ajustar a curva torque-rotação ao gráfico, respeitando o máximo de ~1 kW).
+- **Partida antes e depois da correção do torque de centelha (CURVES_STUDY F-2):** a temporização praticamente não mudou (300 RPM em 0,355 s nos dois; primeira queima em 0,848 s contra 0,845 s; 800 RPM em 1,164 s contra 1,149 s); só o pico de rotação logo após a partida passa de 1001 para 1083 RPM.
+- **Limitador de rotação da ROM:** corte de combustível a partir de ~6821 RPM e retomada em ~6720 RPM (tip-in sem freio, `docs/dyno/investigation/tipin_transient.csv`).
+

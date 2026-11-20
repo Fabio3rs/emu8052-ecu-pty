@@ -22,7 +22,9 @@ void StreamingAudio::initialize_synth() {
     parameters.initialAudioParameters.dF_F_mix = 0.02f;
     parameters.initialAudioParameters.levelerMinGain = 1.0f;
     parameters.initialAudioParameters.levelerMaxGain = 1.0f;
-    parameters.initialAudioParameters.volume = 0.08f;
+    // 0.06 (was 0.08): with the corrected spark torque (CURVES_STUDY F-2) the engine starts faster and the first
+    // firings peak ~27 % above full scale at 0.08 (41.5k); 0.06 keeps the true peak under full scale.
+    parameters.initialAudioParameters.volume = 0.06f;
     synth_.initialize(parameters);
     synth_.initializeImpulseResponse(
         donor_smooth_impulse.data(),
@@ -81,6 +83,19 @@ StreamingAudio::render_until(const std::vector<ma17::EmulatorEvent> &events,
             const int buffered = synth_.m_audioBufferedSamples.load();
             if (buffered > 0 && buffered <= static_cast<int>(block.size())) {
                 const int read = synth_.readAudioOutput(buffered, block.data());
+                // Soft limiter on the PCM peaks (CURVES_STUDY F-2: the corrected spark torque makes the engine
+                // start faster and the first firings reached full scale): samples below 75 % of full scale are
+                // untouched, higher ones are compressed asymptotically towards +-32766 instead of hard clipping.
+                constexpr double knee = 24576.0, ceiling = 32766.0;
+                for (int i = 0; i < read; ++i) {
+                    const double magnitude = std::abs(static_cast<double>(block[static_cast<std::size_t>(i)]));
+                    if (magnitude > knee) {
+                        const double limited =
+                            knee + (ceiling - knee) * std::tanh((magnitude - knee) / (ceiling - knee));
+                        block[static_cast<std::size_t>(i)] = static_cast<std::int16_t>(
+                            std::lround(block[static_cast<std::size_t>(i)] < 0 ? -limited : limited));
+                    }
+                }
                 output.insert(output.end(), block.begin(),
                               block.begin() + read);
             }

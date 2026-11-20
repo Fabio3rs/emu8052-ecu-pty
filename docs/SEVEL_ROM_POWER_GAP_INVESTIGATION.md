@@ -967,3 +967,8 @@ e a velocidade do atuador que acompanha o pedal passou de (40, 50] para (37, 40]
 **Limitação:** as tabelas das seções C a E foram geradas antes da correção (`matrix_pre_fix.csv`, `decomposition_pre_fix.md`, Tabelas P1–P24) e continuam válidas como diagnóstico; reproduzem-se com
 `--exp spark_torque_legacy=1 --exp acc_pump_scale=25`.
 
+## J. Lab gráfico com som após a mudança de padrão
+
+O `build-lab` (SDL3, Makefiles) foi recompilado com o código novo e a suíte completa passa em 527/527 (inclui áudio, captura e GPU). Um teste, `LabSession.HeadlessControlReplay`, acusou saturação do áudio no primeiro disparo da partida (8 amostras em ±32767; pico verdadeiro ~41,5 mil, 27 % acima do fundo de escala, contra ~27 mil antes). Correção em `src/lab/StreamingAudio.cpp`:
+volume do sintetizador 0,08 → 0,06 (cerca de −2,5 dB em todo o áudio) e limitador suave de picos acima de 75 % do fundo de escala (tanh). A pressão de entrada não era a causa (pico idêntico, 5991,8, nos dois casos); o acúmulo dos eventos mais densos da partida mais rápida era. O som do Lab ficou um pouco mais baixo; o ganho é a constante `volume` da mesma função.
+
