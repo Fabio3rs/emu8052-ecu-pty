@@ -133,8 +133,10 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                            check=True, capture_output=True)
             scene_left = width * 0.24
             scene_width = width * (0.66 - 0.24)
-            tps_x = round(scene_left + 21 + 1.5 * (scene_width - 42) / 11)
-            tps_y = height - 8 - 26
+            # V1: the 11 group tabs are two rows (6 + 5); TPS is tab 1 of row 0
+            # (rows are 52 px high, counted up from an 8 px bottom margin).
+            tps_x = round(scene_left + 21 + 1.5 * (scene_width - 42) / 6)
+            tps_y = height - 8 - 52 - 26
             subprocess.run(["xdotool", "mousemove", "--window", window,
                             str(tps_x), str(tps_y), "click", "1"],
                            check=True, capture_output=True)
@@ -161,7 +163,7 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                 subprocess.run(["xdotool", "mouseup", "1"],
                                check=True, capture_output=True)
             subprocess.run(["xdotool", "mousemove", "--window", window,
-                            "850", "104", "click", "1"],
+                            "850", str(round(85 * 1.5)), "click", "1"],
                            check=True, capture_output=True)
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline and process.poll() is None:
@@ -218,12 +220,12 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                             "--delay", "80", "4"],
                            check=True, capture_output=True)
             if width < 1280 or height < 720:
-                fit_x, fit_y = round(width * 0.66 - 37), 78
+                fit_x, fit_y = round(width * 0.66 - 37), 85
             else:
                 scale = min(2.0, max(1.0, min(width / 1280,
                                                 height / 720)))
                 fit_x = round(width * 0.66 - 268 * scale)
-                fit_y = round((64 if height < 900 else 82) + 15 * scale)
+                fit_y = round(85 * scale)  # centre of LabLayout::toolbar
             subprocess.run(["xdotool", "mousemove", "--window", window,
                             str(fit_x), str(fit_y), "click", "1"],
                            check=True, capture_output=True)
@@ -278,8 +280,12 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                 click_x = round((left + 0.88 * (right - left)) * ui_scale)
                 click_y = round(102 * ui_scale)
             else:
-                click_x = round(width * 0.24 * 0.5)
                 scale = min(2.0, max(1.0, min(width / 1280, height / 720)))
+                # L7: GEAR is the right-hand card of the GEAR/CLUTCH pair.
+                panel_w = width * 0.24
+                gap = 8 * scale
+                card_w = min(90 * scale, (panel_w - 32 * scale - gap) / 2)
+                click_x = round(panel_w / 2 + gap / 2 + card_w / 2)
                 top = 410 * scale + 8
                 bottom = height - 340
                 if bottom - top < 64:
@@ -652,12 +658,12 @@ with tempfile.TemporaryFile(mode="w+") as log, \
             if radial_mode == "radial-click":
                 if width < 1280 or height < 720:
                     click_x = round(width * 0.66 - 90)
-                    click_y = 78
+                    click_y = 85
                 else:
                     scale = min(2.0, max(1.0, min(width / 1280,
                                                     height / 720)))
                     click_x = round(width * 0.66 - 164 * scale)
-                    click_y = round((64 if height < 900 else 82) + 15 * scale)
+                    click_y = round(85 * scale)  # centre of LabLayout::toolbar
                 subprocess.run(
                     ["xdotool", "mousemove", "--window", window,
                      str(click_x), str(click_y), "click", "1"],
@@ -680,6 +686,7 @@ with tempfile.TemporaryFile(mode="w+") as log, \
             subprocess.run(["xdotool", "key", "--window", window, "h"],
                            check=True, capture_output=True)
         hover_x, hover_y = ((1440, 900) if radial_mode == "fuel-tooltip"
+                            else (1750, 300) if radial_mode == "ignition-tooltip"
                             else (1550, 650) if radial_mode == "throttle-tooltip"
                             else (click_x, click_y) if radial_mode == "gear-tooltip"
                             else (4, 4))
@@ -771,7 +778,8 @@ with tempfile.TemporaryFile(mode="w+") as log, \
         if radial_mode == "fit-click":
             fit = re.search(r"\[LAB-VIEW-FIT\] zoom_before=([\d.]+) "
                             r"tick=(\d+)", output)
-            assert fit and float(fit[1]) > 0.85, output[-1200:]
+            assert fit, "no [LAB-VIEW-FIT] line: FIT button was not hit"
+            assert float(fit[1]) > 0.85, f"zoom_before={fit[1]} <= 0.85"
         if radial_mode == "digital-zoom":
             assert re.search(r"\[LAB-CAPTURE\].*digital_span_ticks=9900", output), (
                 output[-1000:])
@@ -1217,11 +1225,12 @@ with tempfile.TemporaryFile(mode="w+") as log, \
                 raise AssertionError(f"unsupported PNG filter {filter_kind}")
             assert alpha == 255, (row, alpha)
             previous_alpha = alpha
-        if radial_mode in ("fuel-tooltip", "throttle-tooltip"):
+        if radial_mode in ("fuel-tooltip", "throttle-tooltip", "ignition-tooltip"):
             assert (width, height) == (1920, 1080)
             previous = bytearray(width * 4)
             cyan = 0
             first_row, last_row = ((910, 925) if radial_mode == "fuel-tooltip"
+                                   else (305, 385) if radial_mode == "ignition-tooltip"
                                    else (655, 730))
             for row in range(last_row):
                 kind = scanlines[row * stride]
@@ -1282,10 +1291,10 @@ with tempfile.TemporaryFile(mode="w+") as log, \
             assert status_text > 200 and status_overflow == 0, (
                 "compact status crosses into gauges", status_text,
                 status_overflow)
-            # KEY button visible and un-obscured: its fill is the light
-            # button colour of the current theme (was dark teal 58,93,104),
+            # KEY button visible and un-obscured: with the key on, its fill is
+            # the C1 "on" state (surface tinted 20 % with the green accent),
             # and no inspector border pixels fall in the KEY row.
-            assert tuple(previous[25 * 4:25 * 4 + 3]) == (235, 241, 246), (
+            assert tuple(previous[25 * 4:25 * 4 + 3]) == (29, 66, 51), (
                 "KEY button obscured by compact inspector",
                 tuple(previous[25 * 4:25 * 4 + 3]))
             assert key_row_border == 0, key_row_border

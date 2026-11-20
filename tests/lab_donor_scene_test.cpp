@@ -344,7 +344,7 @@ TEST(DonorScene, MatchesPhysicalSceneAtCrankAndValvePhases) {
         lab::RecordingRenderer donor;
         lab::render_sevel_scene(original, snapshot, 1280.0f, 720.0f);
         lab::render_sevel_scene_donor(donor, snapshot, 1280.0f, 720.0f);
-        ASSERT_EQ(original.draw_calls(), 47);
+        ASSERT_EQ(original.draw_calls(), 51);
         ASSERT_EQ(donor.draw_calls(), original.draw_calls());
         ASSERT_EQ(donor.triangle_count(), original.triangle_count());
         const auto expected = segment_bounds(original);
@@ -355,7 +355,7 @@ TEST(DonorScene, MatchesPhysicalSceneAtCrankAndValvePhases) {
                 const float old = expected[segment][edge];
                 const float mapped =
                     edge % 2 == 0
-                        ? (1.0f + fitted.m[0][0] * (old - 640.0f) / 2560.0f) *
+                        ? (1.0f + fitted.m[0][0] * (old - 640.0f) / 1440.0f) *
                               640.0f
                         : (1.0f - fitted.m[1][1] * (504.0f - old) / 1440.0f -
                            fitted.m[1][3]) *
@@ -414,8 +414,8 @@ TEST(DonorScene, ShowsCombustionAndMisfireAsTemporaryMarkers) {
     lab::RecordingRenderer renderer;
     lab::render_sevel_scene_donor(renderer, snapshot, 1280.0f, 720.0f, {}, {},
                                   {}, nullptr, pulses);
-    EXPECT_EQ(renderer.draw_calls(), 49);
-    EXPECT_EQ(renderer.triangle_count(), 102U);
+    EXPECT_EQ(renderer.draw_calls(), 53); // + 4 counterweight webs (M2)
+    EXPECT_EQ(renderer.triangle_count(), 110U);
     ysVector last_color{};
     renderer.for_each_triangle(
         [&](const auto &, const ysVector &color) { last_color = color; });
@@ -431,8 +431,8 @@ TEST(DonorScene, ShowsBothSparkGapsWithoutDuplicatingCombustion) {
     lab::RecordingRenderer renderer;
     lab::render_sevel_scene_donor(renderer, snapshot, 1280.0f, 720.0f, {}, {},
                                   {}, nullptr, pulses);
-    EXPECT_EQ(renderer.draw_calls(), 50);
-    EXPECT_EQ(renderer.triangle_count(), 106U);
+    EXPECT_EQ(renderer.draw_calls(), 54);
+    EXPECT_EQ(renderer.triangle_count(), 114U);
     int spark_triangles = 0;
     int burn_triangles = 0;
     renderer.for_each_triangle([&](const auto &, const ysVector &color) {
@@ -564,10 +564,10 @@ TEST(DonorScene, RendersImportedMechanicalMeshes) {
     lab::RecordingRenderer renderer;
     lab::render_sevel_scene_donor(renderer, snapshot, 1280.0f, 720.0f, {}, {},
                                   {}, &library);
-    std::size_t expected_faces = 94;
+    std::size_t expected_faces = 102; // 94 + 4 webs x 2 triangles (M2)
     expected_faces += 4 * library.find("Piston")->indices.size() / 3;
     expected_faces += 8 * library.find("Valve")->indices.size() / 3;
-    EXPECT_EQ(renderer.draw_calls(), 59);
+    EXPECT_EQ(renderer.draw_calls(), 63);
     EXPECT_EQ(renderer.scene_draw_calls(), renderer.draw_calls());
     EXPECT_EQ(renderer.triangle_count(), expected_faces);
 }
@@ -893,3 +893,17 @@ TEST(DonorScene, FocusedAxialSectionKeepsPhysicalPairPhases) {
 #endif
 
 } // namespace
+
+// 4.4: the flame front widens as the pulse strength decays.
+TEST(DonorFlame, FrontGrowsAsTheStrengthDecays) {
+    EXPECT_FLOAT_EQ(lab::flame_front_growth(1.0f), 0.3f);
+    EXPECT_FLOAT_EQ(lab::flame_front_growth(0.0f), 1.0f);
+    EXPECT_FLOAT_EQ(lab::flame_front_growth(5.0f), 0.3f);  // clamped
+    EXPECT_FLOAT_EQ(lab::flame_front_growth(-1.0f), 1.0f); // clamped
+    float previous = lab::flame_front_growth(1.0f);
+    for (float s = 0.9f; s >= 0.0f; s -= 0.1f) {
+        const float growth = lab::flame_front_growth(s);
+        EXPECT_GT(growth, previous);
+        previous = growth;
+    }
+}

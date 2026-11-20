@@ -40,6 +40,43 @@ if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
     gtest_discover_tests(lab_mesh_asset_test)
 endif()
 if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
+    add_executable(lab_dyno_curve_test lab_dyno_curve_test.cpp)
+    target_include_directories(lab_dyno_curve_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(lab_dyno_curve_test PRIVATE
+        LAB_DOCS_PATH="${PROJECT_SOURCE_DIR}/docs")
+    target_link_libraries(lab_dyno_curve_test PRIVATE GTest::GTest GTest::Main)
+    gtest_discover_tests(lab_dyno_curve_test)
+    add_executable(lab_calibration_test lab_calibration_test.cpp)
+    target_include_directories(lab_calibration_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(lab_calibration_test PRIVATE
+        LAB_REPO_PATH="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(lab_calibration_test PRIVATE GTest::GTest GTest::Main)
+    gtest_discover_tests(lab_calibration_test)
+    add_executable(lab_theme_test lab_theme_test.cpp)
+    target_include_directories(lab_theme_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(lab_theme_test PRIVATE
+        LAB_REPO_PATH="${PROJECT_SOURCE_DIR}")
+    target_link_libraries(lab_theme_test PRIVATE GTest::GTest GTest::Main
+        SDL3::SDL3)
+    gtest_discover_tests(lab_theme_test)
+    add_executable(code_read_trace_test code_read_trace_test.cpp)
+    target_include_directories(code_read_trace_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(code_read_trace_test PRIVATE GTest::GTest GTest::Main)
+    gtest_discover_tests(code_read_trace_test)
+    add_executable(lab_run_snapshot_test lab_run_snapshot_test.cpp)
+    target_include_directories(lab_run_snapshot_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(lab_run_snapshot_test PRIVATE GTest::GTest GTest::Main)
+    gtest_discover_tests(lab_run_snapshot_test)
+    add_executable(lab_dyno_sweep_test lab_dyno_sweep_test.cpp)
+    target_include_directories(lab_dyno_sweep_test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include)
+    target_link_libraries(lab_dyno_sweep_test PRIVATE GTest::GTest GTest::Main)
+    gtest_discover_tests(lab_dyno_sweep_test)
     add_executable(lab_font_test lab_font_test.cpp
         ${PROJECT_SOURCE_DIR}/src/lab/FontRenderer.cpp
         ${PROJECT_SOURCE_DIR}/src/lab/MeshAsset.cpp)
@@ -69,7 +106,8 @@ if(ENABLE_SEVEL_MA17_LAB_GUI AND ENABLE_SEVEL_MA17_LAB)
     target_link_libraries(lab_ui_preferences_test PRIVATE GTest::GTest
         GTest::Main SDL3::SDL3)
     gtest_discover_tests(lab_ui_preferences_test)
-    add_executable(lab_layout_test lab_layout_test.cpp)
+    add_executable(lab_layout_test lab_layout_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/lab/WidgetRects.cpp)
     target_link_libraries(lab_layout_test PRIVATE GTest::GTest
         GTest::Main SDL3::SDL3)
     gtest_discover_tests(lab_layout_test)

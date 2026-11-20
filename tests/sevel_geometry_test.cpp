@@ -518,7 +518,7 @@ TEST(AnalogTrigger, SelectsRecordedElectricalEdgesAndSparkPairs) {
 
 TEST(SevelGeometry, TopBottomAndOpposedCrankPins) {
     constexpr double radius = lab::SevelVisualGeometry::crank_radius_m;
-    constexpr double rod = 0.14;
+    const double rod = lab::SevelVisualGeometry{}.visual_estimate_rod_length_m;
     const auto top = lab::sevel_cylinder_poses(0.0);
     EXPECT_NEAR(top[0].piston_pin_y_m, rod + radius, 1e-12);
     EXPECT_NEAR(top[3].piston_pin_y_m, rod + radius, 1e-12);
@@ -549,7 +549,7 @@ TEST(SevelGeometry, RepeatsAcrossFullFourStrokeCycle) {
 }
 
 TEST(SevelGeometry, RodEndpointsAndPairPhasesRemainCoherentAcross720Degrees) {
-    constexpr double rod = 0.14;
+    const double rod = lab::SevelVisualGeometry{}.visual_estimate_rod_length_m;
     constexpr double tolerance = 1e-12;
     for (int degree = 0; degree <= 720; ++degree) {
         const double angle = static_cast<double>(degree) * pi / 180.0;
@@ -657,4 +657,59 @@ TEST(CylinderLabels, IgnitionPairsFollowTheFiringOrder1342) {
         EXPECT_NE(lab::ignition_pair_of_cylinder(lab::firing_order[i]),
                   lab::ignition_pair_of_cylinder(
                       lab::firing_order[(i + 1) % lab::firing_order.size()]));
+}
+
+// M3/M4: the scene's head face is derived from the compression ratio, so the
+// piston can no longer touch the head at TDC, and the rod matches the plant.
+TEST(SevelGeometry, RodMatchesPlantEstimate) {
+    EXPECT_DOUBLE_EQ(lab::SevelVisualGeometry{}.visual_estimate_rod_length_m,
+                     0.127);
+}
+
+TEST(SevelGeometry, ChamberVolumeMatchesCompressionRatio) {
+    constexpr double pi_value = 3.14159265358979323846;
+    const double area = pi_value / 4.0 * lab::kSevelBoreM * lab::kSevelBoreM;
+    const double clearance_cm3 = area * lab::sevel_chamber_height_m() * 1.0e6;
+    EXPECT_NEAR(clearance_cm3, 48.2, 48.2 * 0.01);
+    EXPECT_NEAR(lab::sevel_chamber_height_m(), 0.00822, 5e-5);
+    EXPECT_DOUBLE_EQ(2.0 * lab::SevelVisualGeometry::crank_radius_m,
+                     lab::kSevelStrokeM);
+}
+
+TEST(SevelGeometry, PistonCrownClearsHeadFaceAtTdc) {
+    const lab::SevelVisualGeometry geometry{};
+    const auto tdc = lab::sevel_cylinder_poses(0.0, geometry);
+    const double face = lab::sevel_head_face_y_m(geometry);
+    for (const auto &pose : tdc) {
+        if (pose.piston_pin_y_m < 0.15)
+            continue; // the opposed pair is at BDC
+        const double crown = pose.piston_pin_y_m + lab::kSevelPistonCrownAbovePinM;
+        EXPECT_GT(face - crown, 0.0);
+        EXPECT_NEAR(face - crown, lab::sevel_chamber_height_m(), 1e-9);
+    }
+}
+
+// M1: the liner ends 3 mm below the skirt at BDC and above the crank circle.
+TEST(SevelGeometry, LinerStopsAboveCrankAndBelowSkirtAtBdc) {
+    const lab::SevelVisualGeometry geometry{};
+    const double bottom = lab::sevel_liner_bottom_y_m(geometry);
+    EXPECT_GT(bottom, lab::SevelVisualGeometry::crank_radius_m);
+    const auto bdc = lab::sevel_cylinder_poses(pi);
+    for (const auto &pose : bdc) {
+        if (pose.piston_pin_y_m > 0.15)
+            continue; // TDC cylinders of the pair
+        const double skirt = pose.piston_pin_y_m - lab::kSevelPistonSkirtBelowPinM;
+        EXPECT_NEAR(skirt - bottom, lab::kSevelLinerSkirtMarginM, 1e-9);
+    }
+}
+
+// M6: three piston rings, increasing depth, all above the gudgeon pin.
+TEST(SevelGeometry, ThreePistonRingsBelowTheCrownAndAboveThePin) {
+    ASSERT_EQ(lab::kSevelPistonRingDepthsM.size(), 3u);
+    double previous = 0.0;
+    for (const double depth : lab::kSevelPistonRingDepthsM) {
+        EXPECT_GT(depth, previous);
+        EXPECT_LT(depth, lab::kSevelPistonCrownAbovePinM);
+        previous = depth;
+    }
 }

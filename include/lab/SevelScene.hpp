@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lab/RecordingRenderer.hpp"
 #include "lab/SevelSegments.hpp"
 #include "renderer.h"
 
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace lab {
@@ -19,7 +21,9 @@ inline void render_sevel_scene(Renderer &renderer,
     struct DrawCall {
         int base_index;
         ysVector color;
+        std::string group;
     };
+    std::string current_group;
     std::vector<EngineSimVertex> vertices;
     std::vector<std::uint16_t> indices;
     std::vector<DrawCall> calls;
@@ -53,10 +57,11 @@ inline void render_sevel_scene(Renderer &renderer,
                         static_cast<std::uint16_t>(base + 2),
                         static_cast<std::uint16_t>(base + 1),
                         static_cast<std::uint16_t>(base + 3)});
-        calls.push_back({base_index, color});
+        calls.push_back({base_index, color, current_group});
     };
 
-    for_each_sevel_segment(snapshot, geometry, dimensions, add_segment);
+    for_each_sevel_segment(snapshot, geometry, dimensions, add_segment,
+                           [&](const std::string &id) { current_group = id; });
 
     renderer.beginFrame({0.027f, 0.027f, 0.035f, 1.0f});
     renderer.setSceneViewport(0.0f, 0.0f, viewport_width, viewport_height);
@@ -64,13 +69,20 @@ inline void render_sevel_scene(Renderer &renderer,
                             indices.data(), static_cast<int>(indices.size()));
     const ysMatrix identity = ysMath::LoadIdentity();
     ysMatrix projection = identity;
-    projection.m[0][0] = 4.0f;
+    // Isotropic: the same pixels per metre horizontally and vertically, so a
+    // bore keeps its ratio to the stroke on any viewport aspect (was 4.0/4.0
+    // in NDC, which stretched circles 1.78x on 16:9).
     projection.m[1][1] = 4.0f;
+    projection.m[0][0] = 4.0f * viewport_height / viewport_width;
     projection.m[1][3] = -0.4f;
-    for (const auto &call : calls)
+    auto *recorder = dynamic_cast<RecordingRenderer *>(&renderer);
+    for (const auto &call : calls) {
+        if (recorder)
+            recorder->set_group(call.group);
         renderer.submitGeometry(vertices.data(), indices.data(), 0,
                                 call.base_index, 2, identity, identity,
                                 projection, call.color, 0, 0);
+    }
     renderer.endFrame();
 }
 

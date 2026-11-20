@@ -1,5 +1,7 @@
 #include "engine/ControlLimits.hpp"
 #include "lab/SdlDisplay.hpp"
+#include "lab/TextScale.hpp"
+#include "lab/LabTheme.hpp"
 
 #include "lab/AnalogTrigger.hpp"
 #include "lab/DigitalScopeExport.hpp"
@@ -7,9 +9,25 @@
 #include "lab/DrivetrainExport.hpp"
 #include "lab/FontRenderer.hpp"
 #include "lab/LabButtons.hpp"
+#include "lab/LabControls.hpp"
 #include "lab/LabInstruments.hpp"
 #include "lab/LabLayout.hpp"
+#include "lab/CalibrationView.hpp"
+#include "lab/DynoSweep.hpp"
+#include "lab/DynoView.hpp"
+#include "lab/EcuBadges.hpp"
+#include "lab/ScopeGroups.hpp"
+#include "lab/ShaftDetails.hpp"
+#include "lab/HelpText.hpp"
+#include "lab/CycleRuler.hpp"
+#include "lab/ScopeLabel.hpp"
+#include "lab/WidgetRects.hpp"
+#include "lab/TriggerWheel.hpp"
+#include "lab/VolumeLabel.hpp"
+#include "lab/SpeedSelector.hpp"
+#include "lab/SliderGeometry.hpp"
 #include "lab/LabUiPreferences.hpp"
+#include "lab/RunSnapshot.hpp"
 #include "lab/LiveAudio.hpp"
 #include "lab/MeshAsset.hpp"
 #include "lab/HeaderText.hpp"
@@ -51,7 +69,6 @@
 
 namespace {
 
-int configured_ui_scale_percent = 0;
 
 enum class TriggerMode { Off, Auto, Normal, Single };
 
@@ -503,344 +520,29 @@ bool save_digital_scope_csv(const std::filesystem::path &path,
     return out.good();
 }
 
-void draw_shaft_mechanical_details(SDL_Renderer *screen,
-                                   const ma17::EmulatorSnapshot &snapshot,
-                                   SceneCamera camera, float scene_width,
-                                   float scene_height, float ui_scale) {
-    if (scene_width <= 0.0f || scene_height <= 0.0f)
-        return;
-    const SceneDimensions dimensions{};
-    const float pitch =
-        static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);
-    const ysMatrix projection = scene_fit_projection(
-        camera, scene_width, scene_height, 3.4f * pitch + 0.08f, 0.34f);
-    const auto project = [&](float wx, float wy) -> SDL_FPoint {
-        const float cx = projection.m[0][0] * wx + projection.m[0][3];
-        const float cy = projection.m[1][1] * wy + projection.m[1][3];
-        return {(cx + 1.0f) * scene_width * 0.5f,
-                (1.0f - cy) * scene_height * 0.5f};
-    };
 
-    const SevelVisualGeometry geometry{};
-    constexpr float bore_m = 0.0864f;
-    const float head_y =
-        static_cast<float>(geometry.visual_estimate_rod_length_m +
-                           SevelVisualGeometry::crank_radius_m +
-                           dimensions.visual_estimate_head_height_m);
-    const float cam_y = head_y + 0.042f;
-    constexpr float crank_r =
-        static_cast<float>(SevelVisualGeometry::crank_radius_m);
-    const float crank_base_angle =
-        static_cast<float>(snapshot.crank_angle_rad - snapshot.tdc_phase_rad);
-    const auto poses = sevel_cylinder_poses(
-        snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
-    constexpr float pi = 3.14159265f;
-
-    // 1. Stylized intake (electric cyan) & exhaust (electric magenta) runners
-    for (int cylinder = 0; cylinder < 4; ++cylinder) {
-        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
-        const SDL_FPoint in_port = project(center - 0.021f, cam_y + 0.008f);
-        const SDL_FPoint in_sweep = project(center - 0.038f, cam_y + 0.030f);
-        const SDL_FPoint ex_port = project(center + 0.021f, cam_y + 0.008f);
-        const SDL_FPoint ex_sweep = project(center + 0.038f, cam_y + 0.030f);
-
-        SDL_SetRenderDrawColor(screen, 0, 229, 255, 180);
-        SDL_RenderLine(screen, in_port.x, in_port.y, in_sweep.x, in_sweep.y);
-        SDL_RenderLine(screen, in_port.x + 1.0f, in_port.y, in_sweep.x + 1.0f,
-                       in_sweep.y);
-
-        SDL_SetRenderDrawColor(screen, 255, 64, 129, 180);
-        SDL_RenderLine(screen, ex_port.x, ex_port.y, ex_sweep.x, ex_sweep.y);
-        SDL_RenderLine(screen, ex_port.x + 1.0f, ex_port.y, ex_sweep.x + 1.0f,
-                       ex_sweep.y);
-    }
-
-    // 2. Dynamic valve springs (compressing/expanding with cam lift)
-    for (int cylinder = 0; cylinder < 4; ++cylinder) {
-        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
-        for (int valve = 0; valve < 2; ++valve) {
-            const auto kind =
-                valve == 0 ? ValveKind::Intake : ValveKind::Exhaust;
-            const float x = center + (valve == 0 ? -0.021f : 0.021f);
-            const float lift = static_cast<float>(
-                valve_lift_fraction(snapshot.crank_angle_rad,
-                                    static_cast<std::size_t>(cylinder), kind,
-                                    snapshot.tdc_phase_rad) *
-                dimensions.visual_estimate_valve_lift_m);
-            const float top_y = head_y + 0.027f;
-            const float bot_y = head_y + 0.007f - lift * 0.4f;
-            const SDL_FPoint p_top = project(x, top_y);
-            const SDL_FPoint p_bot = project(x, bot_y);
-
-            const float spring_h = p_bot.y - p_top.y;
-            constexpr int coils = 5;
-            const float coil_w = 4.0f * ui_scale;
-
-            SDL_SetRenderDrawColor(screen, 160, 175, 190, 220);
-            SDL_FPoint prev = {p_top.x, p_top.y};
-            for (int c = 1; c <= coils; ++c) {
-                const float frac =
-                    static_cast<float>(c) / static_cast<float>(coils);
-                const float cy = p_top.y + spring_h * frac;
-                const float cx = p_top.x + ((c % 2 == 1) ? coil_w : -coil_w);
-                SDL_RenderLine(screen, prev.x, prev.y, cx, cy);
-                prev = {cx, cy};
-            }
-            SDL_RenderLine(screen, prev.x, prev.y, p_bot.x, p_bot.y);
-        }
-    }
-
-    // 3. Articulated kinematics, counterweights, and piston details
-    for (int cylinder = 0; cylinder < 4; ++cylinder) {
-        const float center = (static_cast<float>(cylinder) - 1.5f) * pitch;
-        const auto &pose = poses[static_cast<std::size_t>(cylinder)];
-        const float cyl_phase = (cylinder == 0 || cylinder == 3)
-                                    ? crank_base_angle
-                                    : crank_base_angle + pi;
-
-        const float crank_y = crank_r * std::cos(cyl_phase);
-        const float throw_x = crank_r * std::sin(cyl_phase) * 0.35f;
-        const float piston_y = static_cast<float>(pose.piston_pin_y_m);
-
-        const SDL_FPoint p_crank = project(center + throw_x, crank_y);
-        const SDL_FPoint p_wrist = project(center, piston_y);
-        const SDL_FPoint p_main = project(center, 0.0f);
-
-        const float counter_y = -crank_r * std::cos(cyl_phase) * 0.85f;
-        const float counter_x = -crank_r * std::sin(cyl_phase) * 0.30f;
-        const SDL_FPoint p_counter = project(center + counter_x, counter_y);
-
-        // Counterweight web
-        SDL_SetRenderDrawColor(screen, 85, 95, 110, 255);
-        const float cw_thick = 3.5f * ui_scale;
-        SDL_RenderLine(screen, p_main.x - cw_thick, p_main.y,
-                       p_counter.x - cw_thick, p_counter.y);
-        SDL_RenderLine(screen, p_main.x, p_main.y, p_counter.x, p_counter.y);
-        SDL_RenderLine(screen, p_main.x + cw_thick, p_main.y,
-                       p_counter.x + cw_thick, p_counter.y);
-
-        // Connecting rod articulated beam
-        SDL_SetRenderDrawColor(screen, 215, 225, 235, 255);
-        SDL_RenderLine(screen, p_crank.x - 1.0f, p_crank.y, p_wrist.x - 1.0f,
-                       p_wrist.y);
-        SDL_RenderLine(screen, p_crank.x, p_crank.y, p_wrist.x, p_wrist.y);
-        SDL_RenderLine(screen, p_crank.x + 1.0f, p_crank.y, p_wrist.x + 1.0f,
-                       p_wrist.y);
-
-        // Big-end journal cap
-        SDL_SetRenderDrawColor(screen, 240, 245, 250, 255);
-        const float r_big = 3.5f * ui_scale;
-        const SDL_FRect big_journal{p_crank.x - r_big, p_crank.y - r_big,
-                                    r_big * 2.0f, r_big * 2.0f};
-        SDL_RenderFillRect(screen, &big_journal);
-
-        // Piston details: wrist pin & dual compression rings
-        const SDL_FPoint p_crown = project(center, piston_y + 0.010f);
-        const float bore_px = project(center + bore_m * 0.38f, piston_y).x -
-                              project(center - bore_m * 0.38f, piston_y).x;
-
-        SDL_SetRenderDrawColor(screen, 38, 40, 48, 255);
-        const float ring_w = bore_px * 0.90f;
-        SDL_RenderLine(screen, p_crown.x - ring_w * 0.5f,
-                       p_crown.y + 2.0f * ui_scale, p_crown.x + ring_w * 0.5f,
-                       p_crown.y + 2.0f * ui_scale);
-        SDL_RenderLine(screen, p_crown.x - ring_w * 0.5f,
-                       p_crown.y + 5.0f * ui_scale, p_crown.x + ring_w * 0.5f,
-                       p_crown.y + 5.0f * ui_scale);
-
-        // Wrist pin hole
-        const float r_pin = 2.5f * ui_scale;
-        const SDL_FRect pin_rect{p_wrist.x - r_pin, p_wrist.y - r_pin,
-                                 r_pin * 2.0f, r_pin * 2.0f};
-        SDL_SetRenderDrawColor(screen, 28, 30, 36, 255);
-        SDL_RenderFillRect(screen, &pin_rect);
-        SDL_SetRenderDrawColor(screen, 180, 195, 210, 255);
-        SDL_RenderRect(screen, &pin_rect);
-    }
-}
-
-void draw_combustion_order(SDL_Renderer *screen, FontRenderer &font,
-                           float left_width, int height, float ui_scale,
-                           const std::array<ScenePulse, 4> &pulses,
-                           const std::array<float, 2> &spark_glows,
-                           const std::array<int, 2> &spark_channels,
-                           int focus_cylinder) {
-    if (left_width < 400.0f || height < 900)
-        return;
-    const SDL_FRect panel{
-        16.0f, static_cast<float>(height) - 270.0f - 47.0f * ui_scale,
-        left_width - 32.0f, 47.0f * ui_scale};
-    SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
-    SDL_RenderFillRect(screen, &panel);
-    SDL_SetRenderDrawColor(screen, 42, 42, 50, 255);
-    SDL_RenderRect(screen, &panel);
-    font.draw(screen, panel.x + 9.0f * ui_scale, panel.y + 8.0f * ui_scale,
-              "BURNS 1 > 3 > 4 > 2", {235, 241, 246, 255}, 0.75f * ui_scale);
-    char spark_label[96];
-    std::snprintf(spark_label, sizeof(spark_label), "P5.%c 1/4  P5.%c 2/3 ?",
-                  spark_channels[0] < 0 ? '?' : '0' + spark_channels[0],
-                  spark_channels[1] < 0 ? '?' : '0' + spark_channels[1]);
-    font.draw(screen, panel.x + 9.0f * ui_scale, panel.y + 27.0f * ui_scale,
-              spark_label, {145, 177, 190, 255}, 0.75f * ui_scale);
-    constexpr std::array<unsigned, 4> firing_order{0, 2, 3, 1};
-    constexpr std::size_t edges = 24;
-    constexpr float tau = 6.28318530718f;
-    for (std::size_t order = 0; order < firing_order.size(); ++order) {
-        const auto cylinder = firing_order[order];
-        const float spark_glow =
-            spark_glows[cylinder == 0 || cylinder == 3 ? 0 : 1];
-        const float x =
-            left_width * (0.585f + 0.098f * static_cast<float>(order));
-        const float y = panel.y + 23.0f * ui_scale;
-        const float glow = std::clamp(pulses[cylinder].strength, 0.0f, 1.0f);
-        const SDL_FColor hot = pulses[cylinder].misfire
-                                   ? SDL_FColor{0.95f, 0.24f, 0.22f, 1.0f}
-                                   : SDL_FColor{0.98f, 0.74f, 0.38f, 1.0f};
-        const SDL_FColor color{(24.0f / 255.0f) * (1.0f - glow) + hot.r * glow,
-                               (36.0f / 255.0f) * (1.0f - glow) + hot.g * glow,
-                               (49.0f / 255.0f) * (1.0f - glow) + hot.b * glow,
-                               1.0f};
-        std::array<SDL_Vertex, edges * 3> fill{};
-        std::array<SDL_FPoint, edges + 1> outline{};
-        for (std::size_t edge = 0; edge < edges; ++edge) {
-            const float angle =
-                tau * static_cast<float>(edge) / static_cast<float>(edges);
-            const float next_angle =
-                tau * static_cast<float>(edge + 1) / static_cast<float>(edges);
-            const auto point = [x, y, ui_scale](float a) {
-                return SDL_FPoint{x + 11.0f * ui_scale * std::cos(a),
-                                  y + 11.0f * ui_scale * std::sin(a)};
-            };
-            fill[edge * 3] = {{x, y}, color, {0.0f, 0.0f}};
-            fill[edge * 3 + 1] = {point(angle), color, {0.0f, 0.0f}};
-            fill[edge * 3 + 2] = {point(next_angle), color, {0.0f, 0.0f}};
-            outline[edge] = point(angle);
-        }
-        outline[edges] = outline[0];
-        if (glow > 0.0f)
-            SDL_RenderGeometry(screen, nullptr, fill.data(), fill.size(),
-                               nullptr, 0);
-        SDL_SetRenderDrawColor(
-            screen, 90, static_cast<Uint8>(128.0f + 93.0f * spark_glow),
-            static_cast<Uint8>(142.0f + 101.0f * spark_glow), 255);
-        SDL_RenderLines(screen, outline.data(), outline.size());
-        if (focus_cylinder == static_cast<int>(cylinder + 1)) {
-            std::array<SDL_FPoint, edges + 1> focus_outline{};
-            for (std::size_t edge = 0; edge <= edges; ++edge) {
-                const float angle =
-                    tau * static_cast<float>(edge) / static_cast<float>(edges);
-                focus_outline[edge] = {x + 15.0f * ui_scale * std::cos(angle),
-                                       y + 15.0f * ui_scale * std::sin(angle)};
-            }
-            SDL_SetRenderDrawColor(screen, 184, 210, 140, 255);
-            SDL_RenderLines(screen, focus_outline.data(), focus_outline.size());
-        }
-        const std::string numeral = std::to_string(cylinder + 1);
-        font.draw(screen, x - font.measure(numeral) * ui_scale * 0.5f,
-                  y - 5.0f * ui_scale, numeral, {235, 241, 246, 255}, ui_scale);
-    }
-}
-
-float lab_ui_scale(int width, int height) {
-    if (configured_ui_scale_percent != 0)
-        return 1.0f;
-    return std::clamp(std::min(static_cast<float>(width) / 1280.0f,
-                               static_cast<float>(height) / 720.0f),
-                      1.0f, 2.0f);
-}
 
 // Layout at an integer output size; the saved state is owned by the caller.
-static LabLayout layout_for(const LayoutState &state, int width, int height,
-                            bool scope_maximized = false) {
-    return LabLayout::compute(state, static_cast<float>(width),
-                              static_cast<float>(height), scope_maximized);
-}
 
-SDL_FRect instrument_cluster_rect(const LayoutState &layout_state, int width,
-                                  int height) {
-    const LabLayout layout = layout_for(layout_state, width, height);
-    const float scale = lab_ui_scale(width, height);
-    return {layout.instruments.x, 8.0f * scale,
-            layout.instruments.w - 8.0f * scale,
-            static_cast<float>(height) - 16.0f * scale};
-}
 
-SDL_FRect view_selector_rect(const LayoutState &layout_state, int width,
-                             int height) {
-    if (width < 1280 || height < 720) {
-        const SDL_FRect mechanical =
-            layout_for(layout_state, width, height).mechanical;
-        return {mechanical.x + mechanical.w - 116.0f, 64.0f, 52.0f, 27.0f};
-    }
-    const float scale = lab_ui_scale(width, height);
-    const SDL_FRect mechanical =
-        layout_for(layout_state, width, height).mechanical;
-    const float right = mechanical.x + mechanical.w - 15.0f * scale;
-    return {right - (122.0f + 8.0f + 80.0f) * scale,
-            height < 900 ? 64.0f : 82.0f, 122.0f * scale, 30.0f * scale};
-}
 
-SDL_FRect fit_button_rect(const LayoutState &layout_state, int width,
-                          int height) {
-    const SDL_FRect selector = view_selector_rect(layout_state, width, height);
-    if (width < 1280 || height < 720)
-        return {selector.x + 58.0f, selector.y, 42.0f, selector.h};
-    const float scale = lab_ui_scale(width, height);
-    return {selector.x - 78.0f * scale, selector.y, 70.0f * scale, selector.h};
-}
 
-SDL_FRect fullscreen_button_rect(const LayoutState &layout_state, int width,
-                                 int height) {
-    const SDL_FRect selector = view_selector_rect(layout_state, width, height);
-    const float scale = lab_ui_scale(width, height);
-    return {selector.x + selector.w + 8.0f * scale, selector.y, 80.0f * scale,
-            selector.h};
-}
 
-SDL_FRect pedal_slider_rect(const LayoutState &layout_state, int width,
-                            int height);
-SDL_FRect volume_slider_rect(const LayoutState &layout_state, int width,
-                             int height);
 
-// OES LoadSimulationCluster::drawCurrentGear uses title/up/body/down bands.
-SDL_FRect gear_widget_rect(const LayoutState &layout_state, int width,
-                           int height) {
-    if (width < 900 && height < 620 && lab_buttons_visible(width, height)) {
-        const auto mute = lab_button_rect(8, width, height);
-        const float x = mute.x + mute.width + 6.0f;
-        return {x, mute.y,
-                layout_for(layout_state, width, height).mechanical.w - x - 8.0f,
-                mute.height};
-    }
-    if (width >= 900 && width < 1100 && lab_buttons_visible(width, height)) {
-        const SDL_FRect volume =
-            volume_slider_rect(layout_state, width, height);
-        const SDL_FRect pedal = pedal_slider_rect(layout_state, width, height);
-        const float x = volume.x + volume.w + 6.0f;
-        return {x, volume.y, pedal.x - x - 6.0f, std::min(volume.h, pedal.h)};
-    }
-    if (width < 1100 || height < 700)
-        return {};
-    const float scale = lab_ui_scale(width, height);
-    const float top = 410.0f * scale + 8.0f;
-    const float bottom = static_cast<float>(height) - 340.0f;
-    const float panel_w = layout_for(layout_state, width, height).left.w;
-    if (width >= 1800 && height >= 1000 && bottom - top >= 64.0f) {
-        // OES desktop 2048x816: each load-cluster cell is W/9 by H/6.
-        constexpr float donor_aspect = (2048.0f / 9.0f) / (816.0f / 6.0f);
-        const float gap = 8.0f * scale;
-        const float cell_w = std::min((panel_w - 32.0f * scale - gap) * 0.5f,
-                                      (bottom - top) * donor_aspect);
-        return {panel_w * 0.5f + gap * 0.5f, top, cell_w,
-                cell_w / donor_aspect};
-    }
-    const float card_w = std::min(90.0f * scale, panel_w - 32.0f);
-    if (bottom - top >= 64.0f)
-        return {(panel_w - card_w) * 0.5f, top, card_w, bottom - top};
-    // Keep the donor gear control below the volume bar on shorter desktops.
-    return {(panel_w - card_w) * 0.5f, static_cast<float>(height) - 92.0f,
-            card_w, 84.0f};
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 SDL_FRect gear_widget_inner_rect(const SDL_FRect &box, float scale) {
     const float inset = std::min({10.0f * scale, box.w * 0.12f, box.h * 0.12f});
@@ -896,9 +598,9 @@ void draw_gear_widget(const LayoutState &layout_state, SDL_Renderer *screen,
         std::snprintf(label, sizeof(label),
                       box.w < 120.0f ? "%s %s" : "GEAR %s %s", digit,
                       physical ? "" : "REF");
-        const float text_scale = 0.68f * scale;
+        const float text_scale = kTextSmall * scale;
         font.draw(screen,
-                  inner.x + (inner.w - font.measure(label) * text_scale) * 0.5f,
+                  inner.x + (inner.w - font.width(label, text_scale)) * 0.5f,
                   inner.y + (inner.h - font.line_height(font.text_px(text_scale))) * 0.5f, label,
                   {235, 241, 246, 255}, text_scale);
         SDL_SetRenderDrawColor(screen, 235, 241, 246, 255);
@@ -920,7 +622,7 @@ void draw_gear_widget(const LayoutState &layout_state, SDL_Renderer *screen,
     const auto centered = [&](const char *label, float center_y,
                               float text_scale) {
         font.draw(screen,
-                  inner.x + (inner.w - font.measure(label) * text_scale) * 0.5f,
+                  inner.x + (inner.w - font.width(label, text_scale)) * 0.5f,
                   center_y - 0.5f * font.line_height(font.text_px(text_scale)), label, {235, 241, 246, 255},
                   text_scale);
     };
@@ -1007,9 +709,8 @@ void draw_gear_tooltip(const LayoutState &layout_state, SDL_Renderer *screen,
                      std::max({font.measure(ratio), font.measure(wheel),
                                font.measure(source), font.measure(limit)}));
     const float panel_w =
-        (std::max({font.measure(ratio), font.measure(wheel),
-                   font.measure(source), font.measure(limit)}) *
-         text_scale) +
+        std::max({font.width(ratio, text_scale), font.width(wheel, text_scale),
+                  font.width(source, text_scale), font.width(limit, text_scale)}) +
         16.0f * scale;
     const float panel_h = 69.0f * scale;
     const SDL_FRect panel{
@@ -1020,7 +721,7 @@ void draw_gear_tooltip(const LayoutState &layout_state, SDL_Renderer *screen,
         panel_w, panel_h};
     SDL_SetRenderDrawColor(screen, 20, 25, 31, 250);
     SDL_RenderFillRect(screen, &panel);
-    SDL_SetRenderDrawColor(screen, 99, 211, 220, 255);
+    set_draw_color(screen, kAccent);
     SDL_RenderRect(screen, &panel);
     const std::array<const char *, 4> lines{ratio, wheel, source, limit};
     for (std::size_t row = 0; row < lines.size(); ++row)
@@ -1032,132 +733,9 @@ void draw_gear_tooltip(const LayoutState &layout_state, SDL_Renderer *screen,
                   text_scale);
 }
 
-void draw_lab_buttons(const LayoutState &layout_state, SDL_Renderer *screen,
-                      FontRenderer &font, int width, int height,
-                      const std::array<bool, 9> &selected,
-                      const std::array<bool, 9> &enabled, double load_nm) {
-    if (!lab_buttons_visible(width, height))
-        return;
-    float mouse_x = 0.0f;
-    float mouse_y = 0.0f;
-    const auto mouse_state = SDL_GetMouseState(&mouse_x, &mouse_y);
-    const bool has_pointer = SDL_RenderCoordinatesFromWindow(
-        screen, mouse_x, mouse_y, &mouse_x, &mouse_y);
-    const float left_width = layout_for(layout_state, width, height).left.w;
-    const auto hovered =
-        has_pointer
-            ? hit_test_lab_button(mouse_x, mouse_y, width, height, left_width)
-            : LabButtonAction::None;
-    const float scale = lab_ui_scale(width, height);
-    for (std::size_t index = 0; index < lab_button_labels.size(); ++index) {
-        const auto action = static_cast<LabButtonAction>(index);
-        const bool over = action == hovered;
-        const bool held = over && (mouse_state & SDL_BUTTON_LMASK) != 0;
-        const auto bounds = lab_button_rect(index, width, height, left_width);
-        const SDL_FRect box{bounds.x, bounds.y, bounds.width, bounds.height};
-        const auto style = oes::button_style({235.0f, 241.0f, 246.0f, 255.0f},
-                                             {14.0f, 16.0f, 18.0f, 255.0f},
-                                             selected[index], held, over);
-        const auto sdl_color = [](const oes::ButtonColor &color) {
-            return SDL_Color{
-                static_cast<Uint8>(color[0]), static_cast<Uint8>(color[1]),
-                static_cast<Uint8>(color[2]), static_cast<Uint8>(color[3])};
-        };
-        const SDL_Color fill = !enabled[index] ? SDL_Color{24, 30, 38, 255}
-                                               : sdl_color(style.fill);
-        const SDL_Color frame = !enabled[index] ? SDL_Color{65, 75, 82, 255}
-                                                : sdl_color(style.foreground);
-        SDL_SetRenderDrawColor(screen, fill.r, fill.g, fill.b, fill.a);
-        SDL_RenderFillRect(screen, &box);
-        SDL_SetRenderDrawColor(screen, frame.r, frame.g, frame.b, frame.a);
-        SDL_RenderRect(screen, &box);
-        std::string label(lab_button_labels[index]);
-        if (action == LabButtonAction::Load) {
-            const SDL_FRect fill_bar{
-                box.x + 2.0f, box.y + box.h - 5.0f * scale,
-                (box.w - 4.0f) *
-                    static_cast<float>(std::clamp(load_nm / engine::lab_load_slider_span_nm, 0.0, 1.0)),
-                3.0f * scale};
-            SDL_SetRenderDrawColor(screen, 99, 211, 220, 255);
-            SDL_RenderFillRect(screen, &fill_bar);
-            char load_label[16];
-            std::snprintf(load_label, sizeof(load_label), "LOAD %.0f", load_nm);
-            label = load_label;
-        }
-        const SDL_Color label_color = enabled[index]
-                                          ? sdl_color(style.foreground)
-                                          : SDL_Color{94, 108, 116, 255};
-        const float text_scale = bounds.height < 36.0f ? 0.68f * scale : scale;
-        if (action == LabButtonAction::Starter) {
-            if (bounds.height < 36.0f) {
-                font.draw(screen,
-                          bounds.x + (bounds.width -
-                                      font.measure(label) * text_scale) /
-                                         2.0f,
-                          bounds.y + 6.0f * scale, label, label_color,
-                          text_scale);
-                continue;
-            }
-            font.draw(
-                screen,
-                bounds.x + (bounds.width - font.measure(label) * scale) / 2.0f,
-                bounds.y + bounds.height * 0.05f, label, label_color, scale);
-            const std::string hint = "HOLD";
-            const float hint_scale = 0.65f * scale;
-            font.draw(screen,
-                      bounds.x +
-                          (bounds.width - font.measure(hint) * hint_scale) /
-                              2.0f,
-                      bounds.y + bounds.height * 0.60f, hint, label_color,
-                      hint_scale);
-            continue;
-        }
-        font.draw(screen,
-                  bounds.x +
-                      (bounds.width - font.measure(label) * text_scale) / 2.0f,
-                  bounds.y + (bounds.height - font.line_height(font.text_px(text_scale))) / 2.0f - 1.0f,
-                  label, label_color, text_scale);
-    }
-}
 
-SDL_FRect pedal_slider_rect(const LayoutState &layout_state, int width,
-                            int height) {
-    const float scale = lab_ui_scale(width, height);
-    if (width < 1100 && height < 620) {
-        const float scene_width =
-            layout_for(layout_state, width, height).mechanical.w;
-        return {scene_width * 0.5f + 3.0f, width < 900 ? 120.0f : 94.0f,
-                scene_width * 0.5f - 19.0f, width < 900 ? 20.0f : 22.0f};
-    }
-    if (width >= 1100) {
-        const float left_width = layout_for(layout_state, width, height).left.w;
-        return {16.0f, 64.0f * scale, left_width - 32.0f, 27.0f * scale};
-    }
-    return {250.0f, 64.0f * scale,
-            std::min(static_cast<float>(width) * 0.30f, 220.0f), 27.0f * scale};
-}
 
-SDL_FRect volume_slider_rect(const LayoutState &layout_state, int width,
-                             int height) {
-    const float scale = lab_ui_scale(width, height);
-    if (width < 1100 && height < 620) {
-        const float scene_width =
-            layout_for(layout_state, width, height).mechanical.w;
-        return {16.0f, width < 900 ? 120.0f : 94.0f,
-                width < 900 ? scene_width * 0.5f - 19.0f
-                            : scene_width * 0.5f - 110.0f,
-                width < 900 ? 20.0f : 22.0f};
-    }
-    if (width >= 1100) {
-        const float left_width = layout_for(layout_state, width, height).left.w;
-        return {16.0f, static_cast<float>(height) - 126.0f, left_width - 32.0f,
-                27.0f * scale};
-    }
-    return {16.0f, 64.0f * scale,
-            width >= 900 ? 130.0f
-                         : std::min(static_cast<float>(width) * 0.30f, 220.0f),
-            27.0f * scale};
-}
+
 
 void draw_volume_slider(const LayoutState &layout_state, SDL_Renderer *screen,
                         FontRenderer &font, int width, int height, float volume,
@@ -1174,29 +752,39 @@ void draw_volume_slider(const LayoutState &layout_state, SDL_Renderer *screen,
     SDL_SetRenderDrawColor(screen, enabled ? 99 : 65, enabled ? 211 : 75,
                            enabled ? 220 : 82, 255);
     SDL_RenderRect(screen, &box);
-    const SDL_FRect fill{box.x + 2.0f, box.y + box.h - 5.0f * scale,
-                         (box.w - 4.0f) * volume, 3.0f * scale};
-    SDL_RenderFillRect(screen, &fill);
-    char label[32];
-    if (!enabled)
-        std::snprintf(label, sizeof(label), "AUDIO %s",
-                      sound_state == "off" ? "OFF" : "N/D");
-    else
-        std::snprintf(label, sizeof(label), "%s %.0f%%",
-                      sound_state == "muted"       ? "MUTED"
-                      : sound_state == "paused"    ? "PAUSED"
-                      : sound_state == "key off"   ? "KEY OFF"
-                      : sound_state == "speed"     ? "SUSP>1X"
-                      : sound_state == "suspended" ? "SUSP"
-                                                   : "VOLUME",
-                      static_cast<double>(volume) * 100.0);
+    draw_slider_track(screen, box, volume, enabled, scale);
+    const VolumeLabel volume_text = volume_label(enabled, sound_state, static_cast<double>(volume));
+    const std::string &label = volume_text.text;
     const bool short_slider = box.h < 25.0f * scale;
     const float label_scale = short_slider ? 0.8f * scale : scale;
-    font.draw(screen, box.x + 8.0f,
-              box.y + (short_slider ? 2.0f : 5.0f) * scale, label,
-              enabled ? SDL_Color{235, 241, 246, 255}
-                      : SDL_Color{94, 108, 116, 255},
-              label_scale);
+    const SDL_Color label_color = enabled ? SDL_Color{235, 241, 246, 255}
+                                          : SDL_Color{94, 108, 116, 255};
+    // Speaker icon: a small box with a flared cone, then the text after it.
+    const float icon_h = (short_slider ? 8.0f : 10.0f) * scale;
+    const float icon_y = box.y + (short_slider ? 3.0f : 6.0f) * scale;
+    const float icon_x = box.x + 8.0f;
+    SDL_SetRenderDrawColor(screen, label_color.r, label_color.g, label_color.b, 255);
+    const SDL_FRect speaker_body{icon_x, icon_y + icon_h * 0.3f, icon_h * 0.4f,
+                                 icon_h * 0.4f};
+    SDL_RenderFillRect(screen, &speaker_body);
+    for (int i = 0; i < 4; ++i) { // cone
+        const float x = icon_x + icon_h * 0.4f + static_cast<float>(i) * scale;
+        const float half = icon_h * (0.2f + 0.08f * static_cast<float>(i));
+        SDL_RenderLine(screen, x, icon_y + icon_h * 0.5f - half, x,
+                       icon_y + icon_h * 0.5f + half);
+    }
+    const float text_x = icon_x + icon_h * 0.4f + 8.0f * scale;
+    font.draw(screen, text_x, box.y + (short_slider ? 2.0f : 5.0f) * scale,
+              label, label_color, label_scale);
+    if (!volume_text.tag.empty()) {
+        const float tag_scale = kTextTiny * scale;
+        const float tag_w = font.width(volume_text.tag, tag_scale);
+        if (text_x + font.width(label, label_scale) + 8.0f * scale + tag_w <
+            box.x + box.w - 6.0f * scale)
+            font.draw(screen, box.x + box.w - tag_w - 6.0f * scale,
+                      box.y + 7.0f * scale, volume_text.tag,
+                      {249, 190, 96, 255}, tag_scale);
+    }
     if (show_diagnostics && enabled && width >= 1100 && height >= 690) {
         const SDL_FRect gear = gear_widget_rect(layout_state, width, height);
         const float detail_y = box.y + box.h + 4.0f * scale;
@@ -1220,7 +808,7 @@ void draw_volume_slider(const LayoutState &layout_state, SDL_Renderer *screen,
             std::snprintf(shortage, sizeof(shortage), "SHORT~%llu", shortfall);
             std::snprintf(drops, sizeof(drops), "DROP %llu", dropped);
             draw_fit(box.x + 4.0f, detail_y, peak,
-                     pcm_peak > 0 ? SDL_Color{99, 211, 220, 255}
+                     pcm_peak > 0 ? kAccent
                                   : SDL_Color{145, 177, 190, 255},
                      left_space);
             const SDL_Color health = shortfall > 0 || dropped > 0
@@ -1235,7 +823,7 @@ void draw_volume_slider(const LayoutState &layout_state, SDL_Renderer *screen,
         std::snprintf(signal, sizeof(signal), "PCM PEAK %.1f%%",
                       100.0 * static_cast<double>(pcm_peak) / 32768.0);
         font.draw(screen, box.x + 4.0f, box.y + box.h + 4.0f * scale, signal,
-                  pcm_peak > 0 ? SDL_Color{99, 211, 220, 255}
+                  pcm_peak > 0 ? kAccent
                                : SDL_Color{145, 177, 190, 255},
                   scale);
         char health[80];
@@ -1263,9 +851,7 @@ void draw_pedal_slider(const LayoutState &layout_state, SDL_Renderer *screen,
     SDL_SetRenderDrawColor(screen, enabled ? 99 : 65, enabled ? 211 : 75,
                            enabled ? 220 : 82, 255);
     SDL_RenderRect(screen, &box);
-    const SDL_FRect fill{box.x + 2.0f, box.y + box.h - 5.0f * scale,
-                         (box.w - 4.0f) * fraction, 3.0f * scale};
-    SDL_RenderFillRect(screen, &fill);
+    draw_slider_track(screen, box, fraction, enabled, scale);
     char label[32];
     if (replay_controls)
         std::snprintf(label, sizeof(label), "PEDAL %.0f MM | REPLAY",
@@ -1277,6 +863,22 @@ void draw_pedal_slider(const LayoutState &layout_state, SDL_Renderer *screen,
               enabled ? SDL_Color{235, 241, 246, 255}
                       : SDL_Color{94, 108, 116, 255},
               scale);
+    // C2: mark names over their ticks, only where they do not touch the
+    // value label or leave the box.
+    const SliderGeometry geometry = compute_slider_geometry(box, scale);
+    const float tag_scale = kTextTiny * scale;
+    float free_from = box.x + 8.0f + font.width(label, scale) + 6.0f * scale;
+    for (std::size_t i = 0; i < kPedalPresetLabels.size(); ++i) {
+        const float w = font.width(kPedalPresetLabels[i], tag_scale);
+        // Centred on the tick, pulled inside the box at the ends.
+        const float x = std::min(geometry.tick_x[i] - w * 0.5f,
+                                 box.x + box.w - 3.0f * scale - w);
+        if (x < free_from)
+            continue;
+        font.draw(screen, x, box.y + 5.0f * scale, kPedalPresetLabels[i],
+                  {145, 177, 190, 255}, tag_scale);
+        free_from = x + w + 4.0f * scale;
+    }
 }
 
 } // namespace
@@ -1320,10 +922,26 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                      static_cast<double>(ui_preferences.right_fraction),
                      ui_preferences.mode,
                      static_cast<double>(ui_preferences.scope_fraction));
-    configured_ui_scale_percent = ui_scale_percent;
+    set_configured_ui_scale_percent(ui_scale_percent);
+    // T1: the saved theme applies at start; SEVEL_THEME=lab|oes overrides it.
+    select_theme(ui_preferences.theme.c_str());
+    select_theme(std::getenv("SEVEL_THEME"));
+    // SEVEL_WINDOW_SIZE=WxH sets the initial window size (e.g. 1920x1080), so
+    // offscreen captures, which cannot be resized afterwards, can be taken at
+    // any size. Invalid values keep 1280x720.
+    int initial_width = 1280;
+    int initial_height = 720;
+    if (const char *size = std::getenv("SEVEL_WINDOW_SIZE")) {
+        int w = 0, h = 0;
+        if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 240 &&
+            w <= 7680 && h <= 4320) {
+            initial_width = w;
+            initial_height = h;
+        }
+    }
     SDL_Window *window =
-        SDL_CreateWindow("FIAT TIPO 1.6 i.e. | SEVEL MA1.7 Lab", 1280, 720,
-                         SDL_WINDOW_RESIZABLE);
+        SDL_CreateWindow("FIAT TIPO 1.6 i.e. | SEVEL MA1.7 Lab", initial_width,
+                         initial_height, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *screen =
         window ? SDL_CreateRenderer(window, nullptr) : nullptr;
     if (!screen && window) {
@@ -1476,6 +1094,43 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     long long scope_span_ticks = ui_preferences.digital_span_ticks;
     long long analog_span_ticks = ui_preferences.analog_span_ticks;
     bool analog_scope = ui_preferences.scope_mode != 0;
+    // Y1: dyno view over the scope area (key Y); SEVEL_DYNO_VIEW=1 starts with
+    // it on so offscreen captures can show it without input.
+    bool dyno_view = std::getenv("SEVEL_DYNO_VIEW") != nullptr;
+    // 1 = save A, 2 = save B, 3 = reload A, 4 = reload B; queued so presses that
+    // arrive during a slow first save are all handled, in order.
+    std::vector<int> snapshot_requests;
+    int snapshot_request = 0;
+    // Y1: RUN WOT (key 8) runs the ROM crank dyno point by point in a child
+    // process; SEVEL_DYNO_RPMS="min:max:step" and SEVEL_DYNO_CYCLES override.
+    DynoSweepState sweep_state;
+    ChildProcess sweep_child;
+    bool sweep_row_seen = false;
+    bool sweep_toggle_request = false;
+    std::optional<DynoScene> dyno_scene;
+    // K4: snapshots A (key 1) and B (key 2); deltas show in the dyno view.
+    std::optional<RunSnapshot> snapshot_a;
+    std::optional<RunSnapshot> snapshot_b;
+    std::string snapshot_rom_sha;
+    // K1: calibration heatmap over the scope area (key N, W = next table);
+    // SEVEL_CALIBRATION_VIEW=<index> starts with it on for captures.
+    const char *calibration_env = std::getenv("SEVEL_CALIBRATION_VIEW");
+    bool calibration_view = calibration_env != nullptr;
+    // K2: "follow" jumps to the table the firmware read last (Shift+W).
+    bool calibration_follow =
+        calibration_env && std::strcmp(calibration_env, "follow") == 0;
+    bool calibration_logged = false;
+    std::size_t calibration_index =
+        calibration_env && !calibration_follow
+            ? static_cast<std::size_t>(std::atoi(calibration_env))
+            : 0;
+    std::optional<CalibrationLoadResult> calibration_tables;
+    // K3: key 5 cycles the ROM variant the heatmap is compared with.
+    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> variant_roms;
+    std::vector<std::uint8_t> variant_base_rom;
+    bool variant_roms_loaded = false;
+    bool variant_env_applied = false;
+    std::size_t variant_choice = 0; // 0 = off, n = variant_roms[n - 1]
     bool scope_maximized = false;
     int analog_group = ui_preferences.analog_group;
     std::optional<ScopeAxisRanges> fitted_scope_axes;
@@ -1675,11 +1330,15 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                              SDL_GetError());
         }
     };
-    const auto set_pedal_from_pointer = [&](float x, int width, int height) {
+    const auto set_pedal_from_pointer = [&](float x, int width, int height,
+                                            bool snap = false) {
         const SDL_FRect box = pedal_slider_rect(layout_state, width, height);
         pedal_user_override = true;
-        pedal_pull_m = engine::max_pedal_pull_m() * static_cast<double>(
-                                   std::clamp((x - box.x) / box.w, 0.0f, 1.0f));
+        float fraction = std::clamp((x - box.x) / box.w, 0.0f, 1.0f);
+        if (snap) // C2: a click near a 0/25/50/75/100 mark lands on it
+            fraction = snap_to_preset(fraction, box.w);
+        pedal_pull_m =
+            engine::max_pedal_pull_m() * static_cast<double>(fraction);
     };
     const auto set_load_from_pointer = [&](float x, int width, int height) {
         const auto box = lab_button_rect(
@@ -1692,9 +1351,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             remembered_load_nm = load_nm;
         session->set_load(load_nm);
     };
-    const auto set_volume_from_pointer = [&](float x, int width, int height) {
+    const auto set_volume_from_pointer = [&](float x, int width, int height,
+                                             bool snap = false) {
         const SDL_FRect box = volume_slider_rect(layout_state, width, height);
         sound_volume = std::clamp((x - box.x) / box.w, 0.0f, 1.0f);
+        if (snap)
+            sound_volume = snap_to_preset(sound_volume, box.w);
         SDL_SetAudioStreamGain(audio_stream, sound_muted ? 0.0f : sound_volume);
     };
     int presentation_width = 0;
@@ -1745,7 +1407,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     event.key.key == SDLK_0
                         ? 0
                         : 50 + 50 * static_cast<int>(event.key.key - SDLK_0);
-                configured_ui_scale_percent = ui_scale_percent;
+                set_configured_ui_scale_percent(ui_scale_percent);
                 if (ui_scale_percent != 0)
                     presentation_width = 0;
                 ui_preferences.scale_percent = ui_scale_percent;
@@ -1888,6 +1550,57 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 const LabLayout active_layout =
                     layout_for(layout_state, view_width, view_height,
                                analog_scope && scope_maximized);
+                // C2: the wheel over a slider moves it by 1 % (Shift: 0.1 %).
+                if (has_output && lab_buttons_visible(view_width, view_height)) {
+                    const auto inside = [&](const SDL_FRect &box) {
+                        return event.wheel.mouse_x >= box.x &&
+                               event.wheel.mouse_x < box.x + box.w &&
+                               event.wheel.mouse_y >= box.y &&
+                               event.wheel.mouse_y < box.y + box.h;
+                    };
+                    const bool shift = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+                    if (session && !replay_controls &&
+                        inside(pedal_slider_rect(layout_state, view_width,
+                                                 view_height))) {
+                        pedal_user_override = true;
+                        const float fraction = static_cast<float>(
+                            pedal_pull_m / engine::max_pedal_pull_m());
+                        pedal_pull_m =
+                            engine::max_pedal_pull_m() *
+                            static_cast<double>(slider_wheel_step(
+                                fraction, event.wheel.y, shift));
+                        continue;
+                    }
+                    {
+                        // C2: LOAD takes the wheel too (1 %, Shift 0.1 % of the span).
+                        const auto load_box = lab_button_rect(
+                            static_cast<std::size_t>(LabButtonAction::Load),
+                            view_width, view_height, active_layout.left.w);
+                        if (session && !replay_controls &&
+                            inside({load_box.x, load_box.y, load_box.width,
+                                    load_box.height})) {
+                            const float fraction = static_cast<float>(
+                                load_nm / engine::lab_load_slider_span_nm);
+                            load_user_override = true;
+                            load_nm = engine::lab_load_slider_span_nm *
+                                      static_cast<double>(slider_wheel_step(
+                                          fraction, event.wheel.y, shift));
+                            if (load_nm > 0.0)
+                                remembered_load_nm = load_nm;
+                            session->set_load(load_nm);
+                            continue;
+                        }
+                    }
+                    if (audio_stream &&
+                        inside(volume_slider_rect(layout_state, view_width,
+                                                  view_height))) {
+                        sound_volume =
+                            slider_wheel_step(sound_volume, event.wheel.y, shift);
+                        SDL_SetAudioStreamGain(audio_stream,
+                                               sound_muted ? 0.0f : sound_volume);
+                        continue;
+                    }
+                }
                 const bool in_scope =
                     has_output &&
                     event.wheel.mouse_x >= active_layout.scope.x + 16.0f &&
@@ -2009,8 +1722,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         event.wheel.mouse_x <
                         active_layout.mechanical.x +
                             active_layout.mechanical.w * 0.5f;
-                    SceneCamera &target =
-                        (left_pane == (view_mode != 0)) ? axial_camera : camera;
+                    // M5: the panes never swap sides: longitudinal on the left
+                    // (camera), profile / axial on the right (axial_camera).
+                    SceneCamera &target = left_pane ? camera : axial_camera;
                     target.zoom = std::clamp(
                         target.zoom * (direction > 0.0f ? 1.1f : 1.0f / 1.1f),
                         0.5f, 3.0f);
@@ -2084,9 +1798,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             event.motion.x <
                             active_layout.mechanical.x +
                                 active_layout.mechanical.w * 0.5f;
-                        SceneCamera &target = (left_pane == (view_mode != 0))
-                                                  ? axial_camera
-                                                  : camera;
+                        SceneCamera &target = left_pane ? camera : axial_camera;
                         target.pan_x += event.motion.xrel;
                         target.pan_y += event.motion.yrel;
                     }
@@ -2273,6 +1985,19 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             continue;
                         }
                     }
+                    if (session && speed_selector_visible(layout_state, view_width,
+                                                          view_height)) {
+                        const SDL_FRect speed_box = speed_selector_rect(
+                            layout_state, view_width, view_height);
+                        const int preset = speed_preset_at(
+                            event.button.x, event.button.y, speed_box.x,
+                            speed_box.y, speed_box.w / 3.0f, speed_box.h);
+                        if (preset >= 0) {
+                            session->set_speed(
+                                kSpeedPresets[static_cast<std::size_t>(preset)]);
+                            continue;
+                        }
+                    }
                     if (view_width >= 1280 && view_height >= 720 &&
                         event.button.x >= fullscreen.x &&
                         event.button.x < fullscreen.x + fullscreen.w &&
@@ -2341,7 +2066,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             event.button.y < pedal_slider.y + pedal_slider.h) {
                             pedal_dragging = true;
                             set_pedal_from_pointer(event.button.x, view_width,
-                                                   view_height);
+                                                   view_height, true);
                         } else if (audio_stream &&
                                    lab_buttons_visible(view_width,
                                                        view_height) &&
@@ -2353,7 +2078,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                        volume_slider.y + volume_slider.h) {
                             volume_dragging = true;
                             set_volume_from_pointer(event.button.x, view_width,
-                                                    view_height);
+                                                    view_height, true);
                         } else {
                             const float scope_x =
                                 event.button.x - pointer_layout.mechanical.x;
@@ -2470,6 +2195,69 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 event.key.windowID == SDL_GetWindowID(window) &&
                 event.key.key == SDLK_D)
                 show_debug = !show_debug;
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_9 &&
+                (SDL_GetModState() & SDL_KMOD_CTRL) == 0) {
+                // 9 (not Y: Y flips the analog scope trigger edge). The dyno
+                // and the calibration view share the scope rectangle, so only
+                // one of them is on at a time.
+                dyno_view = !dyno_view;
+                if (dyno_view)
+                    calibration_view = false;
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_N) {
+                calibration_view = !calibration_view;
+                if (calibration_view)
+                    dyno_view = false;
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_0 && dyno_view && dyno_scene &&
+                (SDL_GetModState() & SDL_KMOD_CTRL) == 0) {
+                // Keep the RUN WOT curve for comparison with the next run.
+                if (freeze_curve(dyno_scene->curves, "RUN WOT"))
+                    std::fprintf(stdout, "[LAB-DYNO] froze RUN WOT curve\n");
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_8 &&
+                (SDL_GetModState() & SDL_KMOD_CTRL) == 0)
+                sweep_toggle_request = true;
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_5 &&
+                (SDL_GetModState() & SDL_KMOD_CTRL) == 0)
+                ++variant_choice;
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                (event.key.key == SDLK_1 || event.key.key == SDLK_2 ||
+                 event.key.key == SDLK_3 || event.key.key == SDLK_4) &&
+                (SDL_GetModState() & SDL_KMOD_CTRL) == 0)
+                // 1 / 2 save A / B, 3 / 4 reopen the saved A / B.
+                snapshot_requests.push_back(static_cast<int>(event.key.key - SDLK_0));
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_P) {
+                // T1: P switches the colour theme (lab <-> oes) and saves it.
+                ui_preferences.theme =
+                    ui_preferences.theme == "lab" ? "oes" : "lab";
+                select_theme(ui_preferences.theme.c_str());
+                if (frame_limit <= 0)
+                    save_ui_preferences(ui_preferences);
+            }
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.windowID == SDL_GetWindowID(window) &&
+                event.key.key == SDLK_W) {
+                if ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0) {
+                    calibration_follow = true;
+                } else {
+                    calibration_follow = false;
+                    ++calibration_index;
+                }
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
                 event.key.key == SDLK_A)
@@ -2903,10 +2691,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                           displayed.clutch_pressure * 100.0);
         constexpr std::array<const char *, 4> view_names{
             "SHAFT", "RADIAL", "AXIAL 1/4", "AXIAL 2/3"};
-        constexpr std::array<const char *, 11> scope_names{
-            "LAMBDA",      "TPS",     "THERMAL", "INTAKE",
-            "ENGINE",      "FUEL",    "ADC TPS", "ADC BAT/LAMBDA",
-            "ADC IAT/ECT", "BATTERY", "IDLE"};
         const bool radial_view = view_mode != 0;
         const int focus_cylinder = view_mode >= 2 ? view_mode - 1 : 0;
         char rpm_label[24];
@@ -2922,7 +2706,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             "V view, K key, S starter, arrows pedal, Q/E gear, L load, "
             "Space pause, . 10ms, , next ignition",
             profile::vehicle, view_names[static_cast<std::size_t>(view_mode)],
-            analog_scope ? scope_names[static_cast<std::size_t>(analog_group)]
+            analog_scope ? scope_group(analog_group).title
                          : "ECU",
             analog_scope && scope_maximized ? " MAX" : "",
             (analog_scope && analog_frozen) || (!analog_scope && digital_frozen)
@@ -2943,7 +2727,15 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                             analog_scope && scope_maximized);
         const float scene_x = layout.mechanical.x;
         const float scene_width = layout.mechanical.w;
-        const float scene_height = layout.mechanical.h;
+        // The 0-720 cycle ruler owns the bottom band of the mechanical panel;
+        // the engine views are fitted into what is above it (4.5).
+        const float mechanical_panel_height = layout.mechanical.h;
+        const float ruler_scale = lab_ui_scale(width, height);
+        const float ruler_height =
+            (width >= 1100 && mechanical_panel_height >= 340.0f * ruler_scale)
+                ? 40.0f * ruler_scale
+                : 0.0f;
+        const float scene_height = mechanical_panel_height - ruler_height;
         const float pane_width = scene_width * 0.5f;
         const float ui_scale = lab_ui_scale(width, height);
         camera.pan_x =
@@ -2955,12 +2747,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         axial_camera.pan_y = std::clamp(
             axial_camera.pan_y, -scene_height * 0.5f, scene_height * 0.5f);
         const bool compact_view = width < 1100;
-        // Top of the fitted scene: the header row plus the button/selector
-        // rows that sit above the mechanical view in each layout.
-        constexpr float kFitGapDesktop = 18.0f;
-        constexpr float kFitGapCompact = 40.0f;
-        constexpr float kFitGapCompactShort = 60.0f;
-        constexpr float kFitGapNarrowShort = 76.0f;
+        // Top of the fitted scene: the header row (kHeaderHeight, which now
+        // includes the toolbar band) plus the remaining per-layout gap.
+        constexpr float kFitGapDesktop = 8.0f;
+        constexpr float kFitGapCompact = 30.0f;
+        constexpr float kFitGapCompactShort = 50.0f;
+        constexpr float kFitGapNarrowShort = 66.0f;
         const float fit_gap =
             !compact_view ? kFitGapDesktop
             : height >= 620 ? kFitGapCompact
@@ -3054,6 +2846,18 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             if (spark_channels[0] >= 0 && spark_channels[1] >= 0)
                 break;
         }
+        // D2/D3: latest measured injector pulse and coil low times.
+        PulseCluster pulse_cluster;
+        pulse_cluster.spark_channels = spark_channels;
+        pulse_cluster.injector = last_pulse_stat(
+            events, ma17::EmulatorEventType::InjectorPin, 0, displayed.tick,
+            true);
+        for (std::size_t pair = 0; pair < 2; ++pair)
+            if (spark_channels[pair] >= 0)
+                pulse_cluster.coil_low[pair] = last_pulse_stat(
+                    events, ma17::EmulatorEventType::IgnitionPin,
+                    static_cast<unsigned>(spark_channels[pair]), displayed.tick,
+                    false);
         for (auto it = events.rbegin(); it != events.rend(); ++it) {
             if (it->tick > displayed.tick)
                 continue;
@@ -3186,8 +2990,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 geometry_ok = false;
             scene_vertices.clear();
         };
-        const std::array<RecordingRenderer *, 2> views{&geometry,
-                                                       &secondary_geometry};
+        // M5: longitudinal always on the left, profile / axial on the right.
+        const std::array<RecordingRenderer *, 2> views =
+            radial_view ? std::array<RecordingRenderer *, 2>{&secondary_geometry,
+                                                             &geometry}
+                        : std::array<RecordingRenderer *, 2>{&geometry,
+                                                             &secondary_geometry};
         // Scene colors keep their alpha; blend like the donor GPU pipeline.
         SDL_BlendMode previous_blend = SDL_BLENDMODE_NONE;
         SDL_GetRenderDrawBlendMode(screen, &previous_blend);
@@ -3234,10 +3042,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         SDL_RenderFillRect(screen, &status_panel);
         SDL_SetRenderDrawColor(screen, 45, 45, 55, 255);
         SDL_RenderRect(screen, &status_panel);
-        const SDL_Rect shaft_viewport{
-            static_cast<int>(scene_x) +
-                (radial_view ? static_cast<int>(pane_width) : 0),
-            0, static_cast<int>(pane_width), static_cast<int>(scene_height)};
+        const SDL_Rect shaft_viewport{static_cast<int>(scene_x), 0,
+                                      static_cast<int>(pane_width),
+                                      static_cast<int>(scene_height)};
         SDL_SetRenderViewport(screen, &shaft_viewport);
         draw_shaft_mechanical_details(screen, displayed, render_camera,
                                       pane_width, scene_height, ui_scale);
@@ -3247,15 +3054,144 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                        scene_x + pane_width, scene_height);
         const float scene_label_y =
             (compact_view && height < 620 ? (width < 900 ? 144.0f : 122.0f)
-                                          : 94.0f) *
+                                          : kHeaderHeight + 5.0f) *
             ui_scale;
         font.draw(screen, scene_x + 14.0f * ui_scale, scene_label_y,
-                  radial_view ? "PERFIL / AXIAL" : "LONGITUDINAL / 4 CIL",
-                  {176, 218, 226, 255}, 0.72f * ui_scale);
+                  "LONGITUDINAL / 4 CIL",
+                  {176, 218, 226, 255}, kTextSmall * ui_scale);
         font.draw(screen, scene_x + pane_width + 14.0f * ui_scale,
                   scene_label_y,
-                  radial_view ? "LONGITUDINAL / 4 CIL" : "PERFIL / CIL 1",
-                  {176, 218, 226, 255}, 0.72f * ui_scale);
+                  radial_view ? "PERFIL / AXIAL" : "PERFIL / CIL 1",
+                  {176, 218, 226, 255}, kTextSmall * ui_scale);
+        {
+            // 4.5: 60-2 wheel under the axial title: 58 teeth, the gap ending
+            // at the TDC reference, the VR sensor lit while a tooth passes.
+            const float radius = 26.0f * ui_scale;
+            const float cx = scene_x + pane_width + 14.0f * ui_scale + radius +
+                             4.0f * ui_scale;
+            const float cy = scene_label_y + 30.0f * ui_scale + radius;
+            const double rotation = wheel_rotation_rad(
+                displayed.crank_angle_rad, displayed.tdc_phase_rad);
+            constexpr double sensor_angle = kWheelPi / 2.0; // top of the wheel
+            SDL_SetRenderDrawColor(screen, 70, 80, 92, 255);
+            for (int position = 0; position < kWheelPositions; ++position) {
+                if (!wheel_tooth_present(position))
+                    continue;
+                const double centre = (position + 0.5) * kWheelStepRad + rotation;
+                const float ux = static_cast<float>(std::cos(centre));
+                const float uy = -static_cast<float>(std::sin(centre));
+                SDL_RenderLine(screen, cx + ux * radius, cy + uy * radius,
+                               cx + ux * (radius + 4.0f * ui_scale),
+                               cy + uy * (radius + 4.0f * ui_scale));
+            }
+            // Inner rim as a short polyline.
+            for (int step = 0; step < 48; ++step) {
+                const double a0 = 2.0 * kWheelPi * step / 48.0;
+                const double a1 = 2.0 * kWheelPi * (step + 1) / 48.0;
+                SDL_RenderLine(
+                    screen, cx + static_cast<float>(std::cos(a0)) * radius,
+                    cy - static_cast<float>(std::sin(a0)) * radius,
+                    cx + static_cast<float>(std::cos(a1)) * radius,
+                    cy - static_cast<float>(std::sin(a1)) * radius);
+            }
+            const bool tooth = wheel_sensor_sees_tooth(rotation, sensor_angle);
+            const SDL_FRect vr{cx - 3.0f * ui_scale,
+                               cy - radius - 11.0f * ui_scale, 6.0f * ui_scale,
+                               6.0f * ui_scale};
+            SDL_SetRenderDrawColor(screen, tooth ? 99 : 120, tooth ? 211 : 60,
+                                   tooth ? 220 : 90, 255);
+            SDL_RenderFillRect(screen, &vr);
+            // Labels under the wheel, inside the free corner of the pane.
+            const float label_x = scene_x + pane_width + 14.0f * ui_scale;
+            font.draw(screen, label_x, cy + radius + 10.0f * ui_scale,
+                      "60-2 VR P1.0", {145, 177, 190, 255},
+                      kTextTiny * ui_scale);
+            font.draw(screen, label_x, cy + radius + 22.0f * ui_scale,
+                      "PMS 120 CAND.", {145, 177, 190, 255},
+                      kTextTiny * ui_scale);
+        }
+        if (ruler_height > 0.0f) {
+            // 4.5: 0-720 cycle ruler under the two views: valve windows per
+            // cylinder (intake cyan on top, exhaust magenta below), the firing
+            // TDC of each cylinder, and the current cycle angle.
+            const float strip_h = ruler_height - 4.0f * ui_scale;
+            const float x0 = scene_x + 30.0f * ui_scale;
+            const float x1 = scene_x + 2.0f * pane_width - 14.0f * ui_scale;
+            const float y0 = mechanical_panel_height - strip_h - 4.0f * ui_scale;
+            const SDL_FRect strip{scene_x + 10.0f * ui_scale, y0,
+                                  x1 - scene_x - 10.0f * ui_scale + 4.0f * ui_scale,
+                                  strip_h};
+            SDL_SetRenderDrawColor(screen, 12, 14, 18, 255);
+            SDL_RenderFillRect(screen, &strip);
+            SDL_SetRenderDrawColor(screen, 42, 42, 50, 255);
+            SDL_RenderRect(screen, &strip);
+            const auto x_for = [&](double degrees) {
+                return x0 + (x1 - x0) * static_cast<float>(degrees / 720.0);
+            };
+            const float row_h = 5.0f * ui_scale;
+            constexpr std::array<int, 4> order{0, 2, 3, 1}; // firing order 1-3-4-2
+            for (std::size_t row = 0; row < order.size(); ++row) {
+                const auto cylinder = static_cast<std::size_t>(order[row]);
+                const float ry = y0 + 4.0f * ui_scale + static_cast<float>(row) * row_h;
+                char tag[2] = {static_cast<char>('1' + order[row]), 0};
+                // Row tags only where a row is tall enough to hold the glyphs.
+                if (font.line_height(font.text_px(kTextTiny * ui_scale)) <=
+                    row_h + 1.0f)
+                    font.draw(screen, scene_x + 15.0f * ui_scale,
+                              ry - 1.0f * ui_scale, tag, {145, 177, 190, 255},
+                              kTextTiny * ui_scale);
+                for (const auto kind : {ValveKind::Intake, ValveKind::Exhaust}) {
+                    const bool intake = kind == ValveKind::Intake;
+                    SDL_SetRenderDrawColor(screen, intake ? 0 : 255,
+                                           intake ? 200 : 64, intake ? 230 : 129,
+                                           255);
+                    for (const CycleSpan &span : valve_open_spans(cylinder, kind)) {
+                        const SDL_FRect bar{
+                            x_for(span.start_deg),
+                            ry + (intake ? 0.0f : row_h * 0.5f),
+                            x_for(span.end_deg) - x_for(span.start_deg),
+                            row_h * 0.5f - 0.5f * ui_scale};
+                        SDL_RenderFillRect(screen, &bar);
+                    }
+                }
+                const float fx = x_for(firing_mark_deg(cylinder));
+                SDL_SetRenderDrawColor(screen, 249, 214, 92, 255);
+                SDL_RenderLine(screen, fx, ry, fx, ry + row_h - 1.0f * ui_scale);
+                // The spark at the real advance (only with a valid advance).
+                if (displayed.crank_available && displayed.burns > 0) {
+                    const double spark =
+                        spark_mark_deg(cylinder, displayed.spark_advance_deg);
+                    if (std::isfinite(spark)) {
+                        const float sx = x_for(spark);
+                        SDL_SetRenderDrawColor(screen, 190, 225, 255, 255);
+                        SDL_RenderLine(screen, sx, ry, sx,
+                                       ry + row_h - 1.0f * ui_scale);
+                        SDL_RenderLine(screen, sx + 1.0f, ry, sx + 1.0f,
+                                       ry + row_h - 1.0f * ui_scale);
+                    }
+                }
+            }
+            // Degree axis.
+            const float axis_y = y0 + 4.0f * ui_scale + 4.0f * row_h + 1.0f * ui_scale;
+            SDL_SetRenderDrawColor(screen, 90, 100, 112, 255);
+            SDL_RenderLine(screen, x0, axis_y, x1, axis_y);
+            for (int degree = 0; degree <= 720; degree += 180) {
+                const float tx = x_for(degree);
+                SDL_RenderLine(screen, tx, axis_y, tx, axis_y + 2.0f * ui_scale);
+                const std::string text = std::to_string(degree);
+                const float w = font.width(text, kTextTiny * ui_scale);
+                font.draw(screen,
+                          std::clamp(tx - w * 0.5f, x0 - 8.0f * ui_scale,
+                                     x1 - w + 8.0f * ui_scale),
+                          axis_y + 3.0f * ui_scale, text, {145, 177, 190, 255},
+                          kTextTiny * ui_scale);
+            }
+            const float cursor = x_for(
+                cycle_angle_deg(displayed.crank_angle_rad, displayed.tdc_phase_rad));
+            SDL_SetRenderDrawColor(screen, 235, 241, 246, 255);
+            SDL_RenderLine(screen, cursor, y0 + 2.0f * ui_scale, cursor,
+                           axis_y + 1.0f * ui_scale);
+        }
         if (lab_buttons_visible(width, height)) {
             const SDL_FRect selector =
                 view_selector_rect(layout_state, width, height);
@@ -3270,7 +3206,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 screen,
                 selector.x +
                     (compact_selector
-                         ? (selector.w - font.measure("VIEW") * ui_scale) * 0.5f
+                         ? (selector.w - font.width("VIEW", ui_scale)) * 0.5f
                          : 8.0f * ui_scale),
                 selector.y + (compact_selector ? 6.0f : 8.0f * ui_scale),
                 compact_selector ? "VIEW"
@@ -3289,10 +3225,37 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             font.draw(
                 screen,
                 fit_button.x +
-                    (fit_button.w - font.measure(fit_label) * ui_scale) * 0.5f,
+                    (fit_button.w - font.width(fit_label, ui_scale)) * 0.5f,
                 fit_button.y + (compact_selector ? 6.0f : 8.0f * ui_scale),
                 fit_label, {145, 177, 190, 255}, ui_scale);
             if (width >= 1280 && height >= 720) {
+              if (speed_selector_visible(layout_state, width, height)) {
+                const SDL_FRect speed_box =
+                    speed_selector_rect(layout_state, width, height);
+                const int active =
+                    active_speed_preset(session ? session->speed() : 1.0);
+                for (std::size_t i = 0; i < kSpeedPresets.size(); ++i) {
+                    const SpeedSegment seg = speed_segment(
+                        i, speed_box.x, speed_box.y, speed_box.w / 3.0f,
+                        speed_box.h);
+                    const SDL_FRect r{seg.x, seg.y, seg.w, seg.h};
+                    const bool on = static_cast<int>(i) == active;
+                    SDL_SetRenderDrawColor(screen, on ? 18 : 20, on ? 52 : 20,
+                                           on ? 60 : 24, 255);
+                    SDL_RenderFillRect(screen, &r);
+                    SDL_SetRenderDrawColor(screen, on ? 90 : 70, on ? 200 : 70,
+                                           on ? 215 : 85, 255);
+                    SDL_RenderRect(screen, &r);
+                    const std::string label =
+                        speed_multiplier_text(kSpeedPresets[i]);
+                    font.draw(screen,
+                              r.x + (r.w - font.width(label, ui_scale)) * 0.5f,
+                              r.y + 8.0f * ui_scale, label,
+                              on ? SDL_Color{235, 241, 246, 255}
+                                 : SDL_Color{145, 177, 190, 255},
+                              ui_scale);
+                }
+              }
                 const SDL_FRect fullscreen =
                     fullscreen_button_rect(layout_state, width, height);
                 SDL_SetRenderDrawColor(screen, 20, 20, 24, 255);
@@ -3311,11 +3274,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             constexpr std::array<const char *, 4> labels{"CYL 1", "CYL 2",
                                                          "CYL 3", "CYL 4"};
             const SevelVisualGeometry geometry_size{};
-            const SceneDimensions scene_size{};
             const float head_y =
-                static_cast<float>(geometry_size.visual_estimate_rod_length_m +
-                                   SevelVisualGeometry::crank_radius_m +
-                                   scene_size.visual_estimate_head_height_m);
+                static_cast<float>(sevel_head_face_y_m(geometry_size));
             const ysMatrix radial_projection = scene_fit_projection(
                 radial_camera, pane_width, scene_height,
                 3.0f * visual_estimate_radial_section_spacing_m + 0.14f, 0.34f);
@@ -3336,16 +3296,16 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 const float center = (static_cast<float>(cylinder) - 1.5f) *
                                      visual_estimate_radial_section_spacing_m;
                 const float x =
-                    scene_x + pane_width *
-                                  (1.0f + radial_projection.m[0][0] * center +
+                    scene_x + pane_width +
+                    pane_width * (1.0f + radial_projection.m[0][0] * center +
                                    radial_projection.m[0][3]) *
                                   0.5f;
                 font.draw(screen,
-                          x - font.measure(labels[cylinder]) * label_scale /
+                          x - font.width(labels[cylinder], label_scale) /
                                   2.0f,
                           label_y, labels[cylinder],
                           cylinder == 0 || cylinder == 3
-                              ? SDL_Color{99, 211, 220, 255}
+                              ? kAccent
                               : SDL_Color{234, 165, 100, 255},
                           label_scale);
             }
@@ -3361,7 +3321,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             instrument_cluster_rect(layout_state, width, height);
         draw_oes_right_cluster(screen, font, cluster_bounds, displayed, pulses,
                                spark_glows, ui_scale, &gauges, stale_snapshot,
-                               compact_instrument_page, display_units);
+                               compact_instrument_page, display_units,
+                               pulse_cluster);
         const SDL_FRect left_bounds{8.0f * ui_scale, 90.0f * ui_scale,
                                     layout.left.w - 16.0f * ui_scale,
                                     320.0f * ui_scale};
@@ -3467,13 +3428,338 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 digital_scope_history, scope_channels_visible, scope_span_ticks,
                 digital_cursors, digital_frozen, focus_cylinder);
         SDL_SetRenderViewport(screen, nullptr);
-        const float order_scale =
-            width >= 2400 && height >= 1000 && width > 2 * height
-                ? std::min(ui_scale, 1.2f)
-                : ui_scale;
-        draw_combustion_order(screen, font, layout.left.w, height, order_scale,
-                              pulses, spark_glows, spark_channels,
-                              focus_cylinder);
+        if (sweep_toggle_request || sweep_state.running) {
+            // Y1: RUN WOT, serviced every frame (never blocks the UI).
+            if (!dyno_scene) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+            }
+            const char *rom_env = std::getenv("SEVEL_ROM_PATH");
+            if (sweep_toggle_request) {
+                sweep_toggle_request = false;
+                if (sweep_state.running) {
+                    sweep_child.terminate();
+                    sweep_state.cancel();
+                } else if (!rom_env) {
+                    std::fprintf(stderr, "[LAB-DYNO-SWEEP] cannot start: no ROM path\n");
+                } else if (parse_sweep_spec(std::getenv("SEVEL_DYNO_RPMS")
+                                                ? std::getenv("SEVEL_DYNO_RPMS")
+                                                : "1500:6000:500")
+                               .empty()) {
+                    std::fprintf(stderr,
+                                 "[LAB-DYNO-SWEEP] cannot start: bad SEVEL_DYNO_RPMS "
+                                 "(want min:max:step)\n");
+                } else {
+                    if (snapshot_rom_sha.empty()) {
+                        std::ifstream rom_file(rom_env, std::ios::binary);
+                        snapshot_rom_sha = sha256_hex(std::vector<std::uint8_t>(
+                            (std::istreambuf_iterator<char>(rom_file)),
+                            std::istreambuf_iterator<char>()));
+                    }
+                    const char *spec = std::getenv("SEVEL_DYNO_RPMS");
+                    auto plan = parse_sweep_spec(spec ? spec : "1500:6000:500");
+                    DynoProvenance provenance;
+                    provenance.code_sha = SEVEL_CODE_SHA;
+                    provenance.rom_sha256 = snapshot_rom_sha;
+                    provenance.scenario = "E22 leak 9 mm2 acc coolant 90 C TDC 120";
+                    provenance.tdc_deg = 120.0;
+                    sweep_state.start(std::move(plan), provenance);
+                    dyno_view = true;
+                    calibration_view = false;
+                    sweep_row_seen = false;
+                    std::fprintf(stdout, "[LAB-DYNO-SWEEP] start points=%zu\n",
+                                 sweep_state.plan.size());
+                }
+            }
+            if (sweep_state.running && !sweep_child.active()) {
+                const char *binary_env = std::getenv("SEVEL_DYNO_BINARY");
+                std::string binary = binary_env ? binary_env : "";
+                if (binary.empty()) {
+                    std::error_code ignored;
+                    binary = (std::filesystem::read_symlink("/proc/self/exe", ignored)
+                                  .parent_path() / "emu8051-tty")
+                                 .string();
+                }
+                const char *cycles = std::getenv("SEVEL_DYNO_CYCLES");
+                char rpm_text[32];
+                std::snprintf(rpm_text, sizeof(rpm_text), "%.0f",
+                              sweep_state.current_target());
+                const std::vector<std::string> args{
+                    binary, rom_env ? rom_env : "", "--physical-crank",
+                    "--starter-ticks", "495000", "--stop-ticks", "90000000",
+                    "--adc7-mv", "1232", "--idle-bridge-p15-p16",
+                    "--idle-contact-p46", "--tps-bench-profile",
+                    "--idle-motor-speed-mm-s", "50", "--idle-min-stop-mrad", "5",
+                    "--lambda-adc-gain", "5", "--dyno-scenario",
+                    "--tdc-reference-deg", "120", "--dyno-point", rpm_text,
+                    "--dyno-cycles", cycles ? cycles : "40"};
+                sweep_row_seen = false;
+                if (!sweep_child.start(args))
+                    sweep_state.on_failure();
+            }
+            if (sweep_child.active()) {
+                const auto handle_lines = [&](const std::vector<std::string> &lines) {
+                    for (const std::string &line : lines)
+                        if (const auto row = parse_dyno_point_line(line)) {
+                            sweep_row_seen = true;
+                            std::fprintf(stdout,
+                                         "[LAB-DYNO-SWEEP] point=%.0f state=%s "
+                                         "reason=%s torque=%.1f\n",
+                                         row->target_rpm, row->state.c_str(),
+                                         row->reason.c_str(), row->point.torque_nm);
+                            sweep_state.on_row(*row);
+                        }
+                };
+                handle_lines(sweep_child.poll_lines());
+                if (sweep_child.exited()) {
+                    handle_lines(sweep_child.poll_lines());
+                    if (!sweep_row_seen)
+                        sweep_state.on_failure();
+                    sweep_child.terminate();
+                    if (!sweep_state.running)
+                        std::fprintf(stdout,
+                                     "[LAB-DYNO-SWEEP] done accepted=%zu points=%zu\n",
+                                     sweep_state.curve.points.size(),
+                                     sweep_state.plan.size());
+                }
+            }
+            auto &curves = dyno_scene->curves;
+            curves.erase(std::remove_if(curves.begin(), curves.end(),
+                                        [](const DynoCurve &c) { return c.label == "RUN WOT"; }),
+                         curves.end());
+            if (!sweep_state.curve.points.empty())
+                curves.push_back(sweep_state.curve);
+            dyno_scene->sweep_lines = sweep_state.lines();
+        }
+        std::vector<int> pending_snapshot_requests;
+        pending_snapshot_requests.swap(snapshot_requests);
+        for (const int pending_request : pending_snapshot_requests) {
+        snapshot_request = pending_request;
+        if (snapshot_request >= 3) {
+            // K4: reopen a saved snapshot (key 3 = A, key 4 = B) and
+            // compare it with the other slot when that one is present.
+            const bool slot_a = snapshot_request == 3;
+            snapshot_request = 0;
+            if (!dyno_scene) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+            }
+            const char *dir_env = std::getenv("SEVEL_SNAPSHOT_DIR");
+            const std::filesystem::path dir = dir_env ? dir_env : ".work/snapshots";
+            const auto path = dir / (slot_a ? "A.json" : "B.json");
+            if (auto loaded = load_run_snapshot(path.string())) {
+                std::fprintf(stdout,
+                             "[LAB-SNAPSHOT] loaded=%s label=%s rom=%s code=%s tables=%zu\n",
+                             path.string().c_str(), loaded->label.c_str(),
+                             loaded->rom_sha256.c_str(), loaded->code_sha.c_str(),
+                             loaded->tables.size());
+                (slot_a ? snapshot_a : snapshot_b) = std::move(loaded);
+                if (snapshot_a && snapshot_b) {
+                    dyno_scene->compare_lines =
+                        compare_snapshots(*snapshot_a, *snapshot_b);
+                    for (const std::string &line : dyno_scene->compare_lines)
+                        std::fprintf(stdout, "[LAB-SNAPSHOT-DELTA] %s\n",
+                                     line.c_str());
+                }
+            } else {
+                std::fprintf(stderr, "[LAB-SNAPSHOT] failed to load %s\n",
+                             path.string().c_str());
+            }
+        }
+        if (snapshot_request != 0) {
+            // K4: freeze the current run as a comparable snapshot.
+            const int which = snapshot_request;
+            snapshot_request = 0;
+            if (!dyno_scene) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+            }
+            if (!calibration_tables) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                const char *rom_env = std::getenv("SEVEL_ROM_PATH");
+                calibration_tables =
+                    rom_env ? load_calibration_catalog(
+                                  std::string(docs ? docs : SEVEL_DOCS_DIR) +
+                                      "/MA17_CALIBRATION_CATALOG.json",
+                                  rom_env)
+                            : calibration_error("no ROM path");
+            }
+            if (snapshot_rom_sha.empty())
+                if (const char *rom_env = std::getenv("SEVEL_ROM_PATH")) {
+                    std::ifstream rom_file(rom_env, std::ios::binary);
+                    snapshot_rom_sha = sha256_hex(std::vector<std::uint8_t>(
+                        (std::istreambuf_iterator<char>(rom_file)),
+                        std::istreambuf_iterator<char>()));
+                }
+            RunSnapshot snap;
+            snap.label = which == 1 ? "A" : "B";
+            snap.rom_sha256 = snapshot_rom_sha;
+            snap.code_sha = SEVEL_CODE_SHA;
+            char scenario[96];
+            std::snprintf(scenario, sizeof(scenario), "load %.0f Nm pedal %.1f mm",
+                          load_nm, pedal_pull_m * 1000.0);
+            snap.scenario = scenario;
+            const auto &plant = displayed.plant_window;
+            snap.metrics.rpm = plant.valid ? plant.mean_rpm : displayed.rpm;
+            snap.metrics.map_kpa = displayed.manifold_pressure_pa / 1000.0;
+            snap.metrics.lambda = displayed.lambda;
+            snap.metrics.advance_deg =
+                displayed.burns > 0 ? displayed.spark_advance_deg : std::nan("");
+            const PulseStat injection = last_pulse_stat(
+                events, ma17::EmulatorEventType::InjectorPin, 0, displayed.tick,
+                true);
+            snap.metrics.ti_ms = injection.valid ? injection.width_ms : std::nan("");
+            snap.metrics.bsfc_g_kwh =
+                plant.valid && plant.bsfc_g_kwh > 0.0 ? plant.bsfc_g_kwh
+                                                       : std::nan("");
+            snap.metrics.torque_nm = plant.valid ? plant.shaft_torque_nm : std::nan("");
+            for (const DynoCurve &curve : dyno_scene->curves)
+                if (curve.provenance) { // the ROM sweep, when loaded
+                    for (const DynoPoint &point : curve.points)
+                        snap.curve.push_back({point.rpm, point.torque_nm});
+                    break;
+                }
+            for (const CalibrationTable &table : calibration_tables->tables)
+                snap.tables[table.id] = table.bytes;
+            const char *dir_env = std::getenv("SEVEL_SNAPSHOT_DIR");
+            const std::filesystem::path dir = dir_env ? dir_env : ".work/snapshots";
+            std::error_code ignored;
+            std::filesystem::create_directories(dir, ignored);
+            const auto path = dir / (snap.label + ".json");
+            const bool saved = save_run_snapshot(path.string(), snap);
+            std::fprintf(saved ? stdout : stderr,
+                         "[LAB-SNAPSHOT] %s=%s label=%s rom=%s code=%s tables=%zu\n",
+                         saved ? "saved" : "failed", path.string().c_str(),
+                         snap.label.c_str(), snap.rom_sha256.c_str(),
+                         snap.code_sha.c_str(), snap.tables.size());
+            (which == 1 ? snapshot_a : snapshot_b) = std::move(snap);
+            if (snapshot_a && snapshot_b) {
+                dyno_scene->compare_lines =
+                    compare_snapshots(*snapshot_a, *snapshot_b);
+                for (const std::string &line : dyno_scene->compare_lines)
+                    std::fprintf(stdout, "[LAB-SNAPSHOT-DELTA] %s\n", line.c_str());
+            }
+        }
+        }
+        if (dyno_view) {
+            if (!dyno_scene) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                dyno_scene = load_default_dyno_scene(docs ? docs
+                                                          : SEVEL_DOCS_DIR);
+            }
+            // D6 / Y1: the live window drives the readout and the crosshair,
+            // only while it is valid (an N/D window shows no point).
+            const auto &plant = displayed.plant_window;
+            dyno_scene->readout = {plant.valid,
+                                   plant.mean_rpm,
+                                   plant.shaft_torque_nm,
+                                   plant.shaft_power_kw,
+                                   plant.bsfc_g_kwh,
+                                   plant.ve_ambient,
+                                   plant.lambda_cylinders};
+            if (plant.valid)
+                dyno_scene->live =
+                    DynoLivePoint{plant.mean_rpm, plant.shaft_torque_nm};
+            else
+                dyno_scene->live.reset();
+            draw_dyno_view(screen, font,
+                           {layout.scope.x + 16.0f, layout.scope.y,
+                            layout.scope.w - 32.0f, layout.scope.h},
+                           *dyno_scene, ui_scale);
+        }
+        if (calibration_view) {
+            if (!calibration_tables) {
+                const char *docs = std::getenv("SEVEL_DOCS_DIR");
+                const std::string docs_dir = docs ? docs : SEVEL_DOCS_DIR;
+                const char *rom_env = std::getenv("SEVEL_ROM_PATH");
+                calibration_tables =
+                    rom_env ? load_calibration_catalog(
+                                  docs_dir + "/MA17_CALIBRATION_CATALOG.json",
+                                  rom_env)
+                            : calibration_error("no ROM path for the calibration view");
+            }
+            const auto &tables = calibration_tables->tables;
+            const std::span<const std::uint16_t> reads{
+                displayed.code_reads.addresses.data(),
+                displayed.code_reads.count};
+            if (calibration_follow)
+                if (const auto latest = most_recent_table(tables, reads))
+                    calibration_index = *latest;
+            if (!tables.empty())
+                calibration_index %= tables.size();
+            if (!variant_roms_loaded) {
+                variant_roms_loaded = true;
+                // Find the ROM images of the catalog's variants next to the
+                // docs: hash every .bin and keep the ones the catalog names.
+                const std::filesystem::path docs_root =
+                    std::filesystem::path(std::getenv("SEVEL_DOCS_DIR")
+                                              ? std::getenv("SEVEL_DOCS_DIR")
+                                              : SEVEL_DOCS_DIR)
+                        .parent_path();
+                std::error_code ignored;
+                for (const auto &dir : {docs_root, docs_root / "firmwares_modificados_ma17_tipo"})
+                    for (const auto &entry :
+                         std::filesystem::directory_iterator(dir, ignored)) {
+                        if (entry.path().extension() != ".bin")
+                            continue;
+                        std::ifstream rom_file(entry.path(), std::ios::binary);
+                        std::vector<std::uint8_t> bytes(
+                            (std::istreambuf_iterator<char>(rom_file)),
+                            std::istreambuf_iterator<char>());
+                        const std::string sha = sha256_hex(bytes);
+                        for (const auto &[name, known] :
+                             calibration_tables->variant_sha256)
+                            if (known == sha && name != "G" &&
+                                std::none_of(variant_roms.begin(), variant_roms.end(),
+                                             [&](const auto &v) { return v.first == name; }))
+                                // Copy: two variant names may share one image.
+                                variant_roms.emplace_back(name, bytes);
+                    }
+                std::sort(variant_roms.begin(), variant_roms.end(),
+                          [](const auto &a, const auto &b) { return a.first < b.first; });
+            }
+            if (const char *wanted = std::getenv("SEVEL_CALIBRATION_VARIANT");
+                wanted && variant_choice == 0 && !variant_env_applied) {
+                variant_env_applied = true; // capture helper: preselect a variant
+                for (std::size_t i = 0; i < variant_roms.size(); ++i)
+                    if (variant_roms[i].first == wanted)
+                        variant_choice = i + 1;
+            }
+            if (variant_choice > variant_roms.size())
+                variant_choice = 0;
+            std::vector<int> variant_diff;
+            std::string variant_label;
+            if (variant_choice > 0 && !tables.empty()) {
+                if (variant_base_rom.empty()) { // read once, not every frame
+                    const char *rom_env = std::getenv("SEVEL_ROM_PATH");
+                    std::ifstream base_file(rom_env ? rom_env : "", std::ios::binary);
+                    variant_base_rom.assign(
+                        std::istreambuf_iterator<char>(base_file),
+                        std::istreambuf_iterator<char>());
+                }
+                const auto &chosen = variant_roms[variant_choice - 1];
+                variant_label = chosen.first;
+                variant_diff = table_diff_cells(tables[calibration_index],
+                                                variant_base_rom, chosen.second);
+            }
+            draw_calibration_view(screen, font,
+                                  {layout.scope.x + 16.0f, layout.scope.y,
+                                   layout.scope.w - 32.0f, layout.scope.h},
+                                  tables, calibration_index,
+                                  calibration_tables->error, ui_scale, reads,
+                                  variant_diff, variant_label);
+            if (!calibration_logged && displayed.tick >= capture_after_tick &&
+                !tables.empty()) {
+                calibration_logged = true;
+                std::fprintf(stdout,
+                             "[LAB-CALIBRATION] table=%s active_cells=%zu "
+                             "reads=%llu recent=%zu follow=%d\n",
+                             tables[calibration_index].id.c_str(),
+                             active_cells(tables[calibration_index], reads).size(),
+                             displayed.code_reads.total, reads.size(),
+                             calibration_follow ? 1 : 0);
+            }
+        }
         const std::array<bool, 9> button_selected{
             displayed.key_on,
             keyboard_starter_held || mouse_starter_held,
@@ -3491,8 +3777,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             physical_controls_enabled, session != nullptr,
             session != nullptr,        session != nullptr,
             session != nullptr};
-        draw_lab_buttons(layout_state, screen, font, width, height,
-                         button_selected, button_enabled, load_nm);
+        const float controls_left = layout.left.w;
+        const float controls_scale = lab_ui_scale(width, height);
+        draw_lab_buttons(screen, font, width, height, controls_left,
+                         controls_scale, button_selected, button_enabled,
+                         load_nm, replay_controls);
+        draw_ecu_badges(screen, font, width, height, controls_left,
+                        controls_scale, displayed);
         constexpr std::array<SDL_Color, 7> status_colors{
             {{235, 241, 246, 255},
              {176, 218, 226, 255},
@@ -3517,7 +3808,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         if (show_debug) {
             SDL_SetRenderDrawColor(screen, 20, 25, 31, 248);
             SDL_RenderFillRect(screen, &debug_panel);
-            SDL_SetRenderDrawColor(screen, 99, 211, 220, 255);
+            set_draw_color(screen, kAccent);
             SDL_RenderRect(screen, &debug_panel);
             const char *inspector_title =
                 stale_snapshot ? "ECU INSPECTOR | STALE | D: CLOSE"
@@ -3530,7 +3821,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 title_width / std::max(1.0f, font.measure(inspector_title)));
             font.draw(screen, debug_panel.x + 8.0f * ui_scale,
                       debug_panel.y + 4.0f * ui_scale, inspector_title,
-                      {99, 211, 220, 255}, title_scale);
+                      kAccent, title_scale);
         }
         const auto draw_status = [&](int row, const char *line) {
             const bool inspector_row = show_debug && row >= 2;
@@ -3586,9 +3877,9 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         const char *help_hint = show_help ? "H: CLOSE" : "H: HELP";
         const char *debug_hint = show_debug ? "D: VITAL" : "D: DEBUG";
         const float help_x = status_panel.x + status_panel.w -
-                             (font.measure(help_hint) + 12.0f) * ui_scale;
+                             (font.width(help_hint, ui_scale) + 12.0f * ui_scale);
         const float debug_x =
-            help_x - (font.measure(debug_hint) + 14.0f) * ui_scale;
+            help_x - (font.width(debug_hint, ui_scale) + 14.0f * ui_scale);
         {
             // The title must end before the right-aligned hints, whatever the
             // face: fall back to the short title, then to an ellipsis.
@@ -3598,11 +3889,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 font, status, "FIAT TIPO | SEVEL MA1.7", title_px, title_max);
             draw_status(0, header_title.c_str());
         }
-        font.draw(screen, help_x, 24.0f, help_hint, {99, 211, 220, 255},
+        font.draw(screen, help_x, 24.0f, help_hint, kAccent,
                   ui_scale);
         font.draw(screen, debug_x, 24.0f, debug_hint,
                   show_debug ? SDL_Color{249, 190, 96, 255}
-                             : SDL_Color{99, 211, 220, 255},
+                             : kAccent,
                   ui_scale);
         if (!show_debug) {
             const char *layout_name =
@@ -3632,21 +3923,46 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                               run_state, sim_seconds, readings[0].data(),
                               readings[5].data(), coolant_unit,
                               readings[4].data(), fan_state);
-            else if (metadata && metadata->present)
-                std::snprintf(status, sizeof(status),
-                              "%s | %s | %.2f s / TICK %lld | ROM %08llX | KEY "
-                              "%s | UI %s",
-                              run_state, bench_preset ? "BENCH" : "CLI",
-                              sim_seconds, displayed.tick,
-                              static_cast<unsigned long long>(
-                                  metadata->rom_hash & 0xffffffffULL),
-                              displayed.key_on ? "ON" : "off", layout_name);
-            else
-                std::snprintf(
-                    status, sizeof(status),
-                    "%s | %.2f s / TICK %lld | ROM N/D | KEY %s | UI %s",
-                    run_state, sim_seconds, displayed.tick,
-                    displayed.key_on ? "ON" : "off", layout_name);
+            else {
+                // L1: chips in priority order (mode > time > ROM > KEY > tick
+                // > UI); the least important are dropped, never shrunk.
+                char time_chip[32], tick_chip[40], rom_chip[24];
+                std::snprintf(time_chip, sizeof(time_chip), "%.2f s",
+                              sim_seconds);
+                std::snprintf(tick_chip, sizeof(tick_chip), "TICK %lld",
+                              displayed.tick);
+                if (metadata && metadata->present)
+                    std::snprintf(rom_chip, sizeof(rom_chip), "ROM %08llX",
+                                  static_cast<unsigned long long>(
+                                      metadata->rom_hash & 0xffffffffULL));
+                else
+                    std::snprintf(rom_chip, sizeof(rom_chip), "ROM N/D");
+                const std::string speed_chip =
+                    "SPD " + speed_multiplier_text(session ? session->speed()
+                                                           : 1.0);
+                std::vector<StatusChip> chips{
+                    {run_state, 0},
+                    {time_chip, 1},
+                    {speed_chip, 1},
+                    {tick_chip, 4}, 
+                    {rom_chip, 2},
+                    {std::string("KEY ") + (displayed.key_on ? "ON" : "off"),
+                     3},
+                    {std::string("UI ") + layout_name, 5}};
+                if (metadata && metadata->present)
+                    chips.insert(chips.begin() + 1,
+                                 {bench_preset ? "BENCH" : "CLI", 1});
+                const float chip_px = font.text_px(ui_scale);
+                const float chip_max = status_panel.x + status_panel.w - 24.0f -
+                                       8.0f * ui_scale;
+                const std::string fitted = fit_status_chips(
+                    chips,
+                    [&](const std::string &text) {
+                        return font.measure_px(text, chip_px);
+                    },
+                    chip_max);
+                std::snprintf(status, sizeof(status), "%s", fitted.c_str());
+            }
             draw_status(1, status);
         } else {
             char injector_count[24], burn_count[24];
@@ -3801,7 +4117,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             const float panel_width = std::min(
                 640.0f * ui_scale, std::max(1.0f, scene_width - 32.0f));
             const float panel_height =
-                std::min(260.0f * ui_scale,
+                std::min(help_panel_height(
+                             lab::help_lines(false, false).size()) * ui_scale,
                          std::max(1.0f, static_cast<float>(height) - 32.0f));
             float panel_y = (static_cast<float>(height) - panel_height) / 2.0f;
             if (lab_buttons_visible(width, height))
@@ -3814,33 +4131,31 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                   panel_width, panel_height};
             SDL_SetRenderDrawColor(screen, 23, 34, 46, 255);
             SDL_RenderFillRect(screen, &panel);
-            SDL_SetRenderDrawColor(screen, 99, 211, 220, 255);
+            set_draw_color(screen, kAccent);
             SDL_RenderRect(screen, &panel);
             font.draw(
                 screen, panel.x + 16.0f * ui_scale, panel.y + 16.0f * ui_scale,
-                "SEVEL MA1.7 LAB  |  H: CLOSE", {99, 211, 220, 255}, ui_scale);
-            const std::array<const char *, 8> help_lines{
-                "K KEY  |  HOLD S START  |  UP/DOWN PEDAL  |  Q/E GEAR",
-                "SPACE PAUSE  |  . STEP 10MS  |  , NEXT IGNITION",
-                displayed.drivetrain_available
-                    ? "+/- SIM | PGUP/DN CLUTCH +10/-10% | L LOAD | M MUTE"
-                    : "+/- SIM | PGUP/DN ROAD INPUT | L LOAD | M MUTE",
-                "V SHAFT/RADIAL/AXIAL PAIRS  |  WHEEL ZOOM  |  MIDDLE PAN",
+                "SEVEL MA1.7 LAB  |  H: CLOSE", kAccent, ui_scale);
 #ifdef SEVEL_LAB_PNG
-                "G GROUP  |  A ECU/ANALOG  |  X FREEZE  |  C CSV+PNG",
+            const auto help_lines = lab::help_lines(displayed.drivetrain_available, true);
 #else
-                "G GROUP  |  A ECU/ANALOG  |  X FREEZE  |  C CSV",
+            const auto help_lines = lab::help_lines(displayed.drivetrain_available, false);
 #endif
-                "SCOPE Z MAX O FIT Y WHEEL/MID PAN/2X FIT | T MODE U CH Y EDGE",
-                "TRIGGER I/J LEVEL B PRE  |  F11 FULL  F12 PNG  R FIT",
-                "CTRL+U UNITS  0..3 UI  4..6 LAYOUT  7..9 FONT"};
+            // One scale for the whole overlay: the small one as soon as any
+            // line is wider than the panel (the pixel face has no in-between).
+            float help_scale = ui_scale;
+            for (const std::string &text : help_lines)
+                if (font.width(text, ui_scale) > panel.w - 32.0f * ui_scale)
+                    help_scale = kTextSmall * ui_scale;
             for (std::size_t line = 0; line < help_lines.size(); ++line) {
                 const float y =
                     panel.y +
                     (48.0f + 26.0f * static_cast<float>(line)) * ui_scale;
+                const float line_scale = help_scale;
                 if (y + 16.0f * ui_scale < panel.y + panel.h)
                     font.draw(screen, panel.x + 16.0f * ui_scale, y,
-                              help_lines[line], {235, 241, 246, 255}, ui_scale);
+                              help_lines[line], {235, 241, 246, 255},
+                              line_scale);
             }
         }
         if (width >= 1100) {
@@ -3866,12 +4181,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                               applied_gear, displayed.rpm,
                               displayed.crank_available,
                               displayed.drivetrain_available);
-        if (width >= 1800 && height >= 1000) {
-            const SDL_FRect gear =
-                gear_widget_rect(layout_state, width, height);
-            const SDL_FRect clutch{gear.x - gear.w - 8.0f * ui_scale, gear.y,
-                                   gear.w, gear.h};
-            if (clutch.w >= 100.0f && clutch.h >= 90.0f)
+        {
+            const SDL_FRect clutch =
+                clutch_widget_rect(layout_state, width, height);
+            if (clutch.w >= 64.0f && clutch.h >= 64.0f)
                 draw_clutch(screen, font, clutch, displayed, ui_scale,
                             stale_snapshot);
         }

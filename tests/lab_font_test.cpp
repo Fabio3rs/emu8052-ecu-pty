@@ -1,10 +1,13 @@
 #include "lab/FontRenderer.hpp"
 #include "lab/HeaderText.hpp"
+#include "lab/TextScale.hpp"
 
+#include <SDL3/SDL.h>
 #include <gtest/gtest.h>
 
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -167,4 +170,67 @@ TEST_F(LabFont, HeaderTitleFallsBackToShortFormThenEllipsis) {
     // No short form given: the full title is ellipsized.
     const std::string only = lab::fit_header_title(font, full, "", px, full_w * 0.5f);
     EXPECT_LE(font.measure_px(only, px), full_w * 0.5f);
+}
+
+namespace {
+// Renders `text` at (x, y) on a software surface and returns its pixels.
+// A fresh FontRenderer per call: it caches one texture per size bucket keyed by
+// the renderer pointer, so reusing one across renderers that are destroyed and
+// recreated (possibly at the same address) would draw from a dangling texture.
+std::vector<unsigned char> render_text(lab::FontRenderer &, float x, float y,
+                                       const std::string &text) {
+    lab::FontRenderer font(kSilk);
+    SDL_Surface *target = SDL_CreateSurface(160, 40, SDL_PIXELFORMAT_RGBA32);
+    SDL_Renderer *renderer = SDL_CreateSoftwareRenderer(target);
+    EXPECT_NE(renderer, nullptr);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    font.draw(renderer, x, y, text, {255, 255, 255, 255}, 1.0f);
+    SDL_Surface *read = SDL_RenderReadPixels(renderer, nullptr);
+    std::vector<unsigned char> pixels;
+    if (read) {
+        const auto *bytes = static_cast<const unsigned char *>(read->pixels);
+        pixels.assign(bytes, bytes + static_cast<std::size_t>(read->pitch) *
+                                         static_cast<std::size_t>(read->h));
+        SDL_DestroySurface(read);
+    }
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroySurface(target);
+    return pixels;
+}
+} // namespace
+
+// L3: text drawn at a fractional origin is pixel-identical to the same text at
+// the nearest whole pixel, so NEAREST sampling can no longer scramble glyphs.
+TEST_F(LabFont, FractionalOriginsRenderLikeTheNearestWholePixel) {
+    lab::FontRenderer font(kSilk);
+    const auto whole = render_text(font, 10.0f, 4.0f, "THROTTLE");
+    ASSERT_FALSE(whole.empty());
+    EXPECT_EQ(render_text(font, 10.3f, 4.2f, "THROTTLE"), whole);
+    EXPECT_EQ(render_text(font, 9.8f, 3.9f, "THROTTLE"), whole);
+    EXPECT_EQ(render_text(font, 10.6f, 4.6f, "THROTTLE"),
+              render_text(font, 11.0f, 5.0f, "THROTTLE"));
+    EXPECT_NE(whole, render_text(font, 12.0f, 4.0f, "THROTTLE"));
+}
+
+// L3: on the pixel face the Lab's "small" text scales land in one bucket at the
+// UI scales a window can have, so one named kTextSmall renders as before; the
+// 0.55 scale is a smaller bucket from ui scale 1.5 up, which is why kTextTiny
+// exists (hints, tags, BURN/MISS) instead of folding it into kTextSmall.
+TEST_F(LabFont, SmallTextScalesRenderInOneBucketAtEveryUiScale) {
+    lab::FontRenderer font(kSilk);
+    ASSERT_TRUE(font.is_pixel_face());
+    for (const float ui : {1.0f, 1.5f, 1.75f, 2.0f}) {
+        const float reference =
+            font.width("THROTTLE 0123", lab::kTextSmall * ui);
+        for (const float old_scale : {0.60f, 0.65f, 0.68f, 0.70f, 0.72f})
+            EXPECT_FLOAT_EQ(font.width("THROTTLE 0123", old_scale * ui), reference)
+                << "scale " << old_scale << " at ui " << ui;
+        EXPECT_GT(font.width("THROTTLE 0123", lab::kTextNormal * ui), reference);
+    }
+    // 0.55 equals the small bucket at ui 1.0 but is smaller at ui 1.5.
+    EXPECT_FLOAT_EQ(font.width("THROTTLE 0123", lab::kTextTiny),
+                    font.width("THROTTLE 0123", lab::kTextSmall));
+    EXPECT_LT(font.width("THROTTLE 0123", lab::kTextTiny * 1.5f),
+              font.width("THROTTLE 0123", lab::kTextSmall * 1.5f));
 }

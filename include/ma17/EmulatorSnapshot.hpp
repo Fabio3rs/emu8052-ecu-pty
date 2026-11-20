@@ -2,6 +2,7 @@
 
 #include "ma17/AdcSimulator.hpp"
 #include "engine/PlantTelemetry.hpp"
+#include "ma17/CodeReadTrace.hpp"
 
 #include <array>
 #include <cstdint>
@@ -47,6 +48,7 @@ struct EmulatorSnapshot {
     double spark_efficiency = 0.0;
     double residual_fraction = 0.0;
     engine::PlantWindowResult plant_window{}; // last completed 20-cycle window
+    CodeReadTrace code_reads{}; // K2: recent MOVC table-read addresses
     double tps_track1_v = 0.0;
     double tps_track2_v = 0.0;
     double lambda = 0.0;

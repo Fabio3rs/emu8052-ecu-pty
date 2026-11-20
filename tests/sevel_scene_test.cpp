@@ -27,7 +27,11 @@ class RecordingRenderer final : public Renderer {
         EXPECT_GE(base_index, 0);
         EXPECT_LE(base_index + face_count * 3,
                   static_cast<int>(indices.size()));
-        EXPECT_FLOAT_EQ(projection.m[0][0], 4.0f);
+        // Isotropic: equal pixels per metre on both axes (NDC scale times the
+        // half-viewport), so the bore keeps its ratio to the stroke.
+        EXPECT_FLOAT_EQ(projection.m[1][1], 4.0f);
+        EXPECT_NEAR(projection.m[0][0] * viewport_width,
+                    projection.m[1][1] * viewport_height, 1e-3f);
         ++draw_calls;
     }
     void endFrame() override { ++completed_frames; }
@@ -70,9 +74,9 @@ TEST(SevelScene, DrawsFourPhysicalSliderCranksFromSnapshot) {
     lab::render_sevel_scene(renderer, snapshot, 1280.0f, 720.0f);
     EXPECT_EQ(renderer.frames, 1);
     EXPECT_EQ(renderer.completed_frames, 1);
-    EXPECT_EQ(renderer.draw_calls, 47);
-    EXPECT_EQ(renderer.vertices.size(), 188u);
-    EXPECT_EQ(renderer.indices.size(), 282u);
+    EXPECT_EQ(renderer.draw_calls, 51); // 47 + 4 counterweight webs (M2)
+    EXPECT_EQ(renderer.vertices.size(), 204u);
+    EXPECT_EQ(renderer.indices.size(), 306u);
     EXPECT_FLOAT_EQ(renderer.viewport_width, 1280.0f);
     EXPECT_FLOAT_EQ(renderer.viewport_height, 720.0f);
     const float top = renderer.piston_y(0);

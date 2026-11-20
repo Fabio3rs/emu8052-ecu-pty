@@ -98,21 +98,21 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     assert "[LAB-UI-SCALE] source=key percent=200 saved=1" in first, first[-1200:]
     files = list(Path(directory).rglob("presentation.txt"))
     assert len(files) == 1, files
-    assert files[0].read_text().split()[:11] == "v10 200 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 200 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     override = run_with_keys(environment, [], ["--ui-scale", "100"])
     assert "[LAB-UI-SCALE] source=prefs" not in override, override[-1200:]
-    assert files[0].read_text().split()[:11] == "v10 200 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 200 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     second = run_with_keys(environment, ["ctrl+0"])
     assert "[LAB-UI-SCALE] source=prefs percent=200" in second, second[-1200:]
     assert "[LAB-UI-SCALE] source=key percent=0 saved=1" in second, second[-1200:]
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     dragged = run_with_keys(environment, [], drags=((307, 380), (845, 925)))
     assert "[LAB-LAYOUT] left=" in dragged, dragged[-1200:]
     saved = files[0].read_text().split()
-    assert saved[:2] == ["v10", "0"]
+    assert saved[:2] == ["v11", "0"]
     assert abs(float(saved[2]) - 380 / 1280) < 0.01, saved
     assert abs(float(saved[3]) - 925 / 1280) < 0.01, saved
 
@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     reset = run_with_keys(environment, ["ctrl+r"])
     assert "[LAB-LAYOUT] source=reset left=0.240 right=0.660 mode=0 saved=1" in reset, (
         [line for line in reset.splitlines() if "[LAB-LAYOUT]" in line])
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     raised_scope = run_with_keys(environment, [], scope_drag=True)
     assert "[LAB-LAYOUT] left=0.240 right=0.660 scope=" in raised_scope
@@ -131,18 +131,18 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     scope_reload = run_with_keys(environment, [])
     assert f"scope={float(saved_scope[5]):.3f}" in scope_reload
     run_with_keys(environment, ["ctrl+r"])
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     analysis = run_with_keys(environment, ["ctrl+5"])
     assert "[LAB-LAYOUT] source=mode mode=1 saved=1" in analysis
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 1 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 1 -1 1 0 4950000 1980000 15".split()
     analysis_reload = run_with_keys(environment, [])
     assert "[LAB-LAYOUT] source=prefs left=0.240 right=0.660 mode=1" in analysis_reload
     mechanics = run_with_keys(environment, ["ctrl+6"])
     assert "[LAB-LAYOUT] source=mode mode=2 saved=1" in mechanics
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 2 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 2 -1 1 0 4950000 1980000 15".split()
     run_with_keys(environment, ["ctrl+r"])
-    assert files[0].read_text().split()[:11] == "v10 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
+    assert files[0].read_text().split()[:11] == "v11 0 0.24 0.66 0 -1 1 0 4950000 1980000 15".split()
 
     files[0].write_text("v4 0 0.24 0.66 9 -1\n")
     invalid = run_with_keys(environment, [])
@@ -190,7 +190,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     run_with_keys(environment, [], wheels=((440, 250, 4), (710, 250, 5)),
                   camera_drags=((440, 470), (710, 730)))
     camera = files[0].read_text().split()
-    assert camera[0] == "v10" and camera[11:13] == ["1", "0"], camera
+    assert camera[0] == "v11" and camera[11:13] == ["1", "0"], camera
     assert float(camera[21]) > 0 and float(camera[22]) > 0, camera
     assert float(camera[13]) > float(camera[16]), camera
     assert float(camera[14]) > 0 and float(camera[17]) > 0, camera
@@ -251,7 +251,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     files[0].write_text(" ".join(["v6", *legacy_camera[1:]]) + "\n")
     run_with_keys(environment, [])
     migrated_camera = files[0].read_text().split()
-    assert migrated_camera[0] == "v10" and migrated_camera[12] == legacy_camera[12]
+    assert migrated_camera[0] == "v11" and migrated_camera[12] == legacy_camera[12]
     assert migrated_camera[19] == "100"
     assert float(migrated_camera[21]) > 0 and float(migrated_camera[22]) > 0
 
@@ -270,7 +270,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     files[0].write_text(" ".join(["v8", *legacy_units[1:]]) + "\n")
     migrated = run_with_keys(environment, [])
     assert "[LAB-CAMERA-PREF] fitted" in migrated
-    assert files[0].read_text().split()[0] == "v10"
+    assert files[0].read_text().split()[0] == "v11"
 
     invalid_units = files[0].read_text().split()
     invalid_units[20] = "2"
@@ -281,9 +281,20 @@ with tempfile.TemporaryDirectory(prefix="sevel-ui-prefs-") as directory:
     # Font choice persists; the default is the embedded face and an invalid
     # token falls back to defaults instead of selecting a system font.
     saved_font = files[0].read_text().split()
-    assert saved_font[0] == "v10" and saved_font[23] == "embedded", saved_font
+    assert saved_font[0] == "v11" and saved_font[23] == "embedded", saved_font
     saved_font[23] = "comic-sans"
     files[0].write_text(" ".join(saved_font) + "\n")
     font_log = run_with_keys(environment, [])
     assert "face=Silkscreen" in font_log and "/usr/share/fonts" not in font_log
     assert files[0].read_text().split()[23] == "embedded"
+
+    # T1: the P key switches the colour theme and persists it (field 24 of v11).
+    assert files[0].read_text().split()[24] == "lab"
+    run_with_keys(environment, ["p"])
+    assert files[0].read_text().split()[0] == "v11"
+    assert files[0].read_text().split()[24] == "oes", files[0].read_text()
+    run_with_keys(environment, [])                       # reopening keeps it
+    assert files[0].read_text().split()[24] == "oes"
+    run_with_keys(environment, ["p"])
+    assert files[0].read_text().split()[24] == "lab"
+    print("theme key ok")

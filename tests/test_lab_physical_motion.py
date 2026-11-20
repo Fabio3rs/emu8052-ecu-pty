@@ -14,8 +14,10 @@ ticks = (1_500_000, 1_550_000, 1_650_000, 1_750_000,
          1_850_000, 1_950_000, 2_050_000, 2_150_000)
 view_crops = {"longitudinal": (335, 110, 550, 360),
               "profile": (650, 110, 775, 360)}
-viewport_crops = {"longitudinal": (307, 110, 576, 420),
-                  "profile": (576, 110, 845, 420)}
+# The crops end above the 0-720 cycle ruler strip that sits at the bottom of the
+# mechanical panel (it is drawing, not engine geometry).
+viewport_crops = {"longitudinal": (307, 118, 576, 378),
+                  "profile": (576, 118, 845, 378)}
 
 
 # GUI viewport frame / splitter colour (BMP pixels are B, G, R).

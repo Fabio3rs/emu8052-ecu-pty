@@ -974,6 +974,18 @@ static void run_tick_batch(EmulatorLoopContext &context,
             cpu.mLowerData[(*iram_setting)[1]] =
                 static_cast<uint8_t>((*iram_setting)[2]);
         }
+        // K2: record the table address a MOVC is about to read.
+        // Only on the tick that starts an instruction (mTickDelay == 0): the
+        // wait ticks of a multi-cycle instruction would count it again. The
+        // fetch is masked like every other code access.
+        if (cpu.mTickDelay == 0)
+            if (const long movc = movc_effective_address(
+                    cpu.mCodeMem[cpu.mPC & cpu.mCodeMemMaxIdx], cpu.mPC,
+                    cpu.mSFR[REG_ACC],
+                    static_cast<std::uint16_t>((cpu.mSFR[0x83 - 0x80] << 8) |
+                                               cpu.mSFR[0x82 - 0x80]));
+                movc >= 0)
+                context.code_reads.record(static_cast<std::uint16_t>(movc));
         tick(&cpu);
         context.diagnostic_lamp.sample_p5(cpu.mSFR[0xF8 - 0x80]);
         if (context.pump_relay_p34_candidate) {
@@ -1443,6 +1455,7 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
     snapshot.p50_high = (cpu.mSFR[0xF8 - 0x80] & 0x01u) != 0;
     snapshot.p51_high = (cpu.mSFR[0xF8 - 0x80] & 0x02u) != 0;
     snapshot.lamp_on_candidate = context.diagnostic_lamp.lamp_on();
+    snapshot.code_reads = context.code_reads;
     snapshot.idle_bridge_candidate = context.idle_bridge_candidate;
     snapshot.idle_motor_connected = context.idle_motor_connected;
     snapshot.p15_high = (cpu.mSFR[0x90 - 0x80] & 0x20u) != 0;

@@ -308,12 +308,36 @@ if(ENABLE_SEVEL_MA17_LAB)
         endif()
         target_sources(sevel-ma17-lab PRIVATE
             apps/sevel-ma17-lab/SdlDisplay.cpp
+            src/lab/CalibrationView.cpp
             src/lab/DonorScene.cpp
+            src/lab/DynoView.cpp
             src/lab/FontRenderer.cpp
+            src/lab/LabControls.cpp
             src/lab/LabInstruments.cpp
             src/lab/LiveAudio.cpp
             src/lab/MeshAsset.cpp
+            src/lab/ShaftDetails.cpp
+            src/lab/WidgetRects.cpp
             src/lab/TraceGeometry.cpp)
+        # --dirty marks a tree with local edits; the git index and HEAD are
+        # configure dependencies, so a commit or an edit re-runs this and the
+        # provenance cannot silently keep an older commit.
+        execute_process(COMMAND git describe --always --dirty --abbrev=7
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE SEVEL_CODE_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        foreach(SEVEL_GIT_FILE .git/HEAD .git/index)
+            if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${SEVEL_GIT_FILE})
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                    ${CMAKE_CURRENT_SOURCE_DIR}/${SEVEL_GIT_FILE})
+            endif()
+        endforeach()
+        if(NOT SEVEL_CODE_SHA)
+            set(SEVEL_CODE_SHA "unknown")
+        endif()
+        target_compile_definitions(sevel-ma17-lab PRIVATE
+            SEVEL_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/docs"
+            SEVEL_CODE_SHA="${SEVEL_CODE_SHA}")
         target_link_libraries(sevel-ma17-lab PRIVATE open-engine-sim-gpu
             SDL3::SDL3 ZLIB::ZLIB
             Freetype::Freetype)
@@ -345,6 +369,68 @@ if(ENABLE_SEVEL_MA17_LAB)
                         ${CMAKE_CURRENT_BINARY_DIR})
                 set_tests_properties(LabCapture.HardwareGpu PROPERTIES
                     TIMEOUT 120 SKIP_RETURN_CODE 77 RESOURCE_LOCK sevel_gpu)
+                # ptrace: the capture runs under strace; it must open the ROM,
+                # write the PNG and never create an AF_INET socket.
+                add_test(NAME LabCapture.PtraceTrace
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_ptrace_trace.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.PtraceTrace PROPERTIES
+                    TIMEOUT 180 SKIP_RETURN_CODE 77)
+                # Loopback sockets between programs: TCP client -> socat ->
+                # emu8051-tty PTY, echoed back through the same chain.
+                if(TARGET emu8051-tty)
+                    add_test(NAME PtyBridge.LoopbackEcho
+                        COMMAND python3
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pty_loopback_bridge.py
+                            $<TARGET_FILE:emu8051-tty>
+                            ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                    set_tests_properties(PtyBridge.LoopbackEcho PROPERTIES
+                        TIMEOUT 60 SKIP_RETURN_CODE 77)
+                endif()
+                add_test(NAME LabCapture.DynoView
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_dyno_view.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.DynoView PROPERTIES TIMEOUT 240)
+                add_test(NAME LabCapture.CalibrationView
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_dyno_view.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                        SEVEL_CALIBRATION_VIEW)
+                set_tests_properties(LabCapture.CalibrationView PROPERTIES TIMEOUT 240)
+                add_test(NAME LabCapture.WindowSizeEnv
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_window_size.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.WindowSizeEnv PROPERTIES TIMEOUT 300)
+                add_test(NAME LabCapture.CalibrationFollow
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_calibration_follow.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.CalibrationFollow PROPERTIES TIMEOUT 240)
+                add_test(NAME LabCapture.CalibrationVariant
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_calibration_variant.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.CalibrationVariant PROPERTIES TIMEOUT 240)
+                add_test(NAME GenSevelMeshes
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gen_sevel_meshes.py)
+                set_tests_properties(GenSevelMeshes PROPERTIES TIMEOUT 60)
+                add_test(NAME LabCapture.TextMask
+                    COMMAND python3
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_text_mask.py
+                        $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(LabCapture.TextMask PROPERTIES
+                    TIMEOUT 300 SKIP_RETURN_CODE 77 RESOURCE_LOCK sevel_gpu)
                 add_test(NAME LabInspector.CandidateLabelsAreMarked
                     COMMAND python3
                         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_inspector_labels.py
@@ -450,6 +536,37 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 ${CMAKE_CURRENT_BINARY_DIR}/sevel-mouse-controls.txt)
                         set_tests_properties(LabControls.MouseButtonBar
                             PROPERTIES TIMEOUT 60)
+                        add_test(NAME LabControls.SpeedSelector
+                            COMMAND ${SEVEL_XVFB_RUN} -a python3
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_speed_selector.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-speed-selector)
+                        set_tests_properties(LabControls.SpeedSelector
+                            PROPERTIES TIMEOUT 120)
+                        add_test(NAME LabControls.ButtonTooltip
+                            COMMAND ${SEVEL_XVFB_RUN} -a python3
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_button_tooltip.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-button-tooltip)
+                        set_tests_properties(LabControls.ButtonTooltip
+                            PROPERTIES TIMEOUT 120)
+                        add_test(NAME LabControls.RunSnapshots
+                            COMMAND ${SEVEL_XVFB_RUN} -a python3
+                                ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_snapshots.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                        set_tests_properties(LabControls.RunSnapshots PROPERTIES TIMEOUT 90)
+                        if(TARGET emu8051-tty)
+                            add_test(NAME LabControls.RunWot
+                                COMMAND ${SEVEL_XVFB_RUN} -a python3
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_run_wot.py
+                                    $<TARGET_FILE:sevel-ma17-lab>
+                                    ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                    ${CMAKE_CURRENT_BINARY_DIR}/sevel-run-wot.png)
+                            set_tests_properties(LabControls.RunWot PROPERTIES TIMEOUT 300)
+                        endif()
                         add_test(NAME LabControls.ReplayLocksMouse
                             COMMAND ${SEVEL_XVFB_RUN} -a python3
                                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_replay_mouse_lock.py
@@ -579,6 +696,15 @@ if(ENABLE_SEVEL_MA17_LAB)
                                 ${CMAKE_CURRENT_BINARY_DIR}/sevel-fuel-tooltip-1920x1080.png
                                 1920 1080 fuel-tooltip)
                         set_tests_properties(LabCapture.FuelTooltip1920x1080
+                            PROPERTIES TIMEOUT 90)
+                        add_test(NAME LabCapture.IgnitionTooltip1920x1080
+                            COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"
+                                python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_resized_capture.py
+                                $<TARGET_FILE:sevel-ma17-lab>
+                                ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
+                                ${CMAKE_CURRENT_BINARY_DIR}/sevel-ignition-tooltip-1920x1080.png
+                                1920 1080 ignition-tooltip)
+                        set_tests_properties(LabCapture.IgnitionTooltip1920x1080
                             PROPERTIES TIMEOUT 90)
                         add_test(NAME LabCapture.ThrottleTooltip1920x1080
                             COMMAND ${SEVEL_XVFB_RUN} -a -s "-screen 0 1920x1080x24"

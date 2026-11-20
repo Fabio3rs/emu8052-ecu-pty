@@ -26,6 +26,7 @@ TEST(LabUiPreferences, DefaultsAreValidAndEmbeddedFont) {
     const LabUiPreferences defaults;
     EXPECT_TRUE(lab::valid_ui_preferences(defaults));
     EXPECT_EQ(defaults.font, "embedded");
+    EXPECT_EQ(defaults.theme, "lab");
     EXPECT_EQ(defaults.scale_percent, 0);
     EXPECT_EQ(defaults.font_percent, 100);
 }
@@ -63,6 +64,8 @@ TEST(LabUiPreferences, EveryOutOfRangeFieldIsRejected) {
         {"camera scene too tall",
          with([](auto &v) { v.camera_scene_height = 5000.0f; })},
         {"font unknown", with([](auto &v) { v.font = "comic-sans"; })},
+        {"theme unknown", with([](auto &v) { v.theme = "neon"; })},
+        {"theme empty", with([](auto &v) { v.theme = ""; })},
         {"font file empty", with([](auto &v) { v.font = "file:"; })},
         {"font file with space",
          with([](auto &v) { v.font = "file:/a b.ttf"; })},
@@ -118,7 +121,7 @@ bool same_prefs(const LabUiPreferences &a, const LabUiPreferences &b) {
            a.scope_mode == b.scope_mode && a.analog_group == b.analog_group &&
            a.font_percent == b.font_percent &&
            a.display_units == b.display_units && a.view_mode == b.view_mode &&
-           a.font == b.font && a.digital_channel_mask == b.digital_channel_mask;
+           a.font == b.font && a.theme == b.theme && a.digital_channel_mask == b.digital_channel_mask;
 }
 
 } // namespace
@@ -146,6 +149,20 @@ TEST_F(PrefsDir, EveryPromisedCombinationSurvivesSaveAndLoad) {
                     ++combinations;
                 }
     EXPECT_EQ(combinations, 72);
+}
+
+// T1: the theme survives save/load, and a v10 file (no theme) loads as "lab".
+TEST_F(PrefsDir, ThemeSurvivesSaveAndLoadAndV10DefaultsToLab) {
+    LabUiPreferences saved;
+    saved.theme = "oes";
+    ASSERT_TRUE(lab::save_ui_preferences(saved));
+    EXPECT_EQ(lab::load_ui_preferences().theme, "oes");
+    std::ofstream(file(), std::ios::trunc)
+        << "v10 150 0.24 0.66 0 -1 1 0 4950000 1980000 15 1 0 "
+           "0.78 0 0 0.78 0 0 100 0 0 0 embedded\n";
+    const LabUiPreferences loaded = lab::load_ui_preferences();
+    EXPECT_EQ(loaded.scale_percent, 150);
+    EXPECT_EQ(loaded.theme, "lab");
 }
 
 TEST_F(PrefsDir, InvalidSaveIsRefusedAndNeverCorruptsTheFile) {
@@ -194,6 +211,7 @@ TEST_F(PrefsDir, EveryLegacyVersionLoadsWithNewFieldsDefaulted) {
         EXPECT_FLOAT_EQ(loaded.left_fraction, entry.left) << entry.line;
         EXPECT_EQ(loaded.mode, entry.mode) << entry.line;
         EXPECT_EQ(loaded.font, "embedded") << entry.line; // field added in v10
+        EXPECT_EQ(loaded.theme, "lab") << entry.line;     // field added in v11
     }
 }
 

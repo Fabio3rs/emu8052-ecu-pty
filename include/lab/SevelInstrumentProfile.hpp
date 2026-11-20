@@ -1,9 +1,11 @@
 #pragma once
 
 #include <SDL3/SDL_pixels.h>
+#include "lab/LabTheme.hpp"
 
 #include <array>
 #include <cstddef>
+#include <cstring>
 
 namespace lab::profile {
 
@@ -20,6 +22,8 @@ struct Band {
     float radial_offset = 6.0f;
     float shorten_start = 0.0f;
     float shorten_end = 0.0f;
+    // G3: a band that is a target mark carries its caption (e.g. "ALVO").
+    const char *label = nullptr;
 };
 
 inline constexpr float band_shorten_angle = 0.017453292519943295f;
@@ -42,6 +46,27 @@ struct Instrument {
     double label_divisor = 1.0;
 };
 
+// L4: titles that can be too wide for a small dial have a short form, chosen
+// by measurement at draw time; a title is never ellipsized when one exists.
+struct ShortLabel {
+    const char *id;
+    const char *label;
+};
+inline constexpr std::array<ShortLabel, 5> short_labels{{
+    {"manifold_pressure", "MAP kPa"},
+    {"oxygen_voltage", "O2 ECU"},
+    {"lambda", "LAM PLT"},
+    {"volumetric_efficiency", "VE AMB"},
+    {"clutch_pressure", "CLTCH"},
+}};
+
+inline const char *short_label_for(const char *id) {
+    for (const auto &entry : short_labels)
+        if (std::strcmp(entry.id, id) == 0)
+            return entry.label;
+    return nullptr;
+}
+
 constexpr Instrument with_labels(Instrument spec, double step, double divisor) {
     spec.label_step = step;
     spec.label_divisor = divisor;
@@ -57,7 +82,8 @@ inline constexpr Instrument rpm = with_labels(
                8000.0,
                1000.0,
                100.0,
-               {{{850.0, 900.0, {0, 229, 255, 255}},
+               {{{850.0, 900.0, {0, 229, 255, 255}, 3.0f, 6.0f, 0.0f, 0.0f,
+                  "ALVO"},
                  {5600.0,
                   6000.0,
                   {245, 205, 30, 255},
@@ -67,7 +93,7 @@ inline constexpr Instrument rpm = with_labels(
                   band_shorten_angle},
                  {6000.0,
                   8000.0,
-                  {238, 68, 69, 255},
+                  kCritical,
                   3.0f,
                   6.0f,
                   band_shorten_angle,
@@ -104,7 +130,7 @@ inline constexpr Instrument coolant =
                            130.0,
                            40.0,
                            10.0,
-                           {{{120.0, 130.0, {238, 68, 69, 255}}}},
+                           {{{120.0, 130.0, kCritical}}},
                            1},
                 40.0, 1.0); // 50/90/130
 // Scale numerals: tachometer 0..80 (x100), speedometer 0..200 every 20,
@@ -135,11 +161,11 @@ inline constexpr Instrument clutch{"clutch_pressure",
                                    50.0,
                                    10.0};
 inline constexpr Instrument lambda{
-    "lambda", "LAMBDA", "1", "physical exhaust model", 0.5,
+    "lambda", "LAMBDA PLANT", "1", "physical exhaust model (plant truth)", 0.5,
     1.5,      0.25,     0.05}; // 0.05 divides both the 0.25 major step and
                                // the 1.0 range
 inline constexpr Instrument oxygen_voltage{"oxygen_voltage",
-                                           "O2 SENSOR V",
+                                           "O2 SENSOR ECU",
                                            "V",
                                            "exhaust sensor model",
                                            0.0,
@@ -278,8 +304,20 @@ inline constexpr Instrument volumetric_efficiency{
     0,
     false};
 
+// D7: the ignition column as a hover target; its tooltip carries the spark
+// efficiency and residual fraction of the last ignition event.
+inline constexpr Instrument ignition_spark{
+    "ignition_spark",
+    "IGNITION",
+    "deg",
+    "P5.0/P5.1 events; MBT + efficiency: plant model",
+    0.0,
+    0.0,
+    0.0,
+    0.0};
+
 // Every instrument, for audits (tests/lab_profile_audit_test.cpp).
-inline constexpr std::array<const Instrument *, 30> all_instruments{
+inline constexpr std::array<const Instrument *, 31> all_instruments{
     {&rpm,
      &speed,
      &battery_supply,
@@ -309,6 +347,7 @@ inline constexpr std::array<const Instrument *, 30> all_instruments{
      &fuel_film,
      &fuel_vapor,
      &injector_pulses,
-     &volumetric_efficiency}};
+     &volumetric_efficiency,
+     &ignition_spark}};
 
 } // namespace lab::profile

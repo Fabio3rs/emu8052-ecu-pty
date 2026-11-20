@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -17,8 +18,27 @@ namespace lab {
 
 class RecordingRenderer final : public Renderer {
   public:
+    // M-groups: draw calls submitted after set_group("cyl1-piston") belong to
+    // that group; save_svg wraps them in <g id="...">. An empty id means "no
+    // group". The id is a plain token, sanitised on output.
+    void set_group(const std::string &id) {
+        if (id.empty()) {
+            current_group_ = -1;
+            return;
+        }
+        const auto found = std::find(groups_.begin(), groups_.end(), id);
+        if (found == groups_.end()) {
+            groups_.push_back(id);
+            current_group_ = static_cast<int>(groups_.size()) - 1;
+        } else {
+            current_group_ = static_cast<int>(found - groups_.begin());
+        }
+    }
+
     void beginFrame(const ysVector &clear_color) override {
         clear_color_ = clear_color;
+        groups_.clear();
+        current_group_ = -1;
         triangles_.clear();
         draw_calls_ = 0;
         scene_draw_calls_ = 0;
@@ -54,6 +74,7 @@ class RecordingRenderer final : public Renderer {
             Triangle triangle;
             triangle.color = color;
             triangle.call = draw_calls_;
+            triangle.group = current_group_;
             for (int corner = 0; corner < 3; ++corner) {
                 const auto offset = start + static_cast<std::size_t>(face) * 3 +
                                     static_cast<std::size_t>(corner);
@@ -127,8 +148,18 @@ class RecordingRenderer final : public Renderer {
         // translucent call is blended once. Opaque calls also disable
         // anti-aliasing at shared edges (crispEdges); translucent ones keep it.
         std::size_t index = 0;
+        int open_group = -1;
         while (index < triangles_.size()) {
             const Triangle &first = triangles_[index];
+            if (first.group != open_group) {
+                if (open_group >= 0)
+                    out << "</g>\n";
+                if (first.group >= 0)
+                    out << "<g id=\""
+                        << svg_id(groups_[static_cast<std::size_t>(first.group)])
+                        << "\">\n";
+                open_group = first.group;
+            }
             const float alpha = std::clamp(first.color.w, 0.0f, 1.0f);
             out << "<path d=\"";
             for (; index < triangles_.size() &&
@@ -146,6 +177,8 @@ class RecordingRenderer final : public Renderer {
                 out << " shape-rendering=\"crispEdges\"";
             out << "/>\n";
         }
+        if (open_group >= 0)
+            out << "</g>\n";
         out << "</svg>\n";
         return static_cast<bool>(out);
     }
@@ -159,7 +192,19 @@ class RecordingRenderer final : public Renderer {
         std::array<Point, 3> points{};
         ysVector color{};
         int call = 0; // 1-based draw call that emitted this triangle
+        int group = -1; // index into groups_, -1 for none
     };
+
+    // Keep only [A-Za-z0-9_-] so an id can never break the XML.
+    static std::string svg_id(const std::string &text) {
+        std::string id;
+        for (const char c : text)
+            id += (std::isalnum(static_cast<unsigned char>(c)) || c == '-' ||
+                   c == '_')
+                      ? c
+                      : '_';
+        return id;
+    }
 
     static std::string color_hex(const ysVector &color) {
         constexpr char hex[] = "0123456789ABCDEF";
@@ -182,6 +227,8 @@ class RecordingRenderer final : public Renderer {
     std::vector<EngineSimVertex> vertices_;
     std::vector<std::uint16_t> indices_;
     std::vector<Triangle> triangles_;
+    std::vector<std::string> groups_;
+    int current_group_ = -1;
 };
 
 } // namespace lab

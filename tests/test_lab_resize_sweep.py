@@ -75,16 +75,16 @@ with tempfile.TemporaryDirectory(prefix="sevel-resize-sweep-") as directory:
             wait_until(lambda: window_size(window) == (width, height))
             time.sleep(0.25)
             if index == 3:
-                xdotool("mousemove", "--window", window, 1010, 104)
+                xdotool("mousemove", "--window", window, 1010, 128)
                 xdotool("click", 1)
                 wait_until(lambda: "| RADIAL |" in
                            xdotool("getwindowname", window))
             if index == 5:
-                xdotool("mousemove", "--window", window, 680, 79)
+                xdotool("mousemove", "--window", window, 680, 85)
                 xdotool("click", 1)
                 wait_until(lambda: "| AXIAL 1/4 |" in
                            xdotool("getwindowname", window))
-                xdotool("mousemove", "--window", window, 150, 649)
+                xdotool("mousemove", "--window", window, 203, 649)
                 xdotool("click", 1)
                 wait_until(lambda: "| GEAR 1 |" in
                            xdotool("getwindowname", window))

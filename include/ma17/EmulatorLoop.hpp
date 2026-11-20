@@ -109,6 +109,7 @@ struct EmulatorLoopContext {
     double exhaust_flow_kg_s = 0.0;
     ecu_hw::Ma17IgnitionStage ignition_stage{};
     ecu_hw::Ma17DiagnosticLamp diagnostic_lamp{};
+    CodeReadTrace code_reads{}; // K2: recent MOVC table-read addresses
     ecu_hw::Ma17Tachometer tachometer{};
     ecu_hw::Ma17InjectorStage *injector_stage = nullptr;
     double injected_mass_pending_kg = 0.0;

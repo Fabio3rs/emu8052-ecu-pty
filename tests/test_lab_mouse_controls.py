@@ -91,7 +91,13 @@ with tempfile.TemporaryFile(mode="w+") as log:
             time.sleep(0.12)
 
         xdotool("mousemove", "--window", window, "85", "606")
-        xdotool("click", "1")  # Set volume to about 25%.
+        xdotool("click", "1")  # Set volume to about 25% (snaps to the 25% mark).
+        time.sleep(0.12)
+        # C2: three wheel notches over the volume slider add 3 %: 25 -> 28 %.
+        xdotool("mousemove", "--window", window, "100", "606")
+        for _ in range(3):
+            xdotool("click", "4")
+            time.sleep(0.05)
         time.sleep(0.12)
         click(60, 470)   # Key on
         xdotool("mousemove", "--window", window, "154", "470")
@@ -112,6 +118,12 @@ with tempfile.TemporaryFile(mode="w+") as log:
         xdotool("mousemove", "--window", window, "183", "516")
         time.sleep(0.15)
         xdotool("mouseup", "1")  # Set about 50 Nm on the load control.
+        # C2: three wheel notches over LOAD add 3 x 1 % of the 60 N.m span.
+        xdotool("mousemove", "--window", window, "150", "516")
+        for _ in range(3):
+            xdotool("click", "4")
+            time.sleep(0.05)
+        time.sleep(0.12)
         click(247, 516)  # Pause
         before = int(re.search(r"tick (\d+)", xdotool("getwindowname", window))[1])
         xdotool("key", "--window", window, "period")
@@ -164,13 +176,21 @@ with tempfile.TemporaryFile(mode="w+") as log:
                    for name, value in values), rows
         assert any(name == "load" and 5.0 < value < 15.0
                    for name, value in values), rows
+        load_rows = [float(row[2]) for row in rows if row[1] == "load"]
+        assert any(abs(b - a - 0.6) < 0.01 and abs(c - b - 0.6) < 0.01 and
+                   abs(d - c - 0.6) < 0.01
+                   for a, b, c, d in zip(load_rows, load_rows[1:],
+                                         load_rows[2:], load_rows[3:])), load_rows
         assert any(name == "load" and 45.0 < value < 55.0
                    for name, value in values), rows
         for expected in {("pause", 0.0), ("step_ticks", 9900.0),
                          ("step_ignition", 990000.0), ("resume", 0.0)}:
             assert expected in values, (expected, rows)
         assert png_pixel(image, 65, 617)[:3] == (99, 211, 220)
-        assert png_pixel(image, 150, 617)[:3] == (29, 43, 55)
+        # Empty part of the volume groove; x=90 lies past the 25 % mark, so it
+        # is filled only if the wheel moved the volume to ~28 %.
+        assert png_pixel(image, 150, 617)[:3] == (14, 20, 28)
+        assert png_pixel(image, 90, 617)[:3] == (99, 211, 220)
         assert png_pixel(image, 150, 532)[:3] == (99, 211, 220)
         state = re.search(r"\[LAB-STATE\] tick=(\d+).*state=([0-9a-f]+) "
                           r"events=\d+ event_hash=([0-9a-f]+)", output)

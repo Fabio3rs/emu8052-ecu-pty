@@ -1,5 +1,12 @@
 #include "engine/ControlLimits.hpp"
 #include "lab/LabInstruments.hpp"
+#include "lab/TextScale.hpp"
+#include "lab/LabTheme.hpp"
+#include "lab/DynoView.hpp"
+#include "lab/FixedTextScale.hpp"
+#include "lab/GaugeGeometry.hpp"
+#include "lab/ScopeGroups.hpp"
+#include "lab/ScopeLabel.hpp"
 
 #include "constants.h"
 #include "gauge.h"
@@ -330,9 +337,9 @@ SDL_FRect analog_scope_plot_bounds(const LayoutState &layout_state, int width,
         return {24.0f, static_cast<float>(height) - panel_height + 30.0f,
                 static_cast<float>(width) - 48.0f, panel_height - 45.0f};
     const float left = 16.0f + 138.0f * scope_scale(width, height);
-    const float preview_height = panel_height >= 360.0f   ? 108.0f
-                                 : panel_height >= 248.0f ? 56.0f
-                                                          : 0.0f;
+    // V1: the 11 group tabs are always two rows (6 + 5) once they show at all,
+    // also at 720p where they used to be one cramped row of 11.
+    const float preview_height = panel_height >= 248.0f ? 108.0f : 0.0f;
     const float plot_height = panel_height - 105.0f - preview_height;
     const bool short_lanes =
         plot_height * 0.5f - 20.0f < 28.0f * scope_scale(width, height);
@@ -350,7 +357,7 @@ SDL_FRect analog_scope_group_rect(const LayoutState &layout_state, int index,
                                 static_cast<float>(height), maximized);
     if (panel_height < 248.0f || index < 0 || index >= 11)
         return {};
-    const int rows = panel_height >= 360.0f ? 2 : 1;
+    const int rows = 2;
     const int columns = (11 + rows - 1) / rows;
     const Bounds preview(21.0f, static_cast<float>(width) - 21.0f, 8.0f,
                          8.0f + 52.0f * static_cast<float>(rows));
@@ -727,7 +734,7 @@ void draw_lab_scope(
                       "ECU %.1f S | %s | A:ANALOG",
                       static_cast<double>(span) / 990000.0,
                       frozen ? "FROZEN X:LIVE" : "LIVE X:FREEZE");
-    font.draw(renderer, right - font.measure(zoom_label) * scale,
+    font.draw(renderer, right - font.width(zoom_label, scale),
               panel.y + 2.0f, zoom_label, {145, 177, 190, 255}, scale);
     if (const std::string focus_label = cylinder_focus_label(focus_cylinder);
         !focus_label.empty()) {
@@ -754,7 +761,7 @@ void draw_lab_scope(
                       i == grid_divisions ? "" : "-", remaining,
                       span < 990000LL ? "ms" : "s");
         if (right - left >= 160.0f) {
-            const float label_width = font.measure(time_label) * scale;
+            const float label_width = font.width(time_label, scale);
             font.draw(
                 renderer,
                 std::clamp(x - label_width * 0.5f, left, right - label_width),
@@ -765,7 +772,7 @@ void draw_lab_scope(
     constexpr std::array<const char *, 4> labels{"CC3", "P5.0", "P5.1",
                                                  "IDLE SW"};
     constexpr std::array<SDL_Color, 4> colors{{{249, 190, 96, 255},
-                                               {99, 211, 220, 255},
+                                               kAccent,
                                                {200, 144, 232, 255},
                                                {184, 210, 140, 255}}};
     for (int channel = 0; channel < 4; ++channel) {
@@ -931,9 +938,9 @@ void draw_lab_scope(
             std::snprintf(summary, sizeof(summary),
                           "L %s MS  P %s MS  DUTY %s%%", low, period, duty);
             const float text_scale = std::min(
-                0.72f * scale,
+                kTextSmall * scale,
                 (right - left - 8.0f) / std::max(1.0f, font.measure(summary)));
-            font.draw(renderer, right - font.measure(summary) * text_scale,
+            font.draw(renderer, right - font.width(summary, text_scale),
                       y + lane_step - 18.0f * scale, summary,
                       {145, 177, 190, 255}, text_scale);
         }
@@ -942,7 +949,7 @@ void draw_lab_scope(
         }
     }
     constexpr std::array<SDL_Color, 2> cursor_colors{
-        {{249, 190, 96, 255}, {99, 211, 220, 255}}};
+        {{249, 190, 96, 255}, kAccent}};
     std::array<const DigitalScopeCursor *, 2> visible_cursors{};
     for (std::size_t index = 0; index < cursors.size(); ++index) {
         if (!cursors[index] || cursors[index]->edge.tick < first_tick ||
@@ -956,7 +963,7 @@ void draw_lab_scope(
                        top + panel_height - 40.0f);
         if (strip <= 0.0f) {
             font.draw(renderer, x + 2.0f, top + 2.0f, index == 0 ? "A" : "B",
-                      color, 0.65f * scale);
+                      color, kTextSmall * scale);
             continue;
         }
         char row[128];
@@ -1004,7 +1011,7 @@ void draw_lab_scope(
             if (event.type == ma17::EmulatorEventType::Spark &&
                 event.pair_index < 2) {
                 const SDL_Color color = event.pair_index == 0
-                                            ? SDL_Color{99, 211, 220, 255}
+                                            ? kAccent
                                             : SDL_Color{249, 190, 96, 255};
                 SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b,
                                        255);
@@ -1019,7 +1026,7 @@ void draw_lab_scope(
                 SDL_RenderFillRect(renderer, &mark);
             } else if (event.type == ma17::EmulatorEventType::Misfire &&
                        event.cylinder_index < 4) {
-                SDL_SetRenderDrawColor(renderer, 238, 68, 69, 255);
+                set_draw_color(renderer, kCritical);
                 SDL_RenderLine(renderer, x - 3.0f, burn_y - 3.0f, x + 3.0f,
                                burn_y + 3.0f);
                 SDL_RenderLine(renderer, x - 3.0f, burn_y + 3.0f, x + 3.0f,
@@ -1120,7 +1127,7 @@ void draw_lab_analog_scope(
     SDL_RenderRect(renderer, &panel);
     char heading[128];
     constexpr std::array<const char *, 11> group_titles{
-        "LAMBDA / O2 SENSOR V", "TPS1 / TPS2 MODEL",
+        "LAMBDA PLANT / O2 ECU", "TPS1 / TPS2 MODEL",
         "ECT / IAT PHYSICAL",   "MANIFOLD / AIR FLOW",
         "ENGINE SPEED / LOAD",  "FUEL FILM / VAPOR",
         "ADC0/6 TPS LAST",      "ADC1 BAT / ADC5 LAMBDA",
@@ -1151,44 +1158,41 @@ void draw_lab_analog_scope(
         panel.w - 12.0f -
         (maximize_button.w > 0.0f ? maximize_button.w + fit_button.w + 16.0f
                                   : 0.0f);
-    constexpr std::array<const char *, 11> short_titles{
-        "LAMBDA",  "TPS",       "THERM",     "INTAKE",  "ENGINE", "FUEL",
-        "ADC TPS", "ADC BAT/L", "ADC IAT/E", "BATTERY", "IDLE"};
-    if (font.measure(heading) * scale > heading_width) {
+    if (font.width(heading, scale) > heading_width) {
         std::snprintf(
             heading, sizeof(heading), "%s%s %.1fS %zuPTS %s %s%s", focus_label,
-            short_titles[static_cast<std::size_t>(std::clamp(group, 0, 10))],
+            scope_group(group).title,
             static_cast<double>(visible_ticks) / 990000.0, visible_samples,
             rate_label, frozen ? "HIST" : "LIVE", partial ? " PART" : "");
     }
-    if (font.measure(heading) * scale > heading_width)
+    if (font.width(heading, scale) > heading_width)
         std::snprintf(
             heading, sizeof(heading), "%s%s %.1fS %s %s", focus_label,
-            short_titles[static_cast<std::size_t>(std::clamp(group, 0, 10))],
+            scope_group(group).title,
             static_cast<double>(visible_ticks) / 990000.0, rate_label,
             frozen ? "HIST" : "LIVE");
-    if (font.measure(heading) * scale > heading_width)
+    if (font.width(heading, scale) > heading_width)
         std::snprintf(
             heading, sizeof(heading), "%s%s %s", focus_label,
-            short_titles[static_cast<std::size_t>(std::clamp(group, 0, 10))],
+            scope_group(group).short_name,
             frozen ? "HIST" : "LIVE");
     font.draw(renderer, panel.x + 5.0f, panel.y + 2.0f, heading,
               {145, 177, 190, 255}, scale);
     if (maximize_button.w > 0.0f) {
         SDL_SetRenderDrawColor(renderer, 35, 45, 52, 255);
         SDL_RenderFillRect(renderer, &maximize_button);
-        SDL_SetRenderDrawColor(renderer, 99, 211, 220, 255);
+        set_draw_color(renderer, kAccent);
         SDL_RenderRect(renderer, &maximize_button);
         font.draw(renderer, maximize_button.x + 4.0f, maximize_button.y + 1.0f,
-                  maximized ? "Z:REST" : "Z:MAX", {99, 211, 220, 255},
-                  0.72f * scale);
+                  maximized ? "Z:REST" : "Z:MAX", kAccent,
+                  kTextSmall * scale);
         SDL_SetRenderDrawColor(renderer, 35, 45, 52, 255);
         SDL_RenderFillRect(renderer, &fit_button);
-        SDL_SetRenderDrawColor(renderer, 99, 211, 220, 255);
+        set_draw_color(renderer, kAccent);
         SDL_RenderRect(renderer, &fit_button);
         font.draw(renderer, fit_button.x + 4.0f, fit_button.y + 1.0f,
-                  fitted_axes ? "Y:RESET" : "FIT Y", {99, 211, 220, 255},
-                  0.72f * scale);
+                  fitted_axes ? "Y:RESET" : "FIT Y", kAccent,
+                  kTextSmall * scale);
     }
     if (panel.h < 145.0f) {
         auto spec = display_profile(analog_scope_instrument(group, 0), units);
@@ -1206,7 +1210,7 @@ void draw_lab_analog_scope(
         else
             std::snprintf(label, sizeof(label), "%s --", spec.title);
         font.draw(renderer, plot.x, panel.y + 21.0f, label,
-                  {200, 144, 232, 255}, 0.72f * scale);
+                  {200, 144, 232, 255}, kTextSmall * scale);
         SDL_SetRenderDrawColor(renderer, 45, 58, 66, 255);
         SDL_RenderRect(renderer, &plot);
         const auto selected = decimate_scope_samples(
@@ -1249,12 +1253,6 @@ void draw_lab_analog_scope(
         }
         return;
     }
-    constexpr std::array<const char *, 11> preview_titles{
-        "LAMBDA",  "TPS",       "THERM",     "INTAKE",  "ENGINE", "FUEL",
-        "ADC TPS", "ADC BAT/L", "ADC IAT/E", "BATTERY", "IDLE"};
-    constexpr std::array<const char *, 11> compact_preview_titles{
-        "LAM",   "TPS",   "TEMP",  "AIR", "RPM", "FUEL",
-        "A TPS", "A B/L", "A T/E", "BAT", "IDLE"};
     for (int preview = 0; preview < 11; ++preview) {
         const SDL_FRect card = analog_scope_group_rect(
             layout_state, preview, width, height, maximized);
@@ -1268,12 +1266,10 @@ void draw_lab_analog_scope(
                                selected ? 211 : 60, selected ? 220 : 70, 255);
         SDL_RenderRect(renderer, &card);
         font.draw(renderer, card.x + 4.0f, card.y + 2.0f,
-                  (card.w < 65.0f
-                       ? compact_preview_titles
-                       : preview_titles)[static_cast<std::size_t>(preview)],
-                  selected ? SDL_Color{99, 211, 220, 255}
+                  scope_group(preview).short_name,
+                  selected ? kAccent
                            : SDL_Color{145, 177, 190, 255},
-                  0.72f * scale);
+                  kTextSmall * scale);
         const auto spec =
             display_profile(analog_scope_instrument(preview, 0), units);
         const auto points = decimate_scope_samples(
@@ -1324,7 +1320,7 @@ void draw_lab_analog_scope(
         }
     }
     constexpr std::array<SDL_Color, 3> colors{
-        {{200, 144, 232, 255}, {99, 211, 220, 255}, {249, 190, 96, 255}}};
+        {{200, 144, 232, 255}, kAccent, {249, 190, 96, 255}}};
     std::array<profile::Instrument, 2> specs{
         display_profile(analog_scope_instrument(group, 0), units),
         display_profile(
@@ -1396,7 +1392,7 @@ void draw_lab_analog_scope(
                 display_profile(analog_scope_instrument(group, signal), units);
             const auto trace_color = colors[signal];
             constexpr std::array<std::array<const char *, 3>, 11> short_labels{{
-                {{"LAMBDA", "O2 SENSOR V", ""}},
+                {{"LAM PLANT", "O2 ECU", ""}},
                 {{"TPS1", "TPS2", "ANGLE"}},
                 {{"ECT", "IAT", "THERM"}},
                 {{"MAP ABS", "AIR IN", ""}},
@@ -1432,14 +1428,22 @@ void draw_lab_analog_scope(
                 std::snprintf(label, sizeof(label), "IDLE SW %s SAMP",
                               current_value > 0.5 ? "CLOSED" : "OPEN");
             } else if (std::isfinite(current_value)) {
-                std::snprintf(label, sizeof(label), "%s %.2f %s", short_label,
-                              current_value, series_spec.unit);
+                const std::string value_text = scope_value_text(
+                    current_value, series_spec.minimum, series_spec.maximum);
+                std::snprintf(label, sizeof(label), "%s %s %s", short_label,
+                              value_text.c_str(),
+                              scope_unit_text(series_spec.unit));
+                // The label column is fixed; drop the unit before the text can
+                // reach the plot.
+                if (font.width(label, scale) > left - panel.x - 10.0f)
+                    std::snprintf(label, sizeof(label), "%s %s", short_label,
+                                  value_text.c_str());
             } else {
                 std::snprintf(label, sizeof(label), "%s --", short_label);
             }
             if (std::isfinite(current_value) && adc_channel < 0 &&
                 std::abs(current_value) >= 1000.0 &&
-                font.measure(label) * scale > left - panel.x - 10.0f)
+                font.width(label, scale) > left - panel.x - 10.0f)
                 std::snprintf(label, sizeof(label), "%s %.0f %s", short_label,
                               current_value, series_spec.unit);
             const float label_y =
@@ -1636,7 +1640,7 @@ void draw_lab_analog_scope(
                   {175, 203, 111, 255}, scale);
     }
     constexpr std::array<SDL_Color, 2> cursor_colors{
-        {{249, 190, 96, 255}, {99, 211, 220, 255}}};
+        {{249, 190, 96, 255}, kAccent}};
     std::array<const ma17::EmulatorSnapshot *, 2> selected{};
     std::array<std::string, 2> cursor_rows{};
     std::array<std::array<double, 3>, 2> cursor_values{};
@@ -1710,23 +1714,23 @@ void draw_lab_analog_scope(
     else
         std::snprintf(available_label, sizeof(available_label), "NO DATA");
     const float gap = 10.0f * scale;
-    const float data_x = left + font.measure(start_label) * scale + gap;
-    const float zero_x = right - font.measure("0 s") * scale;
+    const float data_x = left + font.width(start_label, scale) + gap;
+    const float zero_x = right - font.width("0 s", scale);
     const float data_width = zero_x - gap - data_x;
-    if (font.measure(available_label) * scale > data_width &&
+    if (font.width(available_label, scale) > data_width &&
         visible_samples > 0)
         std::snprintf(available_label, sizeof(available_label), "%.2f..%.2f s",
                       static_cast<double>(first_visible->tick) / 990000.0,
                       static_cast<double>(last_sample_tick) / 990000.0);
-    if (font.measure(available_label) * scale <= data_width)
+    if (font.width(available_label, scale) <= data_width)
         font.draw(renderer, data_x, footer_y, available_label,
                   {145, 177, 190, 255}, scale);
     if (trigger_status) {
         std::string status = trigger_status;
         const float status_width = left - gap - (panel.x + 5.0f);
-        if (font.measure(status) * scale > status_width) {
+        if (font.width(status, scale) > status_width) {
             while (!status.empty() &&
-                   font.measure(status + "...") * scale > status_width)
+                   font.width(status + "...", scale) > status_width)
                 status.pop_back();
             status = status.empty() ? "" : status + "...";
         }
@@ -1796,7 +1800,8 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
                    float ui_scale, std::span<const profile::Band> bands = {},
                    bool available = true, const char *unavailable_text = "--",
                    const Gauge *geometry = nullptr, double label_step = 0.0,
-                   double label_divisor = 1.0) {
+                   double label_divisor = 1.0,
+                   const char *short_title = nullptr) {
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
@@ -1815,11 +1820,22 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     // title that does not fit at the floor is ellipsized, never shrunk away.
     const float min_scale = font.scale_for_px(kMinTextPx);
     const float title_avail = layout.title.width() - 12.0f * ui_scale;
-    const float title_scale = std::max(
-        min_scale, std::min(1.10f * ui_scale,
-                            title_avail / std::max(1.0f, font.measure(title))));
-    const std::string title_text =
-        font.ellipsize(title, font.text_px(title_scale), title_avail);
+    // L4: fit the title; when the long form would be ellipsized (judged on the
+    // real pixel-quantised size) and a short form exists, use that instead.
+    float title_scale = min_scale;
+    std::string title_text;
+    for (const char *candidate : {title, short_title}) {
+        if (!candidate)
+            continue;
+        title_scale = std::max(
+            min_scale,
+            std::min(1.10f * ui_scale,
+                     title_avail / std::max(1.0f, font.measure(candidate))));
+        title_text =
+            font.ellipsize(candidate, font.text_px(title_scale), title_avail);
+        if (title_text == candidate)
+            break;
+    }
     const float title_px = font.text_px(title_scale);
     const float title_w = font.measure_px(title_text, title_px);
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
@@ -1833,7 +1849,7 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
         return;
     const float val_scale = std::max(
         min_scale, std::min(std::min(1.75f * ui_scale,
-                                     std::max(0.72f * ui_scale,
+                                     std::max(kTextSmall * ui_scale,
                                               layout.value_font_size / 14.0f)),
                             (box.w - 12.0f * ui_scale) /
                                 std::max(1.0f, font.measure(value_str))));
@@ -1871,6 +1887,21 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
         draw_gauge_arc(
             renderer, cx, cy, radius + (b.radial_offset - b.width) * dial_scale,
             radius + b.radial_offset * dial_scale, start, end, b.color);
+        // G3: a target band carries its caption instead of being an
+        // unexplained coloured mark.
+        if (b.label && radius >= 30.0f) {
+            const float mid = 0.5f * (angle0 + angle1);
+            const float label_scale = font.scale_for_px(
+                std::max(8.0f, radius * 0.13f));
+            const float label_px = font.text_px(label_scale);
+            const float w = font.measure_px(b.label, label_px);
+            const float h = font.line_height(label_px);
+            const float r = radius + (b.radial_offset + 3.0f) * dial_scale;
+            const float tx = cx + r * std::cos(mid);
+            const float ty = cy - r * std::sin(mid);
+            font.draw(renderer, std::cos(mid) < 0.0f ? tx - w : tx,
+                      ty - 0.5f * h, b.label, b.color, label_scale);
+        }
     }
 
     if (minor_step > 0.0 && range > 0.0f) {
@@ -1919,7 +1950,11 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     }
 
     // Scale numerals (SEVEL adaptation: the donor gauge prints none).
-    if (label_step > 0.0 && range > 0.0f) {
+    float numeral_edge_min = kNoNumerals;
+    // Regular numerals every label_step; a dial without them (G2) still shows
+    // its scale ends, unless it is too small to hold text.
+    const bool regular_labels = label_step > 0.0;
+    if ((regular_labels || radius >= 24.0f) && range > 0.0f) {
         const float label_px = std::max(8.0f, radius * 0.17f);
         const float label_scale = font.scale_for_px(label_px);
         const float label_text_px = font.text_px(label_scale);
@@ -1928,27 +1963,36 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
         // Keep the whole numeral box inside the tick circle: the clearance is
         // the box half-extent along the radial direction.
         const float inner_r = radius - major_len - 2.0f * dial_scale;
-        for (double label_v = v_min; label_v <= v_max + 1e-6;
-             label_v += label_step) {
+        const auto draw_numeral = [&](double label_v, const std::string &text) {
             const float th = theta_at(static_cast<float>(
                 (label_v - v_min) / static_cast<double>(range)));
-            char text[16];
-            std::snprintf(text, sizeof(text), "%lld",
-                          std::llround(label_v / label_divisor));
             const float w = font.measure_px(text, label_text_px);
             const float h = font.line_height(label_text_px);
             const float c = std::cos(th), s = std::sin(th);
-            const float label_r =
-                inner_r - 0.5f * (std::fabs(c) * w + std::fabs(s) * h);
+            const float label_r = gauge_numeral_center_radius(inner_r, w, h, th);
+            numeral_edge_min = std::min(
+                numeral_edge_min, gauge_numeral_inner_edge(inner_r, w, h, th));
             font.draw(renderer, cx + label_r * c - 0.5f * w,
-                      cy - label_r * s - 0.5f * h, text, {176, 186, 198, 255},
-                      label_scale);
+                      cy - label_r * s - 0.5f * h, text,
+                      {176, 186, 198, 255}, label_scale);
+        };
+        if (regular_labels) {
+            for (double label_v = v_min; label_v <= v_max + 1e-6;
+                 label_v += label_step) {
+                char text[16];
+                std::snprintf(text, sizeof(text), "%lld",
+                              std::llround(label_v / label_divisor));
+                draw_numeral(label_v, text);
+            }
+        } else {
+            draw_numeral(v_min, scale_end_text(v_min));
+            draw_numeral(v_max, scale_end_text(v_max));
         }
     }
 
     if (!available || !std::isfinite(value)) {
         font.draw(renderer,
-                  box.x + (box.w - font.measure(unavailable_text) * val_scale) *
+                  box.x + (box.w - font.width(unavailable_text, val_scale)) *
                               0.5f,
                   value_y, unavailable_text, {150, 165, 180, 255}, val_scale);
         return;
@@ -1968,7 +2012,9 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     }
     const float nx = std::cos(needle_th);
     const float ny = -std::sin(needle_th);
-    const float tip_len = layout.needle_outer_radius;
+    // G1: the needle stops short of the numeral ring instead of covering it.
+    const float tip_len = gauge_needle_tip_limit(
+        layout.needle_outer_radius, numeral_edge_min, 2.0f * dial_scale);
     const float tail_len = layout.needle_inner_radius;
     // Gauge::render from OES generates the needle as a constant-width line.
     // Reuse its actual geometry generator rather than a separate SDL shape.
@@ -1978,10 +2024,11 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
     line.x1 = cx + nx * tip_len;
     line.y1 = cy + ny * tip_len;
     line.lineWidth = (geometry ? geometry->m_needleWidth : 4.0f) * dial_scale;
-    const SDL_FColor needle_col{0.93f, 0.27f, 0.27f, 1.0f};
+    const SDL_FColor needle_col{palette().needle[0], palette().needle[1],
+                                palette().needle[2], 1.0f};
     draw_donor_line(renderer, line_generator, line, needle_col);
 
-    const float val_w = font.measure(value_str) * val_scale;
+    const float val_w = font.width(value_str, val_scale);
     font.draw(renderer, box.x + (box.w - val_w) * 0.5f, value_y, value_str,
               {240, 244, 248, 255}, val_scale);
     // Out-of-range indicator at the scale end that the value passed (the value
@@ -2058,7 +2105,7 @@ void draw_oes_dial(SDL_Renderer *renderer, FontRenderer &font,
             return;
         tx = spot->first;
         ty = spot->second;
-        font.draw(renderer, tx, ty, limit, {238, 68, 69, 255}, text_scale);
+        font.draw(renderer, tx, ty, limit, kCritical, text_scale);
     }
 }
 
@@ -2087,7 +2134,8 @@ void draw_profile_dial(SDL_Renderer *renderer, FontRenderer &font,
                   spec.maximum, spec.major_step, spec.minor_step, value_str,
                   needle_pos, ui_scale, {spec.bands.data(), spec.band_count},
                   available, spec.undefined ? "N/D" : "--", geometry,
-                  spec.label_step, spec.label_divisor);
+                  spec.label_step, spec.label_divisor,
+                  profile::short_label_for(spec.id));
 }
 
 // Secondary P1.1 reading for the RPM tooltip. P1.1 is a candidate output, not
@@ -2131,10 +2179,10 @@ void draw_profile_tooltip(SDL_Renderer *renderer, FontRenderer &font,
                              : "VALID",
                   tick);
     const float width =
-        (std::max({font.measure(heading), font.measure(spec.source),
-                   font.measure(detail), extra ? font.measure(extra) : 0.0f}) +
-         16.0f) *
-        ui_scale;
+        std::max({font.width(heading, ui_scale), font.width(spec.source, ui_scale),
+                  font.width(detail, ui_scale),
+                  extra ? font.width(extra, ui_scale) : 0.0f}) +
+        16.0f * ui_scale;
     const float height = (extra ? 64.0f : 49.0f) * ui_scale;
     const SDL_FRect panel{
         std::clamp(mouse_x + 12.0f, 8.0f,
@@ -2145,7 +2193,7 @@ void draw_profile_tooltip(SDL_Renderer *renderer, FontRenderer &font,
         width, height};
     SDL_SetRenderDrawColor(renderer, 20, 25, 31, 250);
     SDL_RenderFillRect(renderer, &panel);
-    SDL_SetRenderDrawColor(renderer, 99, 211, 220, 255);
+    set_draw_color(renderer, kAccent);
     SDL_RenderRect(renderer, &panel);
     font.draw(renderer, panel.x + 7.0f * ui_scale, panel.y + 4.0f * ui_scale,
               heading, {235, 241, 246, 255}, ui_scale);
@@ -2153,7 +2201,7 @@ void draw_profile_tooltip(SDL_Renderer *renderer, FontRenderer &font,
               spec.source, {145, 177, 190, 255}, ui_scale);
     font.draw(renderer, panel.x + 7.0f * ui_scale, panel.y + 34.0f * ui_scale,
               detail,
-              available && !stale ? SDL_Color{99, 211, 220, 255}
+              available && !stale ? kAccent
                                   : SDL_Color{249, 190, 96, 255},
               ui_scale);
     if (extra)
@@ -2166,18 +2214,21 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
                        const SDL_FRect &box,
                        const std::array<ScenePulse, 4> &pulses,
                        const std::array<float, 2> &spark_glows,
-                       float ui_scale) {
+                       float ui_scale,
+                       const ma17::EmulatorSnapshot *snapshot = nullptr,
+                       const PulseCluster &pulse_data = {}) {
+    const std::array<int, 2> &spark_channels = pulse_data.spark_channels;
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
     SDL_RenderRect(renderer, &box);
 
-    const float title_w = font.measure("IGNITION") * 0.65f * ui_scale;
+    const float title_w = font.width("IGNITION", kTextSmall * ui_scale);
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
               box.y + 4.0f * ui_scale, "IGNITION", {210, 218, 226, 255},
-              0.65f * ui_scale);
+              kTextSmall * ui_scale);
     font.draw(renderer, box.x + 5.0f * ui_scale, box.y + 5.0f * ui_scale,
-              "BURN", {145, 177, 190, 255}, 0.55f * ui_scale);
+              "BURN", {145, 177, 190, 255}, kTextTiny * ui_scale);
     const bool active_misfire =
         std::any_of(pulses.begin(), pulses.end(), [](const ScenePulse &pulse) {
             return pulse.misfire && pulse.strength > 0.05f;
@@ -2185,20 +2236,28 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
     const char *miss_label = active_misfire ? "! MISS" : "MISS";
     font.draw(renderer,
               box.x + box.w -
-                  (font.measure(miss_label) * 0.55f + 5.0f) * ui_scale,
+                  (font.width(miss_label, kTextTiny * ui_scale) + 5.0f * ui_scale),
               box.y + 5.0f * ui_scale, miss_label,
-              active_misfire ? SDL_Color{238, 68, 69, 255}
+              active_misfire ? kCritical
                              : SDL_Color{100, 110, 125, 255},
-              0.55f * ui_scale);
+              kTextTiny * ui_scale);
 
+    // D1: advance / MBT / difference between the discs and the PIN/SPK legend,
+    // only where the column is tall enough to hold it.
+    const float data_h =
+        (snapshot && box.h >= 300.0f * ui_scale) ? 84.0f * ui_scale : 0.0f;
     const float top_y = box.y + 20.0f * ui_scale;
-    const float avail_h = box.h - 43.0f * ui_scale;
+    const float avail_h = box.h - 43.0f * ui_scale - data_h;
     const float step_y = avail_h / 4.0f;
     const float cx = box.x + box.w * 0.5f;
     const float max_r = std::min(box.w * 0.35f, step_y * 0.38f);
 
-    for (int cyl = 0; cyl < 4; ++cyl) {
-        const float cy = top_y + (static_cast<float>(cyl) + 0.5f) * step_y;
+    // C4: the column is the one ignition representation: discs in firing
+    // order (1-3-4-2), then the advance data and the coil mapping.
+    constexpr std::array<int, 4> kFiringOrder{0, 2, 3, 1};
+    for (int slot = 0; slot < 4; ++slot) {
+        const int cyl = kFiringOrder[static_cast<std::size_t>(slot)];
+        const float cy = top_y + (static_cast<float>(slot) + 0.5f) * step_y;
         const auto &pulse = pulses[static_cast<std::size_t>(cyl)];
         const float strength = pulse.strength;
         const bool lit = strength > 0.05f;
@@ -2209,7 +2268,7 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
         SDL_Color disc_color{24, 26, 32, 255};
         if (lit) {
             const SDL_Color base = pulse.misfire
-                                       ? SDL_Color{238, 68, 69, 255}
+                                       ? kCritical
                                        : SDL_Color{255, 230, 100, 255};
             disc_color = {static_cast<Uint8>(base.r * strength),
                           static_cast<Uint8>(base.g * strength),
@@ -2220,11 +2279,46 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
         char num[4];
         std::snprintf(num, sizeof(num), pulse.misfire && lit ? "%d!" : "%d",
                       cyl + 1);
-        const float nw = font.measure(num) * 0.60f * ui_scale;
+        const float nw = font.width(num, kTextSmall * ui_scale);
         font.draw(renderer, cx - nw * 0.5f, cy - 4.0f * ui_scale, num,
                   lit ? SDL_Color{20, 20, 20, 255}
                       : SDL_Color{100, 110, 125, 255},
-                  0.60f * ui_scale);
+                  kTextSmall * ui_scale);
+    }
+    if (data_h > 0.0f) {
+        const auto text = ignition_advance_text(
+            snapshot->crank_available && snapshot->burns > 0,
+            snapshot->spark_advance_deg, snapshot->mbt_deg);
+        const float scale = kTextSmall * ui_scale;
+        const float y0 = top_y + avail_h + 4.0f * ui_scale;
+        const SDL_Color dim{145, 177, 190, 255};
+        font.draw(renderer, box.x + 8.0f * ui_scale, y0, "ORDER 1-3-4-2", dim,
+                  scale);
+        font.draw(renderer, box.x + 8.0f * ui_scale, y0 + 12.0f * ui_scale,
+                  text.advance, dim, scale);
+        font.draw(renderer, box.x + 8.0f * ui_scale, y0 + 24.0f * ui_scale,
+                  text.mbt, dim, scale);
+        font.draw(renderer, box.x + 8.0f * ui_scale, y0 + 36.0f * ui_scale,
+                  text.difference, {235, 241, 246, 255}, scale);
+        // Coil mapping, as measured: the P5 line that drove each pair.
+        for (std::size_t pair = 0; pair < spark_channels.size(); ++pair) {
+            char coil[24];
+            if (spark_channels[pair] < 0)
+                std::snprintf(coil, sizeof(coil), "P5.? %s",
+                              ignition_pair_label(static_cast<int>(pair)));
+            else
+                std::snprintf(coil, sizeof(coil), "P5.%d %s",
+                              spark_channels[pair],
+                              ignition_pair_label(static_cast<int>(pair)));
+            font.draw(renderer,
+                      box.x + box.w * (pair == 0 ? 0.08f : 0.55f),
+                      y0 + 50.0f * ui_scale, coil, dim, scale);
+            // D3: coil line low time, a candidate (polarity unconfirmed).
+            font.draw(renderer,
+                      box.x + box.w * (pair == 0 ? 0.08f : 0.55f),
+                      y0 + 61.0f * ui_scale,
+                      coil_low_text(pulse_data.coil_low[pair]), dim, scale);
+        }
     }
     for (std::size_t pair = 0; pair < spark_glows.size(); ++pair) {
         const float x = box.x + box.w * (pair == 0 ? 0.08f : 0.55f);
@@ -2236,13 +2330,13 @@ void draw_oes_ignition(SDL_Renderer *renderer, FontRenderer &font,
             const bool active = (row == 0 ? pin : spark_glows[pair]) > 0.05f;
             draw_filled_disc(renderer, x, y, 2.5f * ui_scale,
                              active ? (row == 0 ? SDL_Color{145, 177, 190, 255}
-                                                : SDL_Color{99, 211, 220, 255})
+                                                : kAccent)
                                     : SDL_Color{70, 77, 87, 255});
             char label[16];
             std::snprintf(label, sizeof(label), "%s %s",
                           row == 0 ? "PIN" : "SPK", pair_label);
             font.draw(renderer, x + 4.0f * ui_scale, y - 4.0f * ui_scale, label,
-                      {145, 177, 190, 255}, 0.65f * ui_scale);
+                      {145, 177, 190, 255}, kTextSmall * ui_scale);
         }
     }
 }
@@ -2255,10 +2349,10 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
     SDL_RenderRect(renderer, &box);
 
-    const float title_w = font.measure("THROTTLE") * 0.70f * ui_scale;
+    const float title_w = font.width("THROTTLE", kTextSmall * ui_scale);
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
               box.y + 4.0f * ui_scale, "THROTTLE", {210, 218, 226, 255},
-              0.70f * ui_scale);
+              kTextSmall * ui_scale);
     const bool angle_available = snapshot.throttle_available &&
                                  std::isfinite(snapshot.throttle_angle_rad);
     const bool cable_available =
@@ -2282,8 +2376,18 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
     const SDL_FRect slider_fill{slider_box.x + 1.0f,
                                 slider_box.y + slider_box.h - 1.0f - fill_h,
                                 slider_box.w - 2.0f, fill_h};
-    SDL_SetRenderDrawColor(renderer, 238, 68, 69, 255);
+    // T2: the pedal bar is a neutral command colour; red is reserved for
+    // alarms (red zone, faults). G3: it carries a label.
+    SDL_SetRenderDrawColor(renderer, 140, 165, 186, 255);
     SDL_RenderFillRect(renderer, &slider_fill);
+    {
+        const float label_scale = kTextTiny * ui_scale;
+        const float label_w = font.width("PEDAL", label_scale);
+        font.draw(renderer,
+                  slider_box.x + (slider_box.w - label_w) * 0.5f,
+                  slider_box.y + slider_box.h + 2.0f * ui_scale, "PEDAL",
+                  {145, 177, 190, 255}, label_scale);
+    }
     if (!cable_available)
         font.draw(renderer, slider_box.x + 2.0f * ui_scale,
                   slider_box.y + slider_box.h * 0.5f, "--",
@@ -2323,7 +2427,7 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
     const float r_piv = 2.5f * ui_scale;
     const SDL_FRect piv_rect{cx - r_piv, cy - r_piv, r_piv * 2.0f,
                              r_piv * 2.0f};
-    SDL_SetRenderDrawColor(renderer, 238, 68, 69, 255);
+    set_draw_color(renderer, kCritical);
     SDL_RenderFillRect(renderer, &piv_rect);
 
     char stem_buf[32];
@@ -2334,7 +2438,7 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
         std::snprintf(stem_buf, sizeof(stem_buf), "STEM: --");
     font.draw(renderer, box.x + 6.0f * ui_scale,
               box.y + box.h - 22.0f * ui_scale, stem_buf, {160, 185, 200, 255},
-              0.60f * ui_scale);
+              kTextSmall * ui_scale);
 
     const bool sw_closed = snapshot.idle_contact_closed;
     char sw_buf[32];
@@ -2347,12 +2451,12 @@ void draw_oes_throttle(SDL_Renderer *renderer, FontRenderer &font,
               snapshot.throttle_available && sw_closed
                   ? SDL_Color{60, 232, 130, 255}
                   : SDL_Color{130, 140, 155, 255},
-              0.60f * ui_scale);
+              kTextSmall * ui_scale);
 }
 
 void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
                    const SDL_FRect &box, const ma17::EmulatorSnapshot &snapshot,
-                   float ui_scale) {
+                   float ui_scale, const PulseStat &injector) {
     SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
     SDL_RenderFillRect(renderer, &box);
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
@@ -2362,7 +2466,7 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
     const float title_scale =
         std::min(0.90f * ui_scale, (box.w - 12.0f * ui_scale) /
                                        std::max(1.0f, font.measure(title)));
-    const float title_w = font.measure(title) * title_scale;
+    const float title_w = font.width(title, title_scale);
     font.draw(renderer, box.x + (box.w - title_w) * 0.5f,
               box.y + 4.0f * ui_scale, title, {210, 218, 226, 255},
               title_scale);
@@ -2377,8 +2481,11 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
     else
         std::snprintf(injected_buf, sizeof(injected_buf), "%.1f mg",
                       injected_mg);
+    const float total_scale = fixed_block_scale(
+        [&](const char *text) { return font.measure(text); },
+        {"8888.8 mg", "88.88 g"}, 0.95f * ui_scale, box.w - 12.0f * ui_scale);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 20.0f * ui_scale,
-              injected_buf, {255, 255, 255, 255}, 0.95f * ui_scale);
+              injected_buf, {255, 255, 255, 255}, total_scale);
 
     char vapor_buf[32];
     if (snapshot.intake_available &&
@@ -2401,17 +2508,42 @@ void draw_oes_fuel(SDL_Renderer *renderer, FontRenderer &font,
                       snapshot.injector_pulses);
     else
         std::snprintf(inj_buf, sizeof(inj_buf), "PULSES: --");
-    const float widest =
-        std::max({font.measure(vapor_buf), font.measure(film_buf),
-                  font.measure(inj_buf)});
-    const float detail_scale = std::min(
-        0.85f * ui_scale, (box.w - 14.0f * ui_scale) / std::max(1.0f, widest));
+    // L8: both scales come from the box and worst-case samples, never from the
+    // strings drawn this frame.
+    const auto measure = [&](const char *text) { return font.measure(text); };
+    float detail_scale = fixed_block_scale(
+        measure, {"VAPOR: 888.8 mg", "FILM: 888.8 mg", "PULSES: 88888888",
+         "TI 88.88 MS  DUTY 88.8%"},
+        0.85f * ui_scale, box.w - 14.0f * ui_scale);
+    // The pixel face snaps to whole design pixels when drawn, so check the
+    // snapped width of the widest sample and shrink until it really fits.
+    for (int guard = 0;
+         guard < 24 && detail_scale > 0.3f &&
+         font.measure_px("TI 88.88 MS  DUTY 88.8%",
+                         font.text_px(detail_scale)) >
+             box.w - 14.0f * ui_scale;
+         ++guard)
+        detail_scale *= 0.93f;
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 39.0f * ui_scale,
               vapor_buf, {150, 165, 180, 255}, detail_scale);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 55.0f * ui_scale,
               film_buf, {184, 210, 140, 255}, detail_scale);
     font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 71.0f * ui_scale,
               inj_buf, {140, 180, 220, 255}, detail_scale);
+    // D2: injection time and duty from the measured injector pulses.
+    if (box.h >= 100.0f * ui_scale) {
+        // Longest form that fits at a legible scale; the pixel face cannot go
+        // below its minimum glyph size, so a shorter text is the only fix.
+        const float avail = box.w - 16.0f * ui_scale;
+        std::string ti;
+        for (const std::string &candidate : injection_text_variants(injector)) {
+            ti = candidate;
+            if (font.measure_px(candidate, font.text_px(detail_scale)) <= avail)
+                break;
+        }
+        font.draw(renderer, box.x + 8.0f * ui_scale, box.y + 87.0f * ui_scale,
+                  ti, {235, 241, 246, 255}, detail_scale);
+    }
 }
 
 } // namespace
@@ -2463,7 +2595,7 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
     SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
     SDL_RenderRect(renderer, &tbi);
     font.draw(renderer, tbi.x + 8.0f * ui_scale, tbi.y + 6.0f * ui_scale,
-              "TBI / LENTA", {210, 218, 226, 255}, 0.75f * ui_scale);
+              "TBI / LENTA", {210, 218, 226, 255}, kTextSmall * ui_scale);
     const float detail_x = tbi.x + tbi.w * 0.51f;
     const float detail_top = 26.0f * ui_scale;
     const float row_step = std::clamp((tbi.h - 40.0f * ui_scale) / 3.0f,
@@ -2475,28 +2607,28 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
     else
         std::snprintf(value, sizeof(value), "ANGLE --");
     font.draw(renderer, tbi.x + 8.0f * ui_scale, tbi.y + detail_top, value,
-              {240, 244, 248, 255}, 0.75f * ui_scale);
+              {240, 244, 248, 255}, kTextSmall * ui_scale);
     if (snapshot.throttle_available && std::isfinite(snapshot.pedal_pull_m))
         std::snprintf(value, sizeof(value), "CABLE %.1f mm",
                       snapshot.pedal_pull_m * 1000.0);
     else
         std::snprintf(value, sizeof(value), "CABLE --");
     font.draw(renderer, detail_x, tbi.y + detail_top, value,
-              {240, 244, 248, 255}, 0.70f * ui_scale);
+              {240, 244, 248, 255}, kTextSmall * ui_scale);
     if (snapshot.tps_available && std::isfinite(snapshot.tps_track1_v))
         std::snprintf(value, sizeof(value), "TPS1 %.2f V",
                       snapshot.tps_track1_v);
     else
         std::snprintf(value, sizeof(value), "TPS1 --");
     font.draw(renderer, tbi.x + 8.0f * ui_scale, tbi.y + detail_top + row_step,
-              value, {176, 218, 226, 255}, 0.70f * ui_scale);
+              value, {176, 218, 226, 255}, kTextSmall * ui_scale);
     if (snapshot.tps_available && std::isfinite(snapshot.tps_track2_v))
         std::snprintf(value, sizeof(value), "TPS2 %.2f V",
                       snapshot.tps_track2_v);
     else
         std::snprintf(value, sizeof(value), "TPS2 --");
     font.draw(renderer, detail_x, tbi.y + detail_top + row_step, value,
-              {176, 218, 226, 255}, 0.70f * ui_scale);
+              {176, 218, 226, 255}, kTextSmall * ui_scale);
     if (snapshot.idle_bridge_candidate && std::isfinite(snapshot.idle_stem_m))
         std::snprintf(value, sizeof(value), "IDLE STEM %.2f mm",
                       snapshot.idle_stem_m * 1000.0);
@@ -2504,12 +2636,12 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
         std::snprintf(value, sizeof(value), "IDLE STEM --");
     font.draw(renderer, tbi.x + 8.0f * ui_scale,
               tbi.y + detail_top + 2.0f * row_step, value, {176, 218, 226, 255},
-              0.70f * ui_scale);
+              kTextSmall * ui_scale);
     font.draw(renderer, detail_x, tbi.y + detail_top + 2.0f * row_step,
               !snapshot.throttle_available   ? "IDLE --"
               : snapshot.idle_contact_closed ? "IDLE CLOSED"
                                              : "IDLE OPEN",
-              {176, 218, 226, 255}, 0.70f * ui_scale);
+              {176, 218, 226, 255}, kTextSmall * ui_scale);
     if (snapshot.drivetrain_available) {
         const char gear = selected_gear == -1 ? 'R'
                           : selected_gear == 0
@@ -2524,7 +2656,7 @@ void draw_oes_left_cluster(SDL_Renderer *renderer, FontRenderer &font,
                       transmission::overall_ratio(selected_gear));
     font.draw(renderer, tbi.x + 8.0f * ui_scale,
               tbi.y + detail_top + 3.0f * row_step, value, {184, 210, 140, 255},
-              0.70f * ui_scale);
+              kTextSmall * ui_scale);
     draw_profile_tooltip(renderer, font, coolant, coolant_spec, snapshot.tick,
                          snapshot.thermal_available &&
                              std::isfinite(snapshot.coolant_c),
@@ -2579,13 +2711,47 @@ SDL_FRect compact_instrument_tab_rect(const SDL_FRect &bounds, int tab) {
             bounds.w / 3.0f, 22.0f};
 }
 
+// D8: with no road input the speed dial only ever reads 0, so its cell shows
+// the bench measurements of the live plant window instead.
+static void draw_bench_panel(SDL_Renderer *renderer, FontRenderer &font,
+                      const SDL_FRect &box, const ma17::EmulatorSnapshot &snapshot,
+                      float ui_scale) {
+    SDL_SetRenderDrawColor(renderer, 14, 14, 18, 255);
+    SDL_RenderFillRect(renderer, &box);
+    SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
+    SDL_RenderRect(renderer, &box);
+    const float title_scale = 1.10f * ui_scale;
+    font.draw(renderer, box.x + (box.w - font.width("BENCH", title_scale)) * 0.5f,
+              box.y + 6.0f * ui_scale, "BENCH", {210, 218, 226, 255}, title_scale);
+    const auto &plant = snapshot.plant_window;
+    const DynoReadout readout{plant.valid,        plant.mean_rpm,
+                              plant.shaft_torque_nm, plant.shaft_power_kw,
+                              plant.bsfc_g_kwh,   plant.ve_ambient,
+                              plant.lambda_cylinders};
+    const auto lines = bench_panel_lines(readout);
+    const float scale = 1.0f * ui_scale;
+    float y = box.y + 34.0f * ui_scale;
+    for (const std::string &line : lines) {
+        // Fit the real width; shrink to the small scale only if needed.
+        float s = scale;
+        if (font.width(line, s) > box.w - 16.0f * ui_scale)
+            s = kTextSmall * ui_scale;
+        font.draw(renderer, box.x + (box.w - font.width(line, s)) * 0.5f, y, line,
+                  readout.valid ? SDL_Color{235, 241, 246, 255}
+                                : SDL_Color{145, 177, 190, 255},
+                  s);
+        y += font.line_height(font.text_px(s)) + 8.0f * ui_scale;
+    }
+}
+
 void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                             const SDL_FRect &bounds,
                             const ma17::EmulatorSnapshot &snapshot,
                             const std::array<ScenePulse, 4> &pulses,
                             const std::array<float, 2> &spark_glows,
                             float ui_scale, const std::array<Gauge, 3> *gauges,
-                            bool stale, int compact_page, DisplayUnits units) {
+                            bool stale, int compact_page, DisplayUnits units,
+                            const PulseCluster &pulse_data) {
     if (bounds.w < 100.0f || bounds.h < 100.0f)
         return;
 
@@ -2625,18 +2791,18 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                                 : tab == 1 ? "DATA"
                                            : "IGNITION";
             const float text_scale =
-                std::min(0.72f * ui_scale,
+                std::min(kTextSmall * ui_scale,
                          (rect.w - 8.0f) / std::max(1.0f, font.measure(label)));
             font.draw(renderer,
                       rect.x +
-                          (rect.w - font.measure(label) * text_scale) * 0.5f,
+                          (rect.w - font.width(label, text_scale)) * 0.5f,
                       rect.y + 4.0f, label, {210, 218, 226, 255}, text_scale);
         }
         const SDL_FRect content{bounds.x, bounds.y + 22.0f, bounds.w,
                                 bounds.h - 22.0f};
         if (compact_page == 2) {
             draw_oes_ignition(renderer, font, content, pulses, spark_glows,
-                              ui_scale);
+                              ui_scale, &snapshot, pulse_data);
             return;
         }
         if (compact_page == 0) {
@@ -2705,7 +2871,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
             SDL_SetRenderDrawColor(renderer, 42, 42, 50, 255);
             SDL_RenderRect(renderer, &row);
             const float title_scale =
-                std::min(0.72f * ui_scale,
+                std::min(kTextSmall * ui_scale,
                          (row.w - 12.0f) /
                              std::max(1.0f, font.measure(specs[i]->title)));
             font.draw(renderer, row.x + 6.0f, row.y + 3.0f, specs[i]->title,
@@ -2762,6 +2928,8 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
         draw_profile_dial(renderer, font, speed_box, coolant_spec,
                           coolant_value, spd_str, -1.0f, ui_scale,
                           snapshot.thermal_available);
+    } else if (!snapshot.drivetrain_available) {
+        draw_bench_panel(renderer, font, speed_box, snapshot, ui_scale);
     } else {
         const SpeedReading speed = speed_reading(speed_value, speed_spec.unit);
         std::snprintf(spd_str, sizeof(spd_str), "%s", speed.text.c_str());
@@ -2771,7 +2939,8 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     }
 
     const SDL_FRect ign_box = cell(layout.ignition);
-    draw_oes_ignition(renderer, font, ign_box, pulses, spark_glows, ui_scale);
+    draw_oes_ignition(renderer, font, ign_box, pulses, spark_glows, ui_scale,
+                      &snapshot, pulse_data);
 
     const SDL_FRect thr_box = cell(layout.throttle);
     draw_oes_throttle(renderer, font, thr_box, snapshot, ui_scale);
@@ -2805,7 +2974,8 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                           snapshot.exhaust_sample_available);
 
     const SDL_FRect fuel_box = cell(layout.fuel);
-    draw_oes_fuel(renderer, font, fuel_box, snapshot, ui_scale);
+    draw_oes_fuel(renderer, font, fuel_box, snapshot, ui_scale,
+                  pulse_data.injector);
 
     const SDL_FRect map_box = cell(layout.manifold_pressure);
     char map_str[32];
@@ -2851,6 +3021,7 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                          snapshot.crank_available &&
                              std::isfinite(snapshot.rpm),
                          stale, ui_scale, tach_note.c_str());
+    if (compact || snapshot.drivetrain_available) // no speed tooltip on BENCH
     draw_profile_tooltip(renderer, font, speed_box,
                          compact ? coolant_spec : speed_spec, snapshot.tick,
                          compact
@@ -2915,6 +3086,13 @@ void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
     draw_profile_tooltip(renderer, font, contact_box, profile::idle_contact,
                          snapshot.tick, snapshot.throttle_available, stale,
                          ui_scale);
+    // D7: hovering the ignition column shows spark efficiency and residual.
+    const bool ignition_seen = snapshot.crank_available && snapshot.burns > 0;
+    const std::string spark_note = spark_quality_text(
+        ignition_seen, snapshot.spark_efficiency, snapshot.residual_fraction);
+    draw_profile_tooltip(renderer, font, cell(layout.ignition),
+                         profile::ignition_spark, snapshot.tick, ignition_seen,
+                         stale, ui_scale, spark_note.c_str());
 }
 
 } // namespace lab

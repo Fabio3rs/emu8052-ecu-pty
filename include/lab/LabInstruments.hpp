@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lab/PulseStats.hpp"
 #include "lab/DigitalPulseMeasurements.hpp"
 #include "lab/DisplayUnits.hpp"
 #include "lab/DonorScene.hpp"
@@ -107,12 +108,21 @@ void draw_clutch(SDL_Renderer *renderer, FontRenderer &font,
 
 SDL_FRect compact_instrument_tab_rect(const SDL_FRect &bounds, int tab);
 
+// What the right cluster needs besides the snapshot: the P5 line that drove each
+// coil pair, and the latest measured pulses (D2 injector, D3 coil low time).
+struct PulseCluster {
+    std::array<int, 2> spark_channels{-1, -1};
+    PulseStat injector;
+    std::array<PulseStat, 2> coil_low;
+};
+
 void draw_oes_right_cluster(SDL_Renderer *renderer, FontRenderer &font,
                             const SDL_FRect &bounds,
                             const ma17::EmulatorSnapshot &snapshot,
                             const std::array<ScenePulse, 4> &pulses,
                             const std::array<float, 2> &spark_glows,
                             float ui_scale, const std::array<Gauge, 3> *gauges,
-                            bool stale, int compact_page, DisplayUnits units);
+                            bool stale, int compact_page, DisplayUnits units,
+                            const PulseCluster &pulse_data = {});
 
 } // namespace lab

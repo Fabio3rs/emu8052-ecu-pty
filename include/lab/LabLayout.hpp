@@ -32,7 +32,8 @@ struct LayoutState {
 
 // Layout thresholds and minimums, in logical units.
 inline constexpr float kDesktopMinWidth = 1100.0f;
-inline constexpr float kHeaderHeight = 90.0f; // status panel + view selector
+inline constexpr float kHeaderHeight = 100.0f; // status panel (to y=68) + toolbar band
+inline constexpr float kToolbarHeight = 30.0f; // R/V/F buttons + view titles
 
 struct LabLayout {
     SDL_FRect header{}; // status panel row above the three columns
@@ -40,6 +41,11 @@ struct LabLayout {
     SDL_FRect mechanical{};
     SDL_FRect scope{};
     SDL_FRect instruments{};
+    // Toolbar (R: FIT / V: / F: and the view titles) sits at the bottom of the
+    // header over the mechanical column; `scene` is the mechanical panel below
+    // it, so no button or title can intersect the engine viewports (L2).
+    SDL_FRect toolbar{};
+    SDL_FRect scene{};
 
     // --- Pure layout (no global state) ------------------------------------
     // The state that is actually in force at an output width: compact windows
@@ -89,11 +95,17 @@ struct LabLayout {
         const float scope_h =
             scope_height(state, mechanical_w, h, scope_maximized);
         const float mechanical_h = std::max(0.0f, h - scope_h - 12.0f);
-        return {{0.0f, 0.0f, w, std::min(kHeaderHeight, h)},
+        const float header_h = std::min(kHeaderHeight, h);
+        const float toolbar_h = std::min(kToolbarHeight, header_h);
+        const float toolbar_y = header_h - toolbar_h;
+        const float scene_h = std::max(0.0f, mechanical_h - header_h);
+        return {{0.0f, 0.0f, w, header_h},
                 {0.0f, 0.0f, left_w, h},
                 {left_w, 0.0f, mechanical_w, mechanical_h},
                 {left_w, mechanical_h, mechanical_w, scope_h},
-                {left_w + mechanical_w, 0.0f, w - left_w - mechanical_w, h}};
+                {left_w + mechanical_w, 0.0f, w - left_w - mechanical_w, h},
+                {left_w, toolbar_y, mechanical_w, toolbar_h},
+                {left_w, header_h, mechanical_w, scene_h}};
     }
 
     // Which divider (1 left, 2 right, 3 scope) is under (x, y); 0 for none.

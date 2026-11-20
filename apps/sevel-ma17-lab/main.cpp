@@ -182,6 +182,8 @@ int main(int argc, char **argv) {
     int window_frames = 0;
     int frame_delay_ms = 16;
     int ui_scale_percent = 0;
+    // The calibration view reads the table bytes from the same ROM.
+    setenv("SEVEL_ROM_PATH", argv[1], 1);
     std::vector<std::string> harness_args{argv[0], argv[1], "--physical-crank"};
     for (int index = 2; index < argc; ++index) {
         const std::string option = argv[index];

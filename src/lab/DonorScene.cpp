@@ -25,7 +25,8 @@ struct DrawCall {
 // The authored Piston has ring marks at local Y=0 and a curved skirt at
 // Y=1.599286. Flip local Y so the flat, ringed crown faces the head.
 constexpr float piston_mesh_scale_m = 0.0864f / 2.0f;
-constexpr float piston_crown_above_pin_m = 0.023f;
+constexpr float piston_crown_above_pin_m =
+    static_cast<float>(kSevelPistonCrownAbovePinM);
 
 float piston_mesh_origin_y(float pin_y) {
     return pin_y + piston_crown_above_pin_m;
@@ -74,9 +75,7 @@ void render_sevel_scene_donor(Renderer &renderer,
     const float pitch =
         static_cast<float>(dimensions.visual_estimate_cylinder_pitch_m);
     const float head_y =
-        static_cast<float>(geometry.visual_estimate_rod_length_m +
-                           SevelVisualGeometry::crank_radius_m +
-                           dimensions.visual_estimate_head_height_m);
+        static_cast<float>(sevel_head_face_y_m(geometry));
     for (std::size_t cylinder = 0; cylinder < pulses.size(); ++cylinder) {
         const auto &pulse = pulses[cylinder];
         const float x = (static_cast<float>(cylinder) - 1.5f) * pitch;
@@ -119,18 +118,27 @@ void render_sevel_scene_donor(Renderer &renderer,
             const float center_y = head_y - chamber_height * 0.5f;
             constexpr float bore = 0.0864f;
 
-            GeometryGenerator::Trapezoid2dParameters trap;
-            trap.center_x = x;
-            trap.center_y = center_y;
-            trap.height = chamber_height;
-            trap.top = bore * 0.62f;
-            trap.base = bore * 0.74f;
-
-            generator.startShape();
-            if (!generator.generateTrapezoid2d(trap))
-                throw std::length_error("SEVEL combustion chamber fire capacity");
-            GeometryGenerator::GeometryIndices indices;
-            generator.endShape(&indices);
+            // A misfire fills the chamber with a dim charge; a burn is a front
+            // that widens from the plug (outer layer) around a hotter core.
+            const float growth =
+                pulse.misfire ? 1.0f : flame_front_growth(pulse.strength);
+            const auto chamber_shape = [&](float width_scale) {
+                GeometryGenerator::Trapezoid2dParameters trap;
+                trap.center_x = x;
+                trap.center_y = center_y;
+                trap.height = chamber_height;
+                trap.top = bore * 0.62f * width_scale;
+                trap.base = bore * 0.74f * width_scale;
+                generator.startShape();
+                if (!generator.generateTrapezoid2d(trap))
+                    throw std::length_error(
+                        "SEVEL combustion chamber fire capacity");
+                GeometryGenerator::GeometryIndices shape;
+                generator.endShape(&shape);
+                return shape;
+            };
+            const GeometryGenerator::GeometryIndices indices =
+                chamber_shape(growth);
 
             ysVector flame_color;
             if (pulse.misfire) {
@@ -145,7 +153,19 @@ void render_sevel_scene_donor(Renderer &renderer,
                 const float s = pulse.strength / 0.3f;
                 flame_color = {0.65f + 0.30f * s, 0.18f + 0.25f * s, 0.05f, 0.50f + 0.30f * s};
             }
-            pulse_calls.push_back({indices, flame_color});
+            if (pulse.misfire) {
+                pulse_calls.push_back({indices, flame_color});
+            } else {
+                // Outer layer cooler (red-orange), core hot (white-yellow).
+                pulse_calls.push_back(
+                    {indices,
+                     {flame_color.x, flame_color.y * 0.55f,
+                      flame_color.z * 0.45f, flame_color.w * 0.9f}});
+                pulse_calls.push_back(
+                    {chamber_shape(growth * 0.55f),
+                     {1.0f, 0.93f, 0.62f + 0.30f * pulse.strength,
+                      0.95f}});
+            }
         }
     }
     std::array<GeometryGenerator::GeometryIndices, 2> mesh_indices{};
@@ -280,9 +300,9 @@ void render_sevel_radial_donor(Renderer &renderer,
     // as a measurement of the SEVEL's axial cylinder spacing.
     const float pitch = visual_estimate_radial_section_spacing_m;
     const float head_y =
-        static_cast<float>(geometry.visual_estimate_rod_length_m +
-                           SevelVisualGeometry::crank_radius_m +
-                           dimensions.visual_estimate_head_height_m);
+        static_cast<float>(sevel_head_face_y_m(geometry));
+    const float liner_bottom_y =
+        static_cast<float>(sevel_liner_bottom_y_m(geometry));
     const auto poses = sevel_cylinder_poses(
         snapshot.crank_angle_rad - snapshot.tdc_phase_rad, geometry);
     for (std::size_t cylinder = 0; cylinder < poses.size(); ++cylinder) {
@@ -296,9 +316,9 @@ void render_sevel_radial_donor(Renderer &renderer,
         const auto &pose = poses[cylinder];
         const float bore = 0.0864f;
         const ysVector housing{0.20f, 0.34f, 0.42f, 1.0f};
-        line(center - bore / 2.0f, -0.05f, center - bore / 2.0f, head_y, 0.003f,
+        line(center - bore / 2.0f, liner_bottom_y, center - bore / 2.0f, head_y, 0.003f,
              housing);
-        line(center + bore / 2.0f, -0.05f, center + bore / 2.0f, head_y, 0.003f,
+        line(center + bore / 2.0f, liner_bottom_y, center + bore / 2.0f, head_y, 0.003f,
              housing);
         line(center - bore / 2.0f, head_y, center + bore / 2.0f, head_y, 0.012f,
              housing);

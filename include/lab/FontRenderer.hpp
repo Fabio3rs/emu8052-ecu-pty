@@ -60,6 +60,12 @@ class FontRenderer {
     float text_px(float scale) const {
         return kNominalPx * scale * size_factor_;
     }
+    // Width of `utf8` as it is DRAWN at `scale` (the pixel face snaps to whole
+    // design pixels, so a linear measure(utf8) * scale can be wider than the
+    // glyphs): use this for centring, right-aligning and sizing boxes (L3).
+    float width(const std::string &utf8, float scale) const {
+        return measure_px(utf8, text_px(scale));
+    }
     float scale_for_px(float px) const {
         return px / (kNominalPx * size_factor_);
     }

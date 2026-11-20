@@ -22,6 +22,14 @@ struct ScenePulse {
     float pin_strength = 0.0f;
 };
 
+// 4.4: the flame front grows from the plug while the pulse strength decays:
+// 30 % of the chamber width right after the spark, the full width when it has
+// faded. Clamped, monotone in `strength`.
+inline float flame_front_growth(float strength) {
+    const float s = strength < 0.0f ? 0.0f : strength > 1.0f ? 1.0f : strength;
+    return 1.0f - 0.7f * s;
+}
+
 inline constexpr float visual_estimate_radial_section_spacing_m = 0.12f;
 
 inline ysMatrix scene_fit_projection(SceneCamera camera, float viewport_width,

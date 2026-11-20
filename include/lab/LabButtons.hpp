@@ -1,9 +1,11 @@
 #pragma once
 
 #include "LabLayout.hpp"
+#include "LabTheme.hpp"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace lab {
@@ -24,6 +26,28 @@ enum class LabButtonAction {
 inline constexpr std::array<std::string_view, 9> lab_button_labels{
     "KEY",   "START",  "PED-",   "PED+", "LOAD",
     "PAUSE", "SPEED-", "SPEED+", "MUTE"};
+
+// C5: the keyboard shortcut of each button, as handled in SdlDisplay.cpp and
+// listed in HELP. `underline_first` marks buttons whose shortcut is the first
+// letter of the label (KEY, START, LOAD, MUTE): that letter is underlined;
+// the others (arrows, Space, -/+) show the key as a small tag.
+struct LabButtonShortcut {
+    std::string_view key;
+    bool underline_first;
+};
+
+inline constexpr std::array<LabButtonShortcut, 9> lab_button_shortcuts{{
+    {"K", true},   {"S", true},   {"DN", false},
+    {"UP", false}, {"L", true},   {"SPC", false},
+    {"-", false},  {"+", false},  {"M", true},
+}};
+
+// C5: the tooltip shown while the pointer rests on a button: what it does and
+// its key, e.g. "PEDAL DOWN (DOWN ARROW)". Same keys as HELP and the tags.
+inline constexpr std::array<std::string_view, 9> lab_button_tooltips{{
+    "KEY ON/OFF (K)", "HOLD TO CRANK (S)", "PEDAL DOWN (DOWN ARROW)",
+    "PEDAL UP (UP ARROW)", "LOAD ON/OFF (L), WHEEL 1%", "PAUSE/RESUME (SPACE)",
+    "SPEED HALF (-)", "SPEED DOUBLE (+)", "MUTE (M)"}};
 
 struct LabButtonRect {
     float x = 0.0f;
@@ -90,6 +114,97 @@ inline LabButtonAction hit_test_lab_button(float x, float y, int width,
             return static_cast<LabButtonAction>(index);
     }
     return LabButtonAction::None;
+}
+
+// C1: five visual states per button (normal, hover, pressed, on, disabled),
+// with an accent colour per action instead of one inverted-white style that
+// meant toggle, momentary action and focus all at once.
+struct ButtonRgba {
+    std::uint8_t r = 0, g = 0, b = 0, a = 255;
+    friend bool operator==(const ButtonRgba &, const ButtonRgba &) = default;
+};
+
+enum class LabButtonKind { Toggle, Momentary, Level };
+
+inline LabButtonKind lab_button_kind(LabButtonAction action) {
+    switch (action) {
+    case LabButtonAction::Key:
+    case LabButtonAction::Pause:
+    case LabButtonAction::Mute:
+        return LabButtonKind::Toggle;
+    case LabButtonAction::Load:
+    case LabButtonAction::Slower:
+    case LabButtonAction::Faster:
+        return LabButtonKind::Level;
+    case LabButtonAction::Starter:
+    case LabButtonAction::PedalDown:
+    case LabButtonAction::PedalUp:
+    case LabButtonAction::None:
+        return LabButtonKind::Momentary;
+    }
+    return LabButtonKind::Momentary;
+}
+
+// Accent: green = engine key, amber = pause/starter, red = mute, cyan = the rest.
+inline ButtonRgba lab_button_accent(LabButtonAction action) {
+    switch (action) {
+    case LabButtonAction::Key: return {60, 232, 130, 255};
+    case LabButtonAction::Pause:
+    case LabButtonAction::Starter: return {249, 190, 96, 255};
+    case LabButtonAction::Mute: return {222, 96, 96, 255};
+    case LabButtonAction::PedalDown:
+    case LabButtonAction::PedalUp:
+    case LabButtonAction::Load:
+    case LabButtonAction::Slower:
+    case LabButtonAction::Faster:
+    case LabButtonAction::None: return {kAccent.r, kAccent.g, kAccent.b, kAccent.a};
+    }
+    return {kAccent.r, kAccent.g, kAccent.b, kAccent.a};
+}
+
+struct LabButtonVisual {
+    ButtonRgba fill;
+    ButtonRgba frame;
+    ButtonRgba text;
+    ButtonRgba bar;       // accent bar on the left edge
+    float bar_width = 0.0f; // logical units; 0 = no bar (only the "on" state)
+};
+
+inline ButtonRgba mix_button_color(ButtonRgba a, ButtonRgba b, float t) {
+    const auto lerp = [t](std::uint8_t x, std::uint8_t y) {
+        return static_cast<std::uint8_t>(static_cast<float>(x) +
+                                         (static_cast<float>(y) -
+                                          static_cast<float>(x)) *
+                                             t);
+    };
+    return {lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b), 255};
+}
+
+inline LabButtonVisual compute_button_visual(LabButtonAction action, bool on,
+                                             bool held, bool hover,
+                                             bool enabled) {
+    constexpr ButtonRgba surface{22, 25, 32, 255};     // lead-grey
+    constexpr ButtonRgba border{48, 56, 70, 255};      // subtle border
+    constexpr ButtonRgba text{216, 224, 234, 255};     // light text
+    const ButtonRgba accent = lab_button_accent(action);
+    LabButtonVisual visual{surface, border, text, accent, 0.0f};
+    if (!enabled) { // disabled: text at 40 %, no hover/on emphasis
+        visual.text = mix_button_color(surface, text, 0.40f);
+        visual.frame = mix_button_color(surface, border, 0.70f);
+        return visual;
+    }
+    if (on) { // on: tinted fill + 3 px accent bar, text stays light
+        visual.fill = mix_button_color(surface, accent, 0.20f);
+        visual.frame = mix_button_color(border, accent, 0.55f);
+        visual.bar_width = 3.0f;
+    }
+    if (hover)
+        visual.frame = mix_button_color(visual.frame, text, 0.55f);
+    if (held) { // pressed: stronger fill than "on", frame in the accent
+        visual.fill = mix_button_color(surface, accent, 0.38f);
+        visual.frame = accent;
+    }
+    return visual;
 }
 
 } // namespace lab

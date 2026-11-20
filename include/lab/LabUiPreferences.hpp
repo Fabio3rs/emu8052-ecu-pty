@@ -40,6 +40,8 @@ struct LabUiPreferences {
     // FontSpec token (see font_spec_to_token): "embedded" is the default;
     // an external face is only used when the user selects it explicitly.
     std::string font = "embedded";
+    // T1: colour theme token, "lab" (default) or "oes" (classic OES palette).
+    std::string theme = "lab";
 };
 
 inline bool valid_font_token(const std::string &token) {
@@ -90,7 +92,8 @@ inline bool valid_ui_preferences(const LabUiPreferences &value) {
            value.camera_pane_width >= 0.0f &&
            value.camera_pane_width <= 4096.0f &&
            value.camera_scene_height >= 0.0f &&
-           value.camera_scene_height <= 4096.0f && valid_font_token(value.font);
+           value.camera_scene_height <= 4096.0f && valid_font_token(value.font) &&
+           (value.theme == "lab" || value.theme == "oes");
 }
 
 inline std::filesystem::path ui_preferences_path() {
@@ -118,7 +121,7 @@ inline LabUiPreferences load_ui_preferences() {
                 version.find_first_not_of("0123456789", 1) == std::string::npos
             ? std::atoi(version.c_str() + 1)
             : 0;
-    if (v < 1 || v > 10)
+    if (v < 1 || v > 11)
         return {};
     if (v >= 2) {
         if (!(input >> value.left_fraction >> value.right_fraction))
@@ -145,6 +148,8 @@ inline LabUiPreferences load_ui_preferences() {
             return {};
         if (v >= 10 && !(input >> value.font))
             return {};
+        if (v >= 11 && !(input >> value.theme))
+            return {};
     }
     return valid_ui_preferences(value) && !(input >> extra)
                ? value
@@ -158,7 +163,7 @@ inline bool save_ui_preferences(const LabUiPreferences &value) {
     if (path.empty())
         return false;
     std::ofstream output(path, std::ios::trunc);
-    output << "v10 " << value.scale_percent << ' ' << value.left_fraction << ' '
+    output << "v11 " << value.scale_percent << ' ' << value.left_fraction << ' '
            << value.right_fraction << ' ' << value.mode << ' '
            << value.scope_fraction << ' ' << value.scope_mode << ' '
            << value.analog_group << ' ' << value.analog_span_ticks << ' '
@@ -169,7 +174,7 @@ inline bool save_ui_preferences(const LabUiPreferences &value) {
            << value.axial_pan_x << ' ' << value.axial_pan_y << ' '
            << value.font_percent << ' ' << value.display_units << ' '
            << value.camera_pane_width << ' ' << value.camera_scene_height << ' '
-           << value.font << '\n';
+           << value.font << ' ' << value.theme << '\n';
     output.flush();
     return output.good();
 }

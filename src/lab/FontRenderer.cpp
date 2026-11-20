@@ -648,9 +648,16 @@ void FontRenderer::draw(SDL_Renderer *renderer, float x, float y,
             cursor += static_cast<float>(delta.x) / 64.0f * inv;
         }
         if (glyph->src.w > 0.0f && glyph->src.h > 0.0f) {
-            const SDL_FRect dst{cursor + glyph->left * inv,
-                                y + (b.ascent - glyph->top) * inv,
-                                glyph->src.w * inv, glyph->src.h * inv};
+            // L3: the pixel face is sampled with NEAREST, so a fractional
+            // origin drops or doubles source pixels (THROTTLE -> TFCTILE on
+            // llvmpipe). Put every glyph on a whole device pixel: 1:1 blit.
+            float gx = cursor + glyph->left * inv;
+            float gy = y + (b.ascent - glyph->top) * inv;
+            if (data_->pixel) {
+                gx = std::round(gx * device_scale_) * inv;
+                gy = std::round(gy * device_scale_) * inv;
+            }
+            const SDL_FRect dst{gx, gy, glyph->src.w * inv, glyph->src.h * inv};
             SDL_RenderTexture(renderer, b.texture, &glyph->src, &dst);
         }
         cursor += glyph->advance * inv;
