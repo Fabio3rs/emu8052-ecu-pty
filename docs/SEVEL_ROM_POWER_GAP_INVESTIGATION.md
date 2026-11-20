@@ -622,6 +622,96 @@ Bits de falha ligados pelo degrau (diferenca da XRAM retida contra o caso sem fo
 
 Menor lambda com enriquecimento maximo da malha em plena carga: 0.9446.
 
+### Tabela P26 - formato do mapa base de combustivel: lambda dos cilindros contra pedal e rotacao, com a sonda travada pobre (0 mV) e rica (4500 mV) desde 2 M ticks; '-' = o motor nao sustenta o ponto
+
+| RPM | pedal | lambda sonda pobre | lambda sonda rica | ponto medio |
+|---:|---:|---:|---:|---:|
+| 1500 | 0.5 | 0.9591 | - | - |
+| 1500 | 0.6 | 1.0012 | - | - |
+| 1500 | 0.7 | 1.0133 | - | - |
+| 1500 | 0.8 | 0.9479 | 1.0443 | 0.9961 |
+| 1500 | 0.9 | 0.948 | 1.0452 | 0.9966 |
+| 1500 | 1.0 | 0.9472 | 1.0427 | 0.995 |
+| 2000 | 0.5 | 1.0045 | - | - |
+| 2000 | 0.6 | 1.0423 | - | - |
+| 2000 | 0.7 | 1.0573 | - | - |
+| 2000 | 0.8 | 0.9952 | 1.0613 | 1.0282 |
+| 2000 | 0.9 | 0.9984 | 1.0658 | 1.0321 |
+| 2000 | 1.0 | 0.9981 | 1.0659 | 1.032 |
+| 3000 | 0.5 | 0.966 | - | - |
+| 3000 | 0.6 | 0.9796 | - | - |
+| 3000 | 0.7 | 0.9998 | - | - |
+| 3000 | 0.8 | 0.9676 | 1.0458 | 1.0067 |
+| 3000 | 0.9 | 0.971 | 1.0496 | 1.0103 |
+| 3000 | 1.0 | 0.9705 | 1.0496 | 1.0101 |
+| 4000 | 0.5 | 0.954 | - | - |
+| 4000 | 0.6 | 0.9709 | - | - |
+| 4000 | 0.7 | 0.9898 | - | - |
+| 4000 | 0.8 | 0.9532 | 1.0297 | 0.9915 |
+| 4000 | 0.9 | 0.9485 | 1.0242 | 0.9864 |
+| 4000 | 1.0 | 0.9469 | 1.0243 | 0.9856 |
+| 5000 | 0.5 | 0.8563 | - | - |
+| 5000 | 0.6 | 0.912 | - | - |
+| 5000 | 0.7 | 0.9061 | 1.0004 | 0.9532 |
+| 5000 | 0.8 | 0.9694 | 1.0327 | 1.001 |
+| 5000 | 0.9 | 0.9795 | 1.0446 | 1.012 |
+| 5000 | 1.0 | 0.9788 | 1.0446 | 1.0117 |
+| 6000 | 0.5 | 0.7466 | 0.7886 | 0.7676 |
+| 6000 | 0.6 | 0.8067 | 0.8594 | 0.8331 |
+| 6000 | 0.7 | 0.8982 | 0.9424 | 0.9203 |
+| 6000 | 0.8 | 0.9709 | 1.0028 | 0.9869 |
+| 6000 | 0.9 | 0.9955 | 1.0264 | 1.011 |
+| 6000 | 1.0 | 0.9949 | 1.0263 | 1.0106 |
+
+### Tabela P27 - eixo de carga derivada (IRAM 70h) contra o pedal (borboleta de 90 graus = pedal 1,0)
+
+| RPM | pedal | IRAM 60h (TPS2) | IRAM 70h | lambda | avanco [graus] |
+|---:|---:|---:|---:|---:|---:|
+| 1500 | 0.3 | 36 | 79 | 0.9857 | 10.80 |
+| 1500 | 0.5 | 92 | 135 | 0.9967 | 9.10 |
+| 1500 | 0.6 | 120 | 163 | 0.9965 | 9.79 |
+| 1500 | 0.7 | 147 | 190 | 0.9984 | 9.79 |
+| 1500 | 0.8 | 175 | 218 | 0.9996 | 7.31 |
+| 1500 | 0.9 | 203 | 246 | 1.0001 | 7.10 |
+| 1500 | 1.0 | 230 | 255 | 1.0001 | 7.10 |
+| 3000 | 0.3 | 36 | 79 | 1.0001 | 28.52 |
+| 3000 | 0.5 | 92 | 135 | 0.9952 | 22.82 |
+| 3000 | 0.6 | 120 | 163 | 0.9921 | 21.44 |
+| 3000 | 0.7 | 147 | 190 | 0.9988 | 20.43 |
+| 3000 | 0.8 | 175 | 218 | 1.0033 | 18.56 |
+| 3000 | 0.9 | 203 | 246 | 1.0027 | 18.57 |
+| 3000 | 1.0 | 230 | 255 | 1.0023 | 18.59 |
+| 6000 | 0.5 | 92 | 135 | 0.7885 | 31.45 |
+| 6000 | 0.6 | 120 | 163 | 0.8592 | 29.48 |
+| 6000 | 0.7 | 147 | 190 | 0.9423 | 29.29 |
+| 6000 | 0.8 | 175 | 218 | 0.9959 | 29.34 |
+| 6000 | 0.9 | 203 | 246 | 0.9977 | 29.34 |
+| 6000 | 1.0 | 230 | 255 | 0.9977 | 29.34 |
+
+### Tabela P28 - a ROM segue a sonda em plena carga? Sonda travada so depois da rampa do pedal (12,5 M ticks) contra desde o ocioso (2 M ticks); janela de 200 ciclos
+
+| RPM | sonda | travada a partir de | lambda | potencia [kW] |
+|---:|---|---|---:|---:|
+| 3000 | livre | - | 1.0043 | 37.25 |
+| 3000 | 0 mV | depois da rampa (12,5 M) | 0.9905 | 36.74 |
+| 3000 | 0 mV | ocioso (2 M) | 1.0381 | 36.25 |
+| 3000 | 4500 mV | depois da rampa (12,5 M) | 1.0551 | 35.94 |
+| 3000 | 4500 mV | ocioso (2 M) | 1.0551 | 35.94 |
+| 5000 | livre | - | 1.0044 | 56.70 |
+| 5000 | 0 mV | depois da rampa (12,5 M) | 0.9817 | 56.95 |
+| 5000 | 0 mV | ocioso (2 M) | 1.0335 | 55.33 |
+| 5000 | 4500 mV | depois da rampa (12,5 M) | 1.0479 | 54.86 |
+| 5000 | 4500 mV | ocioso (2 M) | 1.0479 | 54.86 |
+
+### Tabela P29 - enriquecimento de aceleracao: tip-in de ocioso (pedal 30 mm a 10 M ticks, motor sem freio), lambda dos cilindros por janela de 1 ciclo, de 10,2 M a 10,9 M ticks
+
+| caso | lambda minimo | RPM no minimo | lambda a ~3000 RPM | lambda a ~4500 RPM |
+|---|---:|---:|---:|---:|
+| sonda livre, degrau | 0.758 | 1720 | 0.939 | 1.103 |
+| sonda livre, rampa de 0,8 s | 0.796 | 1891 | 0.834 | 0.832 |
+| sonda travada rica (4500 mV), degrau | 0.825 | 1751 | 0.998 | 1.137 |
+| sonda travada pobre (0 mV), degrau | 0.773 | 1759 | 0.877 | 0.923 |
+
 Leitura dos resultados:
 
 1. **Reconhecimento de plena carga: hipótese anterior REFUTADA; o que vale é a consistência entre as trilhas.**
@@ -776,6 +866,22 @@ Validacao contra os DTC transmitidos pela ROM na K-line:
   nunca saltar e o ar poder variar bruscamente (observação do proprietário); o mecanismo exato do filtro não foi decodificado.
 - Limite: não verifiquei a curva NTC (resistência × temperatura) contra um sensor real, nem a polaridade física do divisor; o
   teste funcional "água fria enriquece" foi inconclusivo (a malha fechada de λ mascara; marcha lenta de 908–915 RPM em todos os casos).
+
+### E.4 Enriquecimento: plena carga em regime, aceleração e uso da sonda (investigação da ROM, autorizada pelo proprietário)
+
+Perguntas do proprietário: (1) a ECU deixa de usar a sonda lambda em plena carga? (2) com variação de carga ela costuma ignorar a lambda e enriquecer a mistura.
+
+1. **Plena carga em regime: a ROM segue a sonda e não enriquece.** Sonda travada rica só **depois** de a borboleta abrir (12,5 M ticks) leva o λ de 1,004 a 1,055 (3000 RPM) e de 1,004 a 1,048 (5000 RPM), os mesmos valores de quando a
+   trava vem desde o ocioso (Tabela P28): a malha continua ativa em plena carga. Com a sonda travada pobre depois da rampa o λ só cai a 0,9905 (3000 RPM) e 0,9817 (5000 RPM): a autoridade de enriquecimento
+   da malha é menor que a de empobrecimento. Em toda a faixa de 1500 a 6000 RPM o λ de plena carga fica entre 0,945 e 1,066 nos dois extremos (Tabelas P25 e P26); entre 80 % e 100 % de pedal o λ é constante (a carga derivada IRAM 70h
+   vai de 218 a 255 e satura, Tabela P27), logo não há zona de enriquecimento de plena carga no mapa base nem na malha.
+2. **Enriquecimento de aceleração: existe.** Em tip-in de ocioso (Tabela P29) o λ cai a 0,758 (cerca de 25 % mais rico) por ~0,4 s enquanto a rotação passa de ~1300 a ~2000 RPM e volta a ~0,94 em 3000 RPM; em rampa de pedal de 0,8 s o λ fica em
+   0,83 durante toda a rampa (0,834 a 3000 RPM e 0,832 a 4500 RPM). É o comportamento esperado de uma bomba de aceleração por variação de carga.
+3. **Na variação de carga a ROM não ignora a sonda:** com a sonda travada rica o mínimo do transiente sobe de 0,758 para 0,825 e o λ vai a 1,137 a 4500 RPM; com a sonda travada pobre o λ fica em 0,877 a 3000 RPM e 0,923 a 4500 RPM
+   (contra 0,939 e 1,103 com a sonda livre). A correção da sonda se soma ao enriquecimento transitório; a hipótese "a ECU ignora a lambda durante a variação de carga" **não** se sustenta nesta ROM com este estímulo.
+4. **Conclusão:** esta ROM não tem enriquecimento de potência de plena carga em regime (o λ de plena carga é ~1,0 em toda a faixa) e tem enriquecimento de aceleração que a sonda ainda modula. Limite: o teste é com a calibração
+   desta ROM e o modelo de ar do simulador; um mapa de combustível que dependesse de variável não exercitada (rotação acima de 6000 RPM, temperatura fora de 60–105 °C) não está coberto. O texto das seções D e E que dizia que o enriquecimento
+   não estava resolvido refere-se ao regime; o transiente está agora demonstrado.
 
 ## F. Achados de implementação
 

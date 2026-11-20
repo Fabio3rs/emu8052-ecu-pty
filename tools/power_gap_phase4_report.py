@@ -179,5 +179,37 @@ for rpm in sorted(byr):
     o.append(f"| {rpm} | {byr[rpm][0]:.4f} | {byr[rpm][2500]:.4f} | {byr[rpm][4500]:.4f} |")
 mn = min(v[0] for v in byr.values())
 o += ["", f"Menor lambda com enriquecimento maximo da malha em plena carga: {mn:.4f}."]
+em = list(csv.DictReader(open(D / "enrichment_map.csv")))
+dm = {}
+for r in em:
+    if r["state"] == "ACCEPTED":
+        dm[(int(float(r["rpm"])), float(r["pedal"]), int(r["adc5_mv"]))] = float(r["lambda"])
+o += ["", "### Tabela P26 - formato do mapa base de combustivel: lambda dos cilindros contra pedal e rotacao, com a sonda travada pobre (0 mV) e rica (4500 mV) desde 2 M ticks; '-' = o motor nao sustenta o ponto", "",
+      "| RPM | pedal | lambda sonda pobre | lambda sonda rica | ponto medio |", "|---:|---:|---:|---:|---:|"]
+for rpm in (1500, 2000, 3000, 4000, 5000, 6000):
+    for pd in (0.5, 0.6, 0.7, 0.8, 0.9, 1.0):
+        a = dm.get((rpm, pd, 0)); b = dm.get((rpm, pd, 4500))
+        o.append(f"| {rpm} | {pd} | {a if a is not None else '-'} | {b if b is not None else '-'} | {round((a + b) / 2, 4) if a is not None and b is not None else '-'} |")
+la = list(csv.DictReader(open(D / "load_axis_iram70.csv")))
+o += ["", "### Tabela P27 - eixo de carga derivada (IRAM 70h) contra o pedal (borboleta de 90 graus = pedal 1,0)", "",
+      "| RPM | pedal | IRAM 60h (TPS2) | IRAM 70h | lambda | avanco [graus] |", "|---:|---:|---:|---:|---:|---:|"]
+for r in la:
+    if r["state"] == "ACCEPTED":
+        o.append(f"| {int(float(r['rpm']))} | {r['pedal']} | {r['iram60_tps2']} | {r['iram70']} | {float(r['lambda']):.4f} | {float(r['adv_mean_deg']):.2f} |")
+lf = list(csv.DictReader(open(D / "lambda_follow_at_wot.csv")))
+o += ["", "### Tabela P28 - a ROM segue a sonda em plena carga? Sonda travada so depois da rampa do pedal (12,5 M ticks) contra desde o ocioso (2 M ticks); janela de 200 ciclos", "",
+      "| RPM | sonda | travada a partir de | lambda | potencia [kW] |", "|---:|---|---|---:|---:|"]
+for r in lf:
+    snd = "livre" if r["adc5_mv"] in ("", "None") else f"{r['adc5_mv']} mV"
+    frm = "-" if snd == "livre" else ("depois da rampa (12,5 M)" if r["stuck_tick"] == "12500000" else "ocioso (2 M)")
+    o.append(f"| {int(float(r['rpm']))} | {snd} | {frm} | {float(r['lambda']):.4f} | {float(r['shaft_power_kw']):.2f} |")
+ti = list(csv.DictReader(open(D / "tipin_transient.csv")))
+o += ["", "### Tabela P29 - enriquecimento de aceleracao: tip-in de ocioso (pedal 30 mm a 10 M ticks, motor sem freio), lambda dos cilindros por janela de 1 ciclo, de 10,2 M a 10,9 M ticks", "",
+      "| caso | lambda minimo | RPM no minimo | lambda a ~3000 RPM | lambda a ~4500 RPM |", "|---|---:|---:|---:|---:|"]
+for case, label in (("normal", "sonda livre, degrau"), ("rampa_lenta_0.8s", "sonda livre, rampa de 0,8 s"), ("sonda_rica_travada", "sonda travada rica (4500 mV), degrau"), ("sonda_pobre_travada", "sonda travada pobre (0 mV), degrau")):
+    rr = [r for r in ti if r["case"] == case and 10150000 < int(r["tick_end"]) <= 10900000]
+    mn = min(rr, key=lambda r: float(r["lambda_cyl"]))
+    near = lambda target: min(rr, key=lambda r: abs(float(r["rpm"]) - target))
+    o.append(f"| {label} | {float(mn['lambda_cyl']):.3f} | {float(mn['rpm']):.0f} | {float(near(3000)['lambda_cyl']):.3f} | {float(near(4500)['lambda_cyl']):.3f} |")
 (D / "phase4.md").write_text("\n".join(o) + "\n")
 print("\n".join(o))
