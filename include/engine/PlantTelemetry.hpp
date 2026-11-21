@@ -2,6 +2,7 @@
 // Cycle-window averages of the plant energy and air balance (F-36, F-37, F-38,
 // F-48). Windows are multiples of 4*pi of crank angle, never frames. SI units
 // inside; convert to bar, kW, g/h only in GUI and reports. LLM-written (Claude).
+#include "Lifetime.hpp"
 #include "engine/physics/Combustion.hpp"
 #include "engine/physics/Gas.hpp"
 
@@ -142,7 +143,7 @@ class PlantWindow {
         r.air_mg_per_cyl_cycle = air_kg_ / (cylinders_ * cycles) * 1e6;
         r.air_to_cylinders_kg_s = air_kg_ / time_;
         r.fuel_g_s = inj_kg_ / time_ * 1e3;
-        r.fuel_l_h = r.fuel_g_s * 3.6 / 740.0; // gasoline-class density, report only
+        r.fuel_l_h = r.fuel_g_s * 3600.0 / 740.0; // gasoline-class density (740 g/L), report only
         r.bsfc_g_kwh = r.shaft_power_kw > 0.5
                            ? physics::bsfc_g_kwh(inj_kg_ / time_, r.shaft_power_kw)
                            : 0.0;
@@ -154,7 +155,7 @@ class PlantWindow {
         reset();
         return true;
     }
-    const PlantWindowResult &last() const { return last_; }
+    const PlantWindowResult &last() const EMU_LIFETIMEBOUND { return last_; }
     // Diagnostic only: shorter windows for transient analysis (>= 1 cycle).
     void set_window_cycles(double cycles) {
         if (cycles >= 1.0) window_angle_rad_ = cycles * 4.0 * physics::pi;

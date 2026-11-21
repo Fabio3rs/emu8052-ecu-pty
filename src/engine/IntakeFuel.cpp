@@ -31,21 +31,19 @@ IntakeFuel::IntakeFuel(IntakeFuelParameters parameters)
         !(parameters.throttle_leak_area_m2 >= 0.0) ||
         !(parameters.film_fraction >= 0.0) || parameters.film_fraction > 1.0)
         throw std::invalid_argument("invalid intake parameters");
+    update_cached_pressures();
 }
 
-double IntakeFuel::pressure_pa() const {
-    return air_mass_kg_ * gas_constant_j_per_kg_k *
-           (air_temperature_c_ + kelvin_offset) /
-           parameters_.manifold_volume_m3;
-}
-
-double IntakeFuel::pumping_torque_nm() const {
-    // F-40: PMEP = p_e - p_m (p_e = p_amb in the legacy plant).
-    const double intake_pressure_drop_pa = std::max(
-        0.0, (parameters_.exhaust_back_pressure_k > 0.0 ? exhaust_pressure_pa_
-                                                        : parameters_.ambient_pressure_pa) -
-                 pressure_pa());
-    return intake_pressure_drop_pa * parameters_.displacement_m3 / (4.0 * pi);
+void IntakeFuel::update_cached_pressures() {
+    pressure_pa_ = air_mass_kg_ * gas_constant_j_per_kg_k *
+                   (air_temperature_c_ + kelvin_offset) /
+                   parameters_.manifold_volume_m3;
+    const double pe = parameters_.exhaust_back_pressure_k > 0.0
+                          ? exhaust_pressure_pa_
+                          : parameters_.ambient_pressure_pa;
+    const double intake_pressure_drop_pa = std::max(0.0, pe - pressure_pa_);
+    pumping_torque_nm_ =
+        intake_pressure_drop_pa * parameters_.displacement_m3 / (4.0 * pi);
 }
 
 IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
@@ -121,11 +119,6 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
         old_air_mass_kg + result.air_in_kg - result.air_to_cylinders_kg;
     last_air_in_kg_s_ = result.air_in_kg / dt_s;
     last_air_cyl_kg_s_ = result.air_to_cylinders_kg / dt_s;
-    if (parameters_.exhaust_back_pressure_k > 0.0) {
-        const double m_exh = last_air_cyl_kg_s_ + result.fuel_to_cylinders_kg / dt_s;
-        exhaust_pressure_pa_ = parameters_.exhaust_pressure_pa +
-                               parameters_.exhaust_back_pressure_k * m_exh * m_exh;
-    }
     air_in_total_kg_ += result.air_in_kg;
     air_delivered_total_kg_ += result.air_to_cylinders_kg;
 
@@ -144,6 +137,15 @@ IntakeStep IntakeFuel::step(double dt_s, double rpm, double angle_rad,
     fuel_vapor_kg_ -= result.fuel_to_cylinders_kg;
     injected_total_kg_ += injected_fuel_kg;
     fuel_delivered_total_kg_ += result.fuel_to_cylinders_kg;
+
+    if (parameters_.exhaust_back_pressure_k > 0.0) {
+        const double m_exh =
+            last_air_cyl_kg_s_ + result.fuel_to_cylinders_kg / dt_s;
+        exhaust_pressure_pa_ =
+            parameters_.exhaust_pressure_pa +
+            parameters_.exhaust_back_pressure_k * m_exh * m_exh;
+    }
+    update_cached_pressures();
     return result;
 }
 

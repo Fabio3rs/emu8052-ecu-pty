@@ -5,7 +5,6 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <queue>
 #include <string>
 
 namespace ma17 {
@@ -31,15 +30,17 @@ struct PtyBridge {
     long long low_until_tick = 0;
     std::array<unsigned char, 3> break_detect_buffer{};
     int break_detect_idx = 0;
-    std::queue<unsigned char> rx_queue;
     std::chrono::steady_clock::time_point last_tx_time{};
+    std::array<unsigned char, 64> ingress_buffer_{};
+    size_t ingress_head_ = 0;
+    size_t ingress_count_ = 0;
 
     bool ignore_parmark();
     bool is_receiving_packets();
     bool open_pty_4800_8N1();
     void tx(unsigned char byte);
-    int rx_try();
     void read_and_process();
+    void process_byte(unsigned char byte);
 };
 
 } // namespace ma17

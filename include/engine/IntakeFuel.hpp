@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Lifetime.hpp"
 #include "engine/physics/Flow.hpp"
 #include "engine/physics/Volumetric.hpp"
 
@@ -47,9 +48,9 @@ class IntakeFuel {
                     double air_temperature_c, double wall_temperature_c,
                     double injected_fuel_kg);
 
-    double pressure_pa() const;
+    double pressure_pa() const { return pressure_pa_; }
     // Four-stroke intake pumping work per crank revolution, as mean torque.
-    double pumping_torque_nm() const;
+    double pumping_torque_nm() const { return pumping_torque_nm_; }
     double air_mass_kg() const { return air_mass_kg_; }
     double fuel_film_kg() const { return fuel_film_kg_; }
     double fuel_vapor_kg() const { return fuel_vapor_kg_; }
@@ -66,7 +67,7 @@ class IntakeFuel {
     // Current exhaust back-pressure (F-41), used for residual gas and pumping.
     double exhaust_pressure_pa() const { return exhaust_pressure_pa_; }
     double air_temperature_c() const { return air_temperature_c_; }
-    const IntakeFuelParameters &parameters() const { return parameters_; }
+    const IntakeFuelParameters &parameters() const EMU_LIFETIMEBOUND { return parameters_; }
 
   private:
     IntakeFuelParameters parameters_;
@@ -84,6 +85,10 @@ class IntakeFuel {
     double last_ve_manifold_ = 0.0;
     double last_ve_ambient_ = 0.0;
     double exhaust_pressure_pa_ = 100000.0;
+    double pressure_pa_ = 0.0;
+    double pumping_torque_nm_ = 0.0;
+
+    void update_cached_pressures();
 };
 
 } // namespace engine

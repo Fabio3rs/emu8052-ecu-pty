@@ -48,6 +48,7 @@ class LiveAudio final {
     std::atomic<bool> stop_{false};
     std::atomic<bool> suspended_{false};
     std::atomic<bool> device_started_{false};
+    float applied_ratio_ = 1.0f;
     std::atomic<unsigned long long> dropped_{0};
     std::atomic<unsigned long long> mode_discarded_{0};
     std::atomic<unsigned long long> empty_queue_observations_{0};

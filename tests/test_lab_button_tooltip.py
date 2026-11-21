@@ -22,8 +22,8 @@ def capture(shot, point):
          "3000000", "--screenshot", str(shot)], env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     window = ""
-    for _ in range(80):
-        found = subprocess.run(["xdotool", "search", "--name", "SEVEL MA1.7"],
+    for _ in range(300):
+        found = subprocess.run(["xdotool", "search", "--name", "FIAT TIPO"],
                                text=True, capture_output=True)
         if found.stdout.strip():
             window = found.stdout.split()[-1]

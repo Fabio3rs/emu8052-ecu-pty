@@ -1199,7 +1199,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     Uint64 last_frame_ticks = SDL_GetTicks();
     Uint64 last_snapshot_wall_ms = last_frame_ticks;
     long long last_snapshot_tick = snapshot.tick;
-    long long last_pedal_tick = snapshot.tick;
     ma17::EmulatorSnapshot displayed = snapshot;
     const auto click_digital_cursor =
         [&](float x, float y, int scope_width, int view_height, bool is_frozen,
@@ -2654,21 +2653,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         const float frame_dt =
             static_cast<float>(frame_ticks - last_frame_ticks) / 1000.0f;
         last_frame_ticks = frame_ticks;
-        const long long pedal_elapsed_ticks =
-            std::max(0LL, displayed.tick - last_pedal_tick);
-        last_pedal_tick = displayed.tick;
         if (session && pedal_user_override && !replay_controls &&
             !session->paused()) {
-            // Limit each command as well as the cable speed: a sudden pedal
-            // step can trigger the ROM's transient fault with the contact open.
-            const double step_m = std::min(
-                0.0005,
-                0.016 * static_cast<double>(pedal_elapsed_ticks) / 990000.0);
-            const double change_m =
-                std::clamp(pedal_pull_m - pedal_applied_m, -step_m, step_m);
-            if (std::abs(change_m) > 1e-9) {
-                pedal_applied_m += change_m;
-                session->set_pedal(pedal_applied_m);
+            if (std::abs(pedal_pull_m - pedal_applied_m) > 1e-9) {
+                pedal_applied_m = pedal_pull_m;
+                session->set_pedal_target(pedal_pull_m);
             }
         }
         gauges[0].m_value = static_cast<float>(displayed.rpm);
@@ -3523,12 +3512,15 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                      sweep_state.plan.size());
                 }
             }
-            auto &curves = dyno_scene->curves;
-            curves.erase(std::remove_if(curves.begin(), curves.end(),
-                                        [](const DynoCurve &c) { return c.label == "RUN WOT"; }),
-                         curves.end());
+            dyno_scene->curves.erase(
+                std::remove_if(dyno_scene->curves.begin(),
+                               dyno_scene->curves.end(),
+                               [](const DynoCurve &c) {
+                                   return c.label == "RUN WOT";
+                               }),
+                dyno_scene->curves.end());
             if (!sweep_state.curve.points.empty())
-                curves.push_back(sweep_state.curve);
+                dyno_scene->curves.push_back(sweep_state.curve);
             dyno_scene->sweep_lines = sweep_state.lines();
         }
         std::vector<int> pending_snapshot_requests;

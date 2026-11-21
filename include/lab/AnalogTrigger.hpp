@@ -80,9 +80,9 @@ find_event_trigger(std::span<const ma17::EmulatorEvent> events,
              event.type == ma17::EmulatorEventType::Spark &&
              event.pair_index == 1);
         if (matched) {
-            if (occurrence == TriggerOccurrence::First)
-                return event.tick;
             latest = event.tick;
+            if (occurrence == TriggerOccurrence::First)
+                return latest;
         }
     }
     return latest;
@@ -118,9 +118,9 @@ find_analog_trigger(std::span<const ma17::EmulatorSnapshot> history,
             (slope == TriggerSlope::Rising
                  ? *previous_value < level && *value >= level
                  : *previous_value > level && *value <= level)) {
-            if (occurrence == TriggerOccurrence::First)
-                return sample.tick;
             latest = sample.tick;
+            if (occurrence == TriggerOccurrence::First)
+                return latest;
         }
         previous_tick = sample.tick;
         previous_value = *value;

@@ -55,6 +55,7 @@ void LiveAudio::run() {
     using namespace std::chrono_literals;
     StreamingAudio source;
     long long last_audio_tick = 0;
+    std::size_t cursor = 0;
     bool was_active = false;
     bool had_output = false;
     bool device_started = false;
@@ -64,8 +65,9 @@ void LiveAudio::run() {
             std::this_thread::sleep_for(10ms);
             continue;
         }
+        const double current_speed = session_.speed();
         const bool active =
-            snapshot.key_on && !session_.paused() && session_.speed() <= 1.0;
+            snapshot.key_on && !session_.paused() && current_speed <= 1.0;
         if (!active) {
             suspended_.store(true);
             recent_pcm_peak_.store(0);
@@ -81,6 +83,9 @@ void LiveAudio::run() {
                 else if (queued > 0)
                     mode_discarded_.fetch_add(
                         static_cast<unsigned>(queued / 2));
+                applied_ratio_ = 1.0f;
+                if (!SDL_SetAudioStreamFrequencyRatio(stream_, 1.0f))
+                    ++write_errors_;
                 was_active = false;
                 had_output = false;
                 device_started = false;
@@ -88,18 +93,25 @@ void LiveAudio::run() {
             std::this_thread::sleep_for(10ms);
             continue;
         }
-        const EventWindow window = session_.event_window();
+        const float target_ratio = static_cast<float>(current_speed);
+        if (target_ratio != applied_ratio_) {
+            if (SDL_SetAudioStreamFrequencyRatio(stream_, target_ratio))
+                applied_ratio_ = target_ratio;
+            else
+                ++write_errors_;
+        }
         if (!was_active) {
+            const EventWindow window = session_.event_window();
             // The event copy may advance beyond the separately read snapshot.
             const auto first_future = std::upper_bound(
                 window.events.begin(), window.events.end(), snapshot.tick,
                 [](long long tick, const ma17::EmulatorEvent &event) {
                     return tick < event.tick;
                 });
-            source.seek_to(snapshot.tick,
-                           window.base_index + static_cast<std::size_t>(
-                                                   first_future -
-                                                   window.events.begin()));
+            cursor = window.base_index + static_cast<std::size_t>(
+                                            first_future -
+                                            window.events.begin());
+            source.seek_to(snapshot.tick, cursor);
             last_audio_tick = snapshot.tick;
             was_active = true;
             suspended_.store(false);
@@ -107,22 +119,26 @@ void LiveAudio::run() {
         if (snapshot.tick > last_audio_tick) {
             constexpr long long max_gap_ticks = 495000;
             if (snapshot.tick - last_audio_tick > max_gap_ticks) {
+                const EventWindow window = session_.event_window();
                 const long long start_tick = snapshot.tick - max_gap_ticks / 2;
                 const auto first = std::lower_bound(
                     window.events.begin(), window.events.end(), start_tick,
                     [](const ma17::EmulatorEvent &event, long long tick) {
                         return event.tick < tick;
                     });
-                source.seek_to(start_tick,
-                               window.base_index +
-                                   static_cast<std::size_t>(
-                                       first - window.events.begin()));
+                cursor = window.base_index +
+                         static_cast<std::size_t>(
+                             first - window.events.begin());
+                source.seek_to(start_tick, cursor);
                 dropped_.fetch_add(static_cast<unsigned long long>(
                     (snapshot.tick - last_audio_tick - max_gap_ticks / 2) *
                     44100 / 990000));
             }
-            const auto pcm = source.render_until(window.events, snapshot.tick,
-                                                 window.base_index);
+            const auto delta = session_.events_since(cursor);
+            const std::size_t base = std::max(cursor, delta.base_index);
+            cursor = delta.next_index;
+            const auto pcm = source.render_until(delta.events, snapshot.tick,
+                                                 base);
             const int queued = SDL_GetAudioStreamQueued(stream_);
             bool queue_ready = queued >= 0;
             if (queued < 0) {

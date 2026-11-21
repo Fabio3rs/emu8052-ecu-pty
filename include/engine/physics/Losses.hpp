@@ -77,7 +77,7 @@ inline double accessory_torque_nm(const AccessoryParams &a, double v_sys, double
     const double ramp = std::clamp(
         (rpm - a.charge_start_rpm) / (a.charge_full_rpm - a.charge_start_rpm), 0.0, 1.0);
     const double alt = ramp * v_sys * a.electrical_current_a /
-                       (a.alternator_efficiency * a.alternator_ratio * omega);
+                       (a.alternator_efficiency * omega);
     const double r = omega / a.pump_ref_rad_s;
     return a.alternator_scale * alt + a.pump_scale * a.pump_nm_at_ref * r * r;
 }

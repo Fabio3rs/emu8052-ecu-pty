@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include <SDL3/SDL.h>
 
 #include <cstdint>
@@ -74,9 +76,9 @@ class FontRenderer {
     // Whether a drawable atlas entry exists for `cp` in the bucket for `px`.
     bool has_glyph(char32_t cp, float px) const;
     // "<family> sha256=<hex>[ +fallback <family> sha256=<hex>]"
-    const std::string &face_identity() const;
+    const std::string &face_identity() const EMU_LIFETIMEBOUND;
     // Empty unless a bucket could not be built (e.g. atlas out of space).
-    const std::string &last_error() const;
+    const std::string &last_error() const EMU_LIFETIMEBOUND;
 
     static const std::vector<char32_t> &charset();
     // Number of times any system font path was probed in this process.
@@ -85,7 +87,7 @@ class FontRenderer {
   private:
     struct Data;
     struct Bucket;
-    Bucket &bucket_for(float device_px) const;
+    Bucket &bucket_for(float device_px) const EMU_LIFETIMEBOUND;
     float snap_device_px(float device_px) const;
 
     std::unique_ptr<Data> data_;

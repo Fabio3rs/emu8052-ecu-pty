@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <memory>
@@ -23,7 +26,7 @@ struct Json {
     std::string key;           // set on the members of an object
     std::vector<Json> object;  // members, each carrying its key
 
-    const Json *get(const std::string &name) const {
+    const Json *get(const std::string &name) const EMU_LIFETIMEBOUND {
         for (const auto &member : object)
             if (member.key == name)
                 return &member;
@@ -36,14 +39,16 @@ struct Json {
 
 class JsonParser {
   public:
-    explicit JsonParser(const std::string &text) : text_(text) {}
+    explicit JsonParser(const std::string &text EMU_LIFETIMEBOUND) : text_(text) {}
 
     std::optional<Json> parse() {
         skip_space();
-        auto value = parse_value(0);
+        std::optional<Json> value = parse_value(0);
         skip_space();
-        if (!value || pos_ != text_.size())
-            return std::nullopt;
+        if (!value || pos_ != text_.size()) {
+            value.reset();
+            return value;
+        }
         return value;
     }
 
@@ -119,14 +124,20 @@ class JsonParser {
 
     static void append_utf8(std::string &out, unsigned code) {
         if (code < 0x80) {
-            out += static_cast<char>(code);
+            out.push_back(static_cast<char>(code));
         } else if (code < 0x800) {
-            out += static_cast<char>(0xC0 | (code >> 6));
-            out += static_cast<char>(0x80 | (code & 0x3F));
+            const std::array<char, 2> buf = {
+                static_cast<char>(0xC0 | (code >> 6)),
+                static_cast<char>(0x80 | (code & 0x3F))
+            };
+            out.append(buf.data(), buf.size());
         } else {
-            out += static_cast<char>(0xE0 | (code >> 12));
-            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (code & 0x3F));
+            const std::array<char, 3> buf = {
+                static_cast<char>(0xE0 | (code >> 12)),
+                static_cast<char>(0x80 | ((code >> 6) & 0x3F)),
+                static_cast<char>(0x80 | (code & 0x3F))
+            };
+            out.append(buf.data(), buf.size());
         }
     }
 

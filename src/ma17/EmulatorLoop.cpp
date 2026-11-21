@@ -974,18 +974,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
             cpu.mLowerData[(*iram_setting)[1]] =
                 static_cast<uint8_t>((*iram_setting)[2]);
         }
-        // K2: record the table address a MOVC is about to read.
-        // Only on the tick that starts an instruction (mTickDelay == 0): the
-        // wait ticks of a multi-cycle instruction would count it again. The
-        // fetch is masked like every other code access.
-        if (cpu.mTickDelay == 0)
-            if (const long movc = movc_effective_address(
-                    cpu.mCodeMem[cpu.mPC & cpu.mCodeMemMaxIdx], cpu.mPC,
-                    cpu.mSFR[REG_ACC],
-                    static_cast<std::uint16_t>((cpu.mSFR[0x83 - 0x80] << 8) |
-                                               cpu.mSFR[0x82 - 0x80]));
-                movc >= 0)
-                context.code_reads.record(static_cast<std::uint16_t>(movc));
+        // K2: record table address via CPU coderead callback directly during MOVC execution
         tick(&cpu);
         context.diagnostic_lamp.sample_p5(cpu.mSFR[0xF8 - 0x80]);
         if (context.pump_relay_p34_candidate) {
@@ -1414,6 +1403,13 @@ static void run_tick_batch(EmulatorLoopContext &context,
     }
 }
 
+static thread_local CodeReadTrace *s_active_code_reads = nullptr;
+
+static void on_cpu_coderead(em8051 *, uint16_t address) {
+    if (s_active_code_reads)
+        s_active_code_reads->record(address);
+}
+
 static void reboot_cpu_with_retained_ram(em8051 &cpu) {
     // Hypothesis: key-on releases /HWPD while battery-backed RAM retains data.
     // reset(false) resets the core but also reinstalls opcode/SFR callbacks;
@@ -1428,6 +1424,7 @@ static void reboot_cpu_with_retained_ram(em8051 &cpu) {
     std::copy(operations.begin(), operations.end(), std::begin(cpu.op));
     std::copy(sfr_reads.begin(), sfr_reads.end(), std::begin(cpu.sfrread));
     std::copy(sfr_writes.begin(), sfr_writes.end(), std::begin(cpu.sfrwrite));
+    cpu.coderead = on_cpu_coderead;
 }
 
 static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
@@ -1542,6 +1539,8 @@ static EmulatorSnapshot capture_snapshot(const EmulatorLoopContext &context) {
 
 void run_emulator_loop(EmulatorLoopContext &context) {
     em8051 &cpu = context.cpu;
+    s_active_code_reads = &context.code_reads;
+    cpu.coderead = on_cpu_coderead;
     uint16_t last_pc = cpu.mPC;
     std::array<uint8_t, 0x8000> pc_seen{};
     static thread_local MovcCounts local_movc_counts;
@@ -1652,8 +1651,9 @@ void run_emulator_loop(EmulatorLoopContext &context) {
     if (context.on_control)
         context.on_control(context, context.control_context);
     bool previous_key_on = context.key_on;
+    std::chrono::steady_clock::time_point pace_deadline{};
+    bool pace_deadline_valid = false;
     while (context.running.load()) {
-        const auto loop_start = std::chrono::steady_clock::now();
         if (context.inject_5baud.load()) {
             context.inject_5baud = false;
             fprintf(stderr, "\n[SIGUSR1] Received - starting 5-baud injection "
@@ -1725,18 +1725,29 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             break;
         }
 
-        // An external PTY scanner uses wall-time 5-baud bit periods.
+        // Observers (e.g. SimSession) drive their own pacing.
         // Physical headless runs retain their unrestricted virtual clock.
-        if (context.physical_crank && !context.physical_pty_realtime) continue;
-        const auto elapsed_ns =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now() - loop_start);
-        const auto sleep_ns = (context.batch_duration - elapsed_ns) -
-                              std::chrono::nanoseconds(41200);
-        if (sleep_ns.count() > 0) {
-            ts.tv_sec = 0;
-            ts.tv_nsec = sleep_ns.count();
-            nanosleep(&ts, nullptr);
+        if (context.on_snapshot != nullptr ||
+            (context.physical_crank && !context.physical_pty_realtime)) {
+            continue;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (!pace_deadline_valid) {
+            pace_deadline = now;
+            pace_deadline_valid = true;
+        }
+        pace_deadline += context.batch_duration;
+        if (pace_deadline + std::chrono::milliseconds(100) < now) {
+            pace_deadline = now;
+        } else if (pace_deadline > now) {
+            const auto sleep_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    pace_deadline - now);
+            if (sleep_ns.count() > 50000) {
+                ts.tv_sec = static_cast<time_t>(sleep_ns.count() / 1000000000LL);
+                ts.tv_nsec = static_cast<long>(sleep_ns.count() % 1000000000LL);
+                nanosleep(&ts, nullptr);
+            }
         }
     }
 

@@ -34,9 +34,13 @@ void trace_invalid_pc(const em8051 &cpu, uint16_t last_pc) {
     fprintf(stderr, "\n");
     fprintf(stderr, "[ALERT] ACC=0x%02X PSW=0x%02X SP=0x%02X\n", acc, psw, sp);
     fprintf(stderr, "[ALERT] Stack top 4 bytes: ");
-    for (int s = 0; s < 4 && sp >= s; s++)
-        fprintf(stderr, "0x%02X ",
-                cpu.mLowerData[sp - static_cast<unsigned int>(s)]);
+    for (int s = 0; s < 4 && sp >= s; s++) {
+        const unsigned int addr = sp - static_cast<unsigned int>(s);
+        const uint8_t val = (addr >= 0x80 && cpu.mUpperData)
+                                ? cpu.mUpperData[addr - 0x80]
+                                : cpu.mLowerData[addr & 0x7F];
+        fprintf(stderr, "0x%02X ", val);
+    }
     fprintf(stderr, "\n");
     fprintf(stderr, "[ALERT] IE=0x%02X, mInterruptActive=%d\n",
             cpu.mSFR[0xA8 - 0x80], cpu.mInterruptActive);
@@ -376,6 +380,10 @@ void trace_port_edges(const em8051 &cpu, long long tick, uint16_t source_pc) {
 }
 
 void trace_p13_shadow(const em8051 &cpu, long long tick, uint16_t source_pc) {
+    static const bool enabled = std::getenv("MA17_TRACE_P13") != nullptr;
+    if (!enabled)
+        return;
+
     static uint8_t last_value = (cpu.mSFR[0x90 - 0x80] >> 3) & 1u;
     static std::chrono::high_resolution_clock::time_point last_time =
         std::chrono::high_resolution_clock::now();

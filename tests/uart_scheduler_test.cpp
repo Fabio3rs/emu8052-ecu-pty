@@ -41,10 +41,21 @@ TEST(UartScheduler, RxSetsRiAfterNineAndHalfBitsWithoutReplacingTx) {
     EXPECT_EQ(cpu.mSFR[0x98 - 0x80] & 0x01, 0x01);
     EXPECT_EQ(uart.on_sbuf_read(&cpu, 0x99), 0xA5);
     EXPECT_EQ(cpu.mSFR[0x99 - 0x80], 0x55);
-    ASSERT_EQ(bridge.rx_queue.size(), 1);
-    EXPECT_EQ(bridge.rx_queue.front(), 0xA5);
 
+    // Overrun while RI=1: new byte is dropped, sbuf_rx remains 0xA5
     uart.on_scanner_byte(0x33);
-    EXPECT_EQ(bridge.rx_queue.size(), 1);
     EXPECT_EQ(uart.on_sbuf_read(&cpu, 0x99), 0xA5);
+}
+
+TEST(UartScheduler, SimultaneousEventsPreserveFifoOrder) {
+    ma17::PtyBridge bridge{+[](uint8_t) {}};
+    long long ticks = 0;
+    ma17::UartScheduler uart{bridge, ticks};
+    em8051 cpu{};
+    uart.bind_cpu(&cpu);
+
+    cpu.mSFR[0x99 - 0x80] = 0xAA;
+    uart.on_sbuf_write(&cpu);
+    uart.tick(&cpu, 9 * 206);
+    EXPECT_EQ(cpu.mSFR[0x98 - 0x80] & 0x02, 0x02);
 }

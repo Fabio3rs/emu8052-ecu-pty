@@ -195,6 +195,14 @@ if(ENABLE_SEVEL_MA17_LAB)
                 GIT_SHALLOW TRUE)
             FetchContent_MakeAvailable(SDL3)
         endif()
+        if(TARGET SDL3::SDL3)
+            get_target_property(_sdl3_target SDL3::SDL3 ALIASED_TARGET)
+            if(NOT _sdl3_target)
+                set(_sdl3_target SDL3::SDL3)
+            endif()
+            set_target_properties(${_sdl3_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                "$<TARGET_PROPERTY:${_sdl3_target},INTERFACE_INCLUDE_DIRECTORIES>")
+        endif()
     endif()
     add_library(open-engine-sim-geometry STATIC
         third_party/open-engine-sim/src/gaussian_filter.cpp
@@ -239,6 +247,22 @@ if(ENABLE_SEVEL_MA17_LAB)
     if(ENABLE_SEVEL_MA17_LAB_GUI)
         find_package(ZLIB REQUIRED)
         find_package(Freetype REQUIRED)
+        if(TARGET Freetype::Freetype)
+            get_target_property(_ft_target Freetype::Freetype ALIASED_TARGET)
+            if(NOT _ft_target)
+                set(_ft_target Freetype::Freetype)
+            endif()
+            set_target_properties(${_ft_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                "$<TARGET_PROPERTY:${_ft_target},INTERFACE_INCLUDE_DIRECTORIES>")
+        endif()
+        if(TARGET ZLIB::ZLIB)
+            get_target_property(_zlib_target ZLIB::ZLIB ALIASED_TARGET)
+            if(NOT _zlib_target)
+                set(_zlib_target ZLIB::ZLIB)
+            endif()
+            set_target_properties(${_zlib_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                "$<TARGET_PROPERTY:${_zlib_target},INTERFACE_INCLUDE_DIRECTORIES>")
+        endif()
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets)
         configure_file(
             third_party/open-engine-sim/assets/authored_meshes.obj.zlib.b64

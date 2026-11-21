@@ -44,7 +44,6 @@ bool PtyBridge::open_pty_4800_8N1() {
     low_until_tick = 0;
     break_detect_buffer.fill(0);
     break_detect_idx = 0;
-    rx_queue = {};
     last_tx_time = {};
     char namebuf[128] = {0};
     struct termios tio {};
@@ -109,22 +108,25 @@ void PtyBridge::tx(unsigned char byte) {
     }
 }
 
-int PtyBridge::rx_try() {
-    if (rx_queue.empty())
-        return -1;
-    unsigned char byte = rx_queue.front();
-    rx_queue.pop();
-    fprintf(stderr, "[RX-QUEUE] Dequeued 0x%02X (queue size was %zu)\n", byte,
-            rx_queue.size() + 1);
-    fflush(stderr);
-    return static_cast<int>(byte);
+void PtyBridge::read_and_process() {
+    if (ingress_head_ >= ingress_count_) {
+        ingress_head_ = 0;
+        ingress_count_ = 0;
+        if (mfd < 0)
+            return;
+        ssize_t n = read(mfd, ingress_buffer_.data(), ingress_buffer_.size());
+        if (n <= 0)
+            return;
+        ingress_count_ = static_cast<size_t>(n);
+    }
+
+    while (ingress_head_ < ingress_count_) {
+        const unsigned char byte = ingress_buffer_[ingress_head_++];
+        process_byte(byte);
+    }
 }
 
-void PtyBridge::read_and_process() {
-    unsigned char byte = 0;
-    if (read(mfd, &byte, 1) != 1)
-        return;
-
+void PtyBridge::process_byte(unsigned char byte) {
     if (ignore_parmark()) {
         break_detect_idx = 0;
         break_detect_buffer[0] = 0;
@@ -132,7 +134,8 @@ void PtyBridge::read_and_process() {
         break_detect_buffer[2] = 0;
         last_tx_time = std::chrono::steady_clock::now();
         (void)!write(mfd, &byte, 1);
-        on_byte(byte);
+        if (on_byte)
+            on_byte(byte);
         return;
     }
 
@@ -146,7 +149,8 @@ void PtyBridge::read_and_process() {
 
         last_tx_time = std::chrono::steady_clock::now();
         (void)!write(mfd, &byte, 1);
-        on_byte(byte);
+        if (on_byte)
+            on_byte(byte);
         rxd_line_state = true;
         return;
     }
@@ -160,15 +164,18 @@ void PtyBridge::read_and_process() {
         if (byte == 0xFF) {
             unsigned char ff = 0xFF;
             (void)!write(mfd, &ff, 1);
-            on_byte(ff);
+            if (on_byte)
+                on_byte(ff);
             rxd_line_state = true;
             break_detect_idx = 0;
             return;
         }
 
         (void)!write(mfd, break_detect_buffer.data(), 2);
-        on_byte(break_detect_buffer[0]);
-        on_byte(byte);
+        if (on_byte) {
+            on_byte(break_detect_buffer[0]);
+            on_byte(byte);
+        }
         rxd_line_state = true;
         break_detect_idx = 0;
         return;
@@ -189,7 +196,8 @@ void PtyBridge::read_and_process() {
             fflush(stderr);
         } else {
             (void)!write(mfd, &byte, 1);
-            on_byte(byte);
+            if (on_byte)
+                on_byte(byte);
             rxd_line_state = true;
         }
         break_detect_idx = 0;

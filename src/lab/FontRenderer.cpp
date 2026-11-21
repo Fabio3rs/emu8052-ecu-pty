@@ -190,7 +190,7 @@ struct FontRenderer::Data {
         // SHA-256 of the face bytes, computed on first use: hashing the 334 KB
         // fallback at construction cost ~45 ms of UI startup.
         mutable std::string sha;
-        const std::string &sha256() const {
+        const std::string &sha256() const EMU_LIFETIMEBOUND {
             if (sha.empty())
                 sha = sha256_hex(bytes);
             return sha;
@@ -548,7 +548,8 @@ float FontRenderer::line_height(float px) const {
 namespace {
 // Glyph lookup with the '?' substitution for anything outside the charset.
 template <typename Map>
-const typename Map::mapped_type *glyph_for(const Map &glyphs, char32_t cp) {
+const typename Map::mapped_type *
+glyph_for(const Map &glyphs EMU_LIFETIMEBOUND, char32_t cp) {
     auto it = glyphs.find(cp);
     if (it == glyphs.end() || !it->second.present)
         it = glyphs.find(U'?');

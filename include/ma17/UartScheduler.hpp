@@ -30,11 +30,14 @@ class UartScheduler {
     enum class EventKind : uint8_t { TxDone, RxByte };
     struct Event {
         long long when_tick;
+        uint64_t sequence;
         EventKind kind;
         uint8_t data;
 
         bool operator<(const Event &other) const {
-            return when_tick > other.when_tick;
+            if (when_tick != other.when_tick)
+                return when_tick > other.when_tick;
+            return sequence > other.sequence;
         }
     };
 
@@ -56,6 +59,9 @@ class UartScheduler {
     uint8_t sbuf_rx_ = 0;
     uint8_t previous_scon_ = 0x50;
     int scon_write_count_ = 0;
+    uint64_t next_sequence_ = 0;
+    long long rx_busy_until_tick_ = 0;
+    long long last_scon_poll_tick_ = -1;
     std::priority_queue<Event> events_;
 };
 

@@ -37,6 +37,9 @@ void trace_cpu_exception(em8051 *cpu, int code) {
 }
 
 void trace_ie_write(em8051 *cpu, uint8_t address) {
+#ifdef __SAB80C517__
+    cpu->irq_inhibit = 1;
+#endif
     const unsigned char ie = cpu->mSFR[address - 0x80];
     static int ie_write_count = 0;
     if (ie_write_count >= 50)
@@ -53,6 +56,9 @@ void trace_ie_write(em8051 *cpu, uint8_t address) {
 }
 
 void trace_ien1_write(em8051 *cpu, uint8_t address) {
+#ifdef __SAB80C517__
+    cpu->irq_inhibit = 1;
+#endif
     // SAB80C517 IEN1 is at B8h; generic 8051 names this address IP.
     static uint8_t last_ien1 = 0xFF;
     static int ien1_write_count = 0;

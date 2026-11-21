@@ -28,9 +28,9 @@ def run_with_click(click_x, shot, capture_tick=6000000):
         process = subprocess.Popen(command, env=env, stdout=log,
                                    stderr=subprocess.STDOUT)
         window = ""
-        deadline = time.monotonic() + 4.0
+        deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline and process.poll() is None:
-            found = subprocess.run(["xdotool", "search", "--name", "SEVEL MA1.7"],
+            found = subprocess.run(["xdotool", "search", "--name", "FIAT TIPO"],
                                    text=True, capture_output=True)
             if found.returncode == 0 and found.stdout.strip():
                 window = found.stdout.splitlines()[-1]

@@ -5,6 +5,7 @@
 // the next one, like a real dyno reading a tooth/encoder signal; it never sees RAM47 (quantised
 // by the ECU). Everything is tick based (1 tick = 1/990000 s of emulated time), so a run is
 // deterministic.
+#include "Lifetime.hpp"
 #include "engine/PlantTelemetry.hpp"
 #include "engine/physics/Dynamics.hpp"
 
@@ -130,8 +131,8 @@ class DynoBench {
     DynoState state() const { return state_; }
     DynoInvalid reason() const { return reason_; }
     bool done() const { return state_ == DynoState::Accepted || state_ == DynoState::Invalid; }
-    const DynoBenchConfig &config() const { return cfg_; }
-    const DynoBrake &brake() const { return brake_; }
+    const DynoBenchConfig &config() const EMU_LIFETIMEBOUND { return cfg_; }
+    const DynoBrake &brake() const EMU_LIFETIMEBOUND { return brake_; }
     long long ramp_start_tick() const { return ramp_start_; }
     // Pedal schedule the loop must use (full open at the ramp start).
     long long pedal_step_tick() const { return cfg_.settle_end_tick; }

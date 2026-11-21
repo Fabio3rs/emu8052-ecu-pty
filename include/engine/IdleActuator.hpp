@@ -37,6 +37,10 @@ class IdleActuator {
             !(parameters.response_tau_s > 0.0) ||
             !(parameters.brake_tau_s > 0.0) || !(parameters.coast_tau_s > 0.0))
             throw std::invalid_argument("invalid idle actuator parameters");
+        maximum_stem_m_ =
+            (parameters_.maximum_stop_rad - parameters_.base_stop_rad) /
+            parameters_.lever_rad_per_m;
+        speed_per_volt_ = parameters_.maximum_speed_m_s / parameters_.battery_v;
     }
 
     void step(double voltage_v, bool brake, double dt_s) {
@@ -44,20 +48,21 @@ class IdleActuator {
             std::abs(voltage_v) > parameters_.battery_v ||
             !std::isfinite(dt_s) || dt_s <= 0.0)
             throw std::invalid_argument("invalid idle actuator drive");
-        const double target_speed =
-            parameters_.maximum_speed_m_s * voltage_v / parameters_.battery_v;
-        const double tau_s = brake              ? parameters_.brake_tau_s
-                             : voltage_v == 0.0 ? parameters_.coast_tau_s
-                                                : parameters_.response_tau_s;
-        speed_m_s_ +=
-            (target_speed - speed_m_s_) * (1.0 - std::exp(-dt_s / tau_s));
-        const double maximum_stem_m =
-            (parameters_.maximum_stop_rad - parameters_.base_stop_rad) /
-            parameters_.lever_rad_per_m;
+        if (std::abs(dt_s - cached_dt_s_) > 1e-15) {
+            cached_dt_s_ = dt_s;
+            decay_brake_ = 1.0 - std::exp(-dt_s / parameters_.brake_tau_s);
+            decay_coast_ = 1.0 - std::exp(-dt_s / parameters_.coast_tau_s);
+            decay_response_ = 1.0 - std::exp(-dt_s / parameters_.response_tau_s);
+        }
+        const double target_speed = speed_per_volt_ * voltage_v;
+        const double decay = brake              ? decay_brake_
+                             : voltage_v == 0.0 ? decay_coast_
+                                                : decay_response_;
+        speed_m_s_ += (target_speed - speed_m_s_) * decay;
         stem_m_ = std::clamp(stem_m_ + speed_m_s_ * dt_s, 0.0,
-                             maximum_stem_m);
+                             maximum_stem_m_);
         if ((stem_m_ <= 0.0 && speed_m_s_ < 0.0) ||
-            (stem_m_ >= maximum_stem_m && speed_m_s_ > 0.0))
+            (stem_m_ >= maximum_stem_m_ && speed_m_s_ > 0.0))
             speed_m_s_ = 0.0;
     }
 
@@ -71,6 +76,12 @@ class IdleActuator {
     IdleActuatorParameters parameters_;
     double stem_m_;
     double speed_m_s_ = 0.0;
+    double maximum_stem_m_ = 0.0;
+    double speed_per_volt_ = 0.0;
+    double cached_dt_s_ = -1.0;
+    double decay_brake_ = 0.0;
+    double decay_coast_ = 0.0;
+    double decay_response_ = 0.0;
 };
 
 } // namespace engine

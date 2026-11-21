@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Lifetime.hpp"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -9,7 +11,7 @@ namespace lab {
 
 // L5: the unit text of a scope lane. The dimensionless unit "1" (lambda) is
 // meaningless next to the number and was the stray "1" in "LAMBDA 1.20 1".
-inline const char *scope_unit_text(const char *unit) {
+inline const char *scope_unit_text(const char *unit EMU_LIFETIMEBOUND) {
     return (unit == nullptr || std::strcmp(unit, "1") == 0) ? "" : unit;
 }
 

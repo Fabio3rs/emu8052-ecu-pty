@@ -73,3 +73,18 @@ TEST(PlantEnergy, StarterWorkIsCounted) {
     EXPECT_GT(r.last.w_starter_j, 0.0);
     EXPECT_LT(std::abs(r.last.energy_residual_rel), 1e-3);
 }
+
+TEST(PlantEnergy, FuelRatesAreConsistent) {
+    engine::PlantWindow window{0.00158, 4, 1.0};
+    engine::TickTorques t{};
+    // Accumulate 1 second at constant rotation (100 rad/s)
+    const double dt_step = 0.001;
+    for (int i = 0; i < 1000; ++i) {
+        window.accumulate(i + 1, dt_step, 100.0 * dt_step, 100.0, 100.0, t);
+    }
+    // 0.740 g of fuel injected in 1 second -> 0.740 g/s -> 3.6 L/h
+    window.add_mass(0.010, 0.000740, 0.000740);
+    ASSERT_TRUE(window.finish_if_ready(1.19, 14.7, 44e6));
+    EXPECT_NEAR(window.last().fuel_g_s, 0.740, 1e-4);
+    EXPECT_NEAR(window.last().fuel_l_h, 3.600, 1e-4);
+}

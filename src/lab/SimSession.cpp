@@ -189,6 +189,8 @@ const char *control_name(ControlType type) {
     switch (type) {
     case ControlType::Pedal:
         return "pedal";
+    case ControlType::PedalTarget:
+        return "pedal_target";
     case ControlType::Load:
         return "load";
     case ControlType::VehicleSpeed:
@@ -225,9 +227,9 @@ const char *control_name(ControlType type) {
 
 bool parse_control_name(const std::string &name, ControlType &type) {
     for (ControlType candidate :
-         {ControlType::Pedal, ControlType::Load, ControlType::VehicleSpeed,
-          ControlType::Starter, ControlType::Key, ControlType::Pause,
-          ControlType::Resume, ControlType::StepTicks,
+         {ControlType::Pedal, ControlType::PedalTarget, ControlType::Load,
+          ControlType::VehicleSpeed, ControlType::Starter, ControlType::Key,
+          ControlType::Pause, ControlType::Resume, ControlType::StepTicks,
           ControlType::StepIgnition, ControlType::StepInjector,
           ControlType::StepSpark, ControlType::StepCombustion,
           ControlType::StepMisfire, ControlType::StepLamp, ControlType::Gear,
@@ -246,6 +248,7 @@ bool valid_control(const AppliedControl &control) {
         return false;
     switch (control.type) {
     case ControlType::Pedal:
+    case ControlType::PedalTarget:
         return control.value >= 0.0 && control.value <= engine::max_pedal_pull_m();
     case ControlType::Load:
         return control.value >= 0.0 && control.value <= engine::max_brake_nm();
@@ -382,7 +385,6 @@ SimSession::SimSession(std::vector<std::string> args,
       capture_tick_(capture_tick) {
     if (event_capacity_ == 0)
         throw std::invalid_argument("event capacity must be positive");
-    pending_controls_.reserve(128);
     pending_session_actions_.reserve(16);
     control_history_.reserve(4096);
     events_.reserve(event_capacity_);
@@ -506,6 +508,11 @@ void SimSession::set_pedal(double pull_m) {
     schedule_control({0, ControlType::Pedal, std::clamp(pull_m, 0.0, engine::max_pedal_pull_m())});
 }
 
+void SimSession::set_pedal_target(double pull_m) {
+    schedule_control({0, ControlType::PedalTarget,
+                      std::clamp(pull_m, 0.0, engine::max_pedal_pull_m())});
+}
+
 void SimSession::set_load(double torque_nm) {
     schedule_control({0, ControlType::Load, std::clamp(torque_nm, 0.0, engine::max_brake_nm())});
 }
@@ -610,7 +617,7 @@ std::vector<ma17::EmulatorEvent> SimSession::events() const {
 }
 
 EventWindow SimSession::event_window() const {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(events_mutex_);
     EventWindow window;
     window.base_index = event_base_index_;
     window.events.reserve(events_.size());
@@ -621,13 +628,36 @@ EventWindow SimSession::event_window() const {
     return window;
 }
 
+IncrementalEvents SimSession::events_since(std::size_t from_index) const {
+    std::lock_guard lock(events_mutex_);
+    IncrementalEvents result;
+    result.base_index = event_base_index_;
+    if (events_.empty()) {
+        result.next_index = event_base_index_;
+        return result;
+    }
+    const std::size_t count_available = event_base_index_ + events_.size();
+    const std::size_t start_idx = std::max(from_index, event_base_index_);
+    result.next_index = count_available;
+    if (start_idx >= count_available)
+        return result;
+    const std::size_t num_events = count_available - start_idx;
+    result.events.reserve(num_events);
+    for (std::size_t k = start_idx; k < count_available; ++k) {
+        const std::size_t ring_idx =
+            (event_head_ + (k - event_base_index_)) % events_.size();
+        result.events.push_back(events_[ring_idx]);
+    }
+    return result;
+}
+
 std::vector<AppliedControl> SimSession::control_history() const {
     std::lock_guard lock(mutex_);
     return control_history_;
 }
 
 unsigned long long SimSession::event_overflow() const {
-    std::lock_guard lock(mutex_);
+    std::lock_guard lock(events_mutex_);
     return event_overflow_;
 }
 
@@ -770,17 +800,20 @@ void SimSession::receive_snapshot(const ma17::EmulatorSnapshot &snapshot,
 void SimSession::receive_event(const ma17::EmulatorEvent &event,
                                void *context) {
     auto &self = *static_cast<SimSession *>(context);
-    std::lock_guard lock(self.mutex_);
-    if (self.events_.size() == self.event_capacity_) {
-        self.events_[self.event_head_] = event;
-        self.event_head_ = (self.event_head_ + 1) % self.event_capacity_;
-        ++self.event_base_index_;
-        ++self.event_overflow_;
-    } else {
-        self.events_.push_back(event);
+    {
+        std::lock_guard lock(self.events_mutex_);
+        if (self.events_.size() == self.event_capacity_) {
+            self.events_[self.event_head_] = event;
+            self.event_head_ = (self.event_head_ + 1) % self.event_capacity_;
+            ++self.event_base_index_;
+            ++self.event_overflow_;
+        } else {
+            self.events_.push_back(event);
+        }
     }
     if (self.step_event_mode_ && self.step_batch_active_ &&
         event.type == self.step_event_type_) {
+        std::lock_guard lock(self.mutex_);
         const long long consumed = event.tick - self.previous_tick_;
         if (consumed > 0 && consumed <= self.loop_context_->steps_per_batch) {
             self.loop_context_->steps_per_batch = static_cast<int>(consumed);
@@ -811,6 +844,14 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
         switch (command->type) {
         case ControlType::Pedal:
             self.pedal_pull_m_ = command->value;
+            self.pedal_target_m_ = command->value;
+            self.pedal_applied_m_ = command->value;
+            self.pedal_target_active_ = false;
+            self.pedal_override_ = true;
+            break;
+        case ControlType::PedalTarget:
+            self.pedal_target_m_ = command->value;
+            self.pedal_target_active_ = true;
             self.pedal_override_ = true;
             break;
         case ControlType::Load:
@@ -891,6 +932,7 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
                         ma17::EmulatorEventType::LampCandidate;
                     break;
                 case ControlType::Pedal:
+                case ControlType::PedalTarget:
                 case ControlType::Load:
                 case ControlType::VehicleSpeed:
                 case ControlType::Gear:
@@ -909,8 +951,25 @@ void SimSession::apply_controls(ma17::EmulatorLoopContext &context, void *raw) {
     }
     self.pending_controls_.erase(self.pending_controls_.begin(), ready);
     self.flush_session_actions(context.ticks);
-    if (self.pedal_override_ && context.throttle)
+    if (self.pedal_target_active_ && context.throttle) {
+        if (self.last_pedal_tick_ < 0) {
+            self.last_pedal_tick_ = context.ticks;
+            self.pedal_applied_m_ = context.throttle->cable_pull_m();
+        }
+        const long long elapsed = std::max(0LL, context.ticks - self.last_pedal_tick_);
+        self.last_pedal_tick_ = context.ticks;
+        if (elapsed > 0) {
+            const double max_step_m = 0.016 * static_cast<double>(elapsed) / 990000.0;
+            const double delta = std::clamp(self.pedal_target_m_ - self.pedal_applied_m_,
+                                            -max_step_m, max_step_m);
+            self.pedal_applied_m_ += delta;
+        }
+        context.throttle->set_cable_pull_m(self.pedal_applied_m_);
+    } else if (self.pedal_override_ && context.throttle) {
+        self.pedal_applied_m_ = self.pedal_pull_m_;
+        self.last_pedal_tick_ = context.ticks;
         context.throttle->set_cable_pull_m(self.pedal_pull_m_);
+    }
     if (self.load_override_) {
         context.load_step_tick = 1;
         context.load_torque_nm = self.load_torque_nm_;

@@ -26,10 +26,10 @@ with tempfile.TemporaryFile(mode="w+") as log:
     process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
     try:
         window = ""
-        deadline = time.monotonic() + 8.0
+        deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline and process.poll() is None:
             found = subprocess.run(["xdotool", "search", "--name",
-                                    "SEVEL MA1.7"], text=True,
+                                    "FIAT TIPO"], text=True,
                                    capture_output=True)
             if found.returncode == 0 and found.stdout.strip():
                 window = found.stdout.splitlines()[-1]

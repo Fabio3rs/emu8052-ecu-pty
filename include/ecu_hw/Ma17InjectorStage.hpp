@@ -38,6 +38,7 @@ class Ma17InjectorStage {
     bool energized_ = false;
     double energized_time_s_ = 0.0;
     double coil_current_a_ = 0.0;
+    double rated_mass_flow_kg_s_ = 0.0;
     double cached_dt_s_ = -1.0;
     double current_rise_fraction_ = 0.0;
     unsigned long long pulse_count_ = 0;

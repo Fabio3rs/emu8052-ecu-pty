@@ -23,6 +23,7 @@ namespace lab {
 
 enum class ControlType {
     Pedal,
+    PedalTarget,
     Load,
     VehicleSpeed,
     Starter,
@@ -65,6 +66,12 @@ struct EventWindow {
     std::vector<ma17::EmulatorEvent> events;
 };
 
+struct IncrementalEvents {
+    std::size_t next_index = 0;
+    std::size_t base_index = 0;
+    std::vector<ma17::EmulatorEvent> events;
+};
+
 class SimSession {
   public:
     explicit SimSession(std::vector<std::string> args,
@@ -82,6 +89,7 @@ class SimSession {
     bool step_until_event(ma17::EmulatorEventType type, long long max_ticks);
     void set_speed(double speed);
     void set_pedal(double pull_m);
+    void set_pedal_target(double pull_m);
     void set_load(double torque_nm);
     void set_vehicle_speed(double kmh);
     void set_gear(int gear);
@@ -115,6 +123,7 @@ class SimSession {
     }
     std::vector<ma17::EmulatorEvent> events() const;
     EventWindow event_window() const;
+    IncrementalEvents events_since(std::size_t from_index) const;
     std::vector<AppliedControl> control_history() const;
     unsigned long long event_overflow() const;
 
@@ -132,6 +141,7 @@ class SimSession {
     long long stop_tick_ = 0;
     std::thread worker_;
     mutable std::mutex mutex_;
+    mutable std::mutex events_mutex_;
     std::condition_variable wake_;
     ma17::EmulatorSnapshot snapshot_{};
     ma17::EmulatorSnapshot capture_snapshot_{};
@@ -152,6 +162,10 @@ class SimSession {
     int normal_batch_steps_ = 0;
     double speed_ = 1.0;
     double pedal_pull_m_ = 0.0;
+    double pedal_target_m_ = 0.0;
+    double pedal_applied_m_ = 0.0;
+    long long last_pedal_tick_ = -1;
+    bool pedal_target_active_ = false;
     double load_torque_nm_ = 0.0;
     bool pedal_override_ = false;
     bool load_override_ = false;
@@ -160,7 +174,7 @@ class SimSession {
     long long previous_tick_ = 0;
     std::chrono::steady_clock::time_point pace_deadline_{};
     unsigned long long pace_generation_ = 0;
-    std::vector<AppliedControl> pending_controls_;
+    std::deque<AppliedControl> pending_controls_;
     std::vector<AppliedControl> pending_session_actions_;
     std::vector<AppliedControl> control_history_;
     const std::size_t event_capacity_;

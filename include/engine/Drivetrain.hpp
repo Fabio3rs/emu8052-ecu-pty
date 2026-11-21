@@ -17,6 +17,7 @@ class Drivetrain {
             !std::isfinite(max_clutch_torque_nm) || max_clutch_torque_nm < 0.0 ||
             !std::isfinite(initial_speed_m_s))
             throw std::invalid_argument("invalid drivetrain parameters");
+        update_gear_cache(0);
     }
 
     void set_gear(int gear) {
@@ -25,6 +26,7 @@ class Drivetrain {
         // Road velocity survives shifts; reflected inertia/speed are derived
         // afresh, preserving the donor changeGear kinetic-energy invariant.
         gear_ = gear;
+        update_gear_cache(gear);
     }
     void set_clutch_pressure(double pressure) {
         if (!std::isfinite(pressure) || pressure < 0.0 || pressure > 1.0)
@@ -71,22 +73,17 @@ class Drivetrain {
             speed_m_s_ = free_speed;
             return crank_free_rad_s;
         }
-        const auto inertia = transmission::reflected_inertia_kg_m2(
-            mass_kg_, gear_, radius_m_);
-        if (!inertia)
-            throw std::invalid_argument("invalid reflected vehicle inertia");
-        const double ratio = transmission::overall_ratio(gear_);
-        const double shaft_speed = free_speed * ratio / radius_m_;
+        const double shaft_speed = free_speed * cached_ratio_over_radius_;
         const auto transfer = solve_clutch_transfer(crank_free_rad_s, shaft_speed,
-            crank_inertia, *inertia, max_torque_nm_, pressure_, dt_s);
+            crank_inertia, cached_reflected_inertia_, max_torque_nm_, pressure_, dt_s);
         // The crank model cannot rotate backward. Limit both impulses together
         // if the vehicle rolls opposite to the selected gear.
         const double impulse = std::min(transfer.vehicle_impulse_nm_s,
                                        crank_free_rad_s * crank_inertia);
         const double heat = impulse * (crank_free_rad_s - shaft_speed -
-            0.5 * impulse * (1.0 / crank_inertia + 1.0 / *inertia));
+            0.5 * impulse * (1.0 / crank_inertia + 1.0 / cached_reflected_inertia_));
         const double driven_speed =
-            free_speed + impulse * ratio / (mass_kg_ * radius_m_);
+            free_speed + impulse * cached_ratio_over_mass_radius_;
         // Retain the unused road impulse when the first stage reaches rest.
         // Otherwise sub-threshold clutch drive launches the car again every
         // step. This scalar split caps resistance at zero velocity in both
@@ -107,6 +104,23 @@ class Drivetrain {
     }
 
   private:
+    void update_gear_cache(int gear) {
+        if (gear != 0) {
+            const auto inertia = transmission::reflected_inertia_kg_m2(
+                mass_kg_, gear, radius_m_);
+            cached_reflected_inertia_ = inertia ? *inertia : 0.0;
+            cached_overall_ratio_ = transmission::overall_ratio(gear);
+            cached_ratio_over_radius_ = cached_overall_ratio_ / radius_m_;
+            cached_ratio_over_mass_radius_ =
+                cached_overall_ratio_ / (mass_kg_ * radius_m_);
+        } else {
+            cached_reflected_inertia_ = 0.0;
+            cached_overall_ratio_ = 0.0;
+            cached_ratio_over_radius_ = 0.0;
+            cached_ratio_over_mass_radius_ = 0.0;
+        }
+    }
+
     double mass_kg_, radius_m_, max_torque_nm_;
     double speed_m_s_ = 0.0;
     double pressure_ = 0.0;
@@ -115,6 +129,10 @@ class Drivetrain {
     double rolling_force_n_ = 0.0;
     double drag_factor_ = 0.0;
     int gear_ = 0;
+    double cached_reflected_inertia_ = 0.0;
+    double cached_overall_ratio_ = 0.0;
+    double cached_ratio_over_radius_ = 0.0;
+    double cached_ratio_over_mass_radius_ = 0.0;
 };
 
 } // namespace engine

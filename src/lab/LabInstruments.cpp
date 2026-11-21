@@ -1,3 +1,4 @@
+#include "Lifetime.hpp"
 #include "engine/ControlLimits.hpp"
 #include "lab/LabInstruments.hpp"
 #include "lab/TextScale.hpp"
@@ -92,31 +93,31 @@ void draw_gauge_arc(SDL_Renderer *renderer, float cx, float cy, float r_in,
         return; // Donor indices are 16-bit.
     const int segments = std::max(3, static_cast<int>(steps));
     thread_local ArcScratch scratch;
-    auto &generator = scratch.generator;
-    generator.ensure_capacity((segments + 1) * 2, segments * 6);
-    generator.reset();
-    generator.startShape();
-    if (!generator.generateRing2d(ring))
+    scratch.generator.ensure_capacity((segments + 1) * 2, segments * 6);
+    scratch.generator.reset();
+    scratch.generator.startShape();
+    if (!scratch.generator.generateRing2d(ring))
         return;
     GeometryGenerator::GeometryIndices shape;
-    generator.endShape(&shape);
-    auto &verts = scratch.vertices;
-    auto &idxs = scratch.indices;
-    verts.resize(static_cast<std::size_t>((segments + 1) * 2));
-    idxs.resize(static_cast<std::size_t>(segments * 6));
+    scratch.generator.endShape(&shape);
+    scratch.vertices.resize(static_cast<std::size_t>((segments + 1) * 2));
+    scratch.indices.resize(static_cast<std::size_t>(segments * 6));
     const SDL_FColor fcol{static_cast<float>(color.r) / 255.0f,
                           static_cast<float>(color.g) / 255.0f,
                           static_cast<float>(color.b) / 255.0f,
                           static_cast<float>(color.a) / 255.0f};
-    for (std::size_t i = 0; i < verts.size(); ++i) {
-        const auto &point = generator.getVertexData()[i].Pos;
-        verts[i] = {{cx + point.x, cy - point.y}, fcol, {0.0f, 0.0f}};
+    const auto *src_verts = scratch.generator.getVertexData();
+    for (std::size_t i = 0; i < scratch.vertices.size(); ++i) {
+        const auto &point = src_verts[i].Pos;
+        scratch.vertices[i] = {{cx + point.x, cy - point.y}, fcol, {0.0f, 0.0f}};
     }
-    for (std::size_t i = 0; i < idxs.size(); ++i)
-        idxs[i] = generator.getIndexData()[i];
-    SDL_RenderGeometry(renderer, nullptr, verts.data(),
-                       static_cast<int>(verts.size()), idxs.data(),
-                       static_cast<int>(idxs.size()));
+    const auto *src_indices = scratch.generator.getIndexData();
+    for (std::size_t i = 0; i < scratch.indices.size(); ++i)
+        scratch.indices[i] = src_indices[i];
+    SDL_RenderGeometry(renderer, nullptr, scratch.vertices.data(),
+                       static_cast<int>(scratch.vertices.size()),
+                       scratch.indices.data(),
+                       static_cast<int>(scratch.indices.size()));
 }
 
 void draw_filled_disc(SDL_Renderer *renderer, float cx, float cy, float radius,
@@ -212,7 +213,8 @@ void draw_trace_points(SDL_Renderer *renderer,
 // color current when the run started.
 class TraceBatcher {
   public:
-    explicit TraceBatcher(SDL_Renderer *renderer) : renderer_(renderer) {}
+    explicit TraceBatcher(SDL_Renderer *renderer EMU_LIFETIMEBOUND)
+        : renderer_(renderer) {}
     TraceBatcher(const TraceBatcher &) = delete;
     TraceBatcher &operator=(const TraceBatcher &) = delete;
     ~TraceBatcher() { flush(); }

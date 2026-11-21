@@ -240,15 +240,6 @@ inline std::vector<std::string> compare_snapshots(const RunSnapshot &a,
         lines.push_back("CODE DIFFERS");
     if (a.scenario != b.scenario)
         lines.push_back("SCENARIO DIFFERS");
-    const auto delta = [&](const char *name, double va, double vb, const char *unit,
-                           int decimals) {
-        if (!std::isfinite(va) || !std::isfinite(vb))
-            return;
-        char value[40];
-        std::snprintf(value, sizeof(value), "%+.*f", decimals, vb - va);
-        std::snprintf(text, sizeof(text), "D %s %s%s", name, value, unit);
-        lines.push_back(text);
-    };
     for (const double rpm : {3000.0}) {
         const auto ta = curve_torque_at(a.curve, rpm);
         const auto tb = curve_torque_at(b.curve, rpm);
@@ -258,6 +249,15 @@ inline std::vector<std::string> compare_snapshots(const RunSnapshot &a,
             lines.push_back(text);
         }
     }
+    const auto delta = [&](const char *name, double va, double vb, const char *unit,
+                           int decimals) {
+        if (!std::isfinite(va) || !std::isfinite(vb))
+            return;
+        char value[40];
+        std::snprintf(value, sizeof(value), "%+.*f", decimals, vb - va);
+        std::snprintf(text, sizeof(text), "D %s %s%s", name, value, unit);
+        lines.push_back(text);
+    };
     delta("ADVANCE", a.metrics.advance_deg, b.metrics.advance_deg, " DEG", 1);
     delta("LAMBDA", a.metrics.lambda, b.metrics.lambda, "", 2);
     delta("TI", a.metrics.ti_ms, b.metrics.ti_ms, " MS", 2);

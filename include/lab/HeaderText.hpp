@@ -35,7 +35,8 @@ template <typename Measure>
 std::string fit_status_chips(std::vector<StatusChip> chips, Measure &&measure,
                              float max_width,
                              const std::string &separator = " | ") {
-    const auto join = [&](const std::vector<StatusChip> &list, int dropped) {
+    const auto join = [&](const std::vector<StatusChip> &list,
+                          int dropped) -> std::string {
         std::string line;
         for (const auto &chip : list) {
             if (!line.empty())

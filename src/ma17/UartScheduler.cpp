@@ -22,6 +22,9 @@ void UartScheduler::reset_for_run() {
     sbuf_rx_ = 0;
     previous_scon_ = 0x50;
     scon_write_count_ = 0;
+    next_sequence_ = 0;
+    rx_busy_until_tick_ = 0;
+    last_scon_poll_tick_ = -1;
     events_ = {};
 }
 
@@ -45,9 +48,10 @@ void UartScheduler::schedule_tx_done() {
         return;
 
     Event event{};
+    event.when_tick = ticks_ + 9 * bit_ticks;
+    event.sequence = next_sequence_++;
     event.kind = EventKind::TxDone;
     event.data = 0;
-    event.when_tick = ticks_ + 9 * bit_ticks;
     events_.push(event);
 }
 
@@ -56,17 +60,19 @@ void UartScheduler::schedule_rx_byte(uint8_t byte) {
     if (bit_ticks <= 0)
         return;
 
+    const long long base_tick = std::max(ticks_, rx_busy_until_tick_);
     Event event{};
+    event.when_tick = base_tick + static_cast<long long>(std::llround(
+                                   9.5 * static_cast<double>(bit_ticks)));
+    event.sequence = next_sequence_++;
     event.kind = EventKind::RxByte;
     event.data = byte;
-    event.when_tick = ticks_ + static_cast<long long>(std::llround(
-                                   9.5 * static_cast<double>(bit_ticks)));
     events_.push(event);
+    rx_busy_until_tick_ = base_tick + 10 * bit_ticks;
 }
 
 void UartScheduler::on_scanner_byte(uint8_t byte) {
     if (!cpu_) {
-        bridge_.rx_queue.push(byte);
         return;
     }
 
@@ -103,8 +109,12 @@ uint8_t UartScheduler::on_scon_read(em8051 *cpu, uint8_t address) {
         return cpu->mSFR[address - 0x80];
 
     const uint8_t scon = cpu->mSFR[scon_address - 0x80];
-    if ((scon & scon_ren) != 0 && (scon & scon_ri) == 0)
-        bridge_.read_and_process();
+    if ((scon & scon_ren) != 0 && (scon & scon_ri) == 0) {
+        if (ticks_ != last_scon_poll_tick_) {
+            last_scon_poll_tick_ = ticks_;
+            bridge_.read_and_process();
+        }
+    }
     return scon;
 }
 
@@ -149,7 +159,6 @@ void UartScheduler::tick(em8051 *cpu, long long current_tick) {
                 break;
             }
 
-            bridge_.rx_queue.push(event.data);
             scon |= scon_ri;
             cpu->mSFR[scon_address - 0x80] = scon;
             sbuf_rx_ = event.data;

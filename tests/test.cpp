@@ -225,8 +225,7 @@ TEST(Sab80C517, RetiRestoresInterruptedPriorityLevel) {
     tick(&cpu);
     EXPECT_EQ(cpu.mInterruptActive, 1);
     EXPECT_EQ(cpu.int_prev_level_517[1], SAB80C517_NO_INT_ACTIVE);
-    tick(&cpu);
-    tick(&cpu);
+    while (!tick(&cpu));
     EXPECT_EQ(cpu.mInterruptActive, SAB80C517_NO_INT_ACTIVE);
     EXPECT_EQ(cpu.mPC, 0);
 }
@@ -2346,7 +2345,8 @@ TEST(Sab80C517, FiatStartupMapsUseThreePointerTargetsAndOriginalBytes) {
                 if (cpu.mPC == 0x3356)
                     selected_startup_map = true;
                 // SAB 80C517 Instruction Set, p. 222: MOVC uses A+DPTR.
-                if (cpu.mPC == 0x532F || cpu.mPC == 0x5333) {
+                if ((cpu.mPC == 0x532F || cpu.mPC == 0x5333) &&
+                    cpu.mTickDelay == 0) {
                     ASSERT_LT(read_count, 2);
                     reads[read_count] = uint16_t(
                         (cpu.mSFR[REG_DPH] << 8 | cpu.mSFR[REG_DPL]) +
@@ -5608,8 +5608,8 @@ TEST(Sab80C517, FiatMatrixSubviewFlagChangesLookupWithFixedIram6f) {
             ASSERT_EQ(cpu.mPC, 0x137B) << axis << "/" << flag;
             results[axis][flag] = uint16_t(cpu.mSFR[REG_ACC] << 8 |
                                            cpu.mSFR[REG_B]);
-            tick(&cpu);  // MOV R2,B at 137Bh.
-            tick(&cpu);  // MOV R3,A at 137Dh.
+            while (!tick(&cpu));  // MOV R2,B at 137Bh.
+            while (!tick(&cpu));  // MOV R3,A at 137Dh.
             EXPECT_EQ(uint16_t(cpu.mLowerData[3] << 8 | cpu.mLowerData[2]),
                       results[axis][flag]);
         }
@@ -7994,7 +7994,7 @@ TEST(Sab80C517, FirmwareKlineCommandTailSelectsDiagnosticStates) {
         cpu.mLowerData[2] = static_cast<unsigned char>(command);
         cpu.mLowerData[0x41] = 0x7F;
         cpu.mPC = 0x50E0;
-        for (int step = 0; step < 130 && cpu.mPC != 0x510C; ++step)
+        for (int step = 0; step < 260 && cpu.mPC != 0x510C; ++step)
             tick(&cpu);
         ASSERT_EQ(cpu.mPC, 0x510C) << "command=" << command;
         EXPECT_EQ(cpu.mLowerData[0x42], state);
@@ -8006,10 +8006,10 @@ TEST(Sab80C517, FirmwareKlineCommandTailSelectsDiagnosticStates) {
         }
         if (command == 0x12) {
             cpu.mPC = 0x4C06; // Dispatch the selected state 0Bh.
-            for (int step = 0; step < 30 && cpu.mPC != 0x4ECB; ++step)
+            for (int step = 0; step < 60 && cpu.mPC != 0x4ECB; ++step)
                 tick(&cpu);
             ASSERT_EQ(cpu.mPC, 0x4ECB);
-            for (int step = 0; step < 150 && cpu.mPC != 0x4C53; ++step)
+            for (int step = 0; step < 300 && cpu.mPC != 0x4C53; ++step)
                 tick(&cpu);
             ASSERT_EQ(cpu.mPC, 0x4C53);
             EXPECT_EQ(xram[0xB8], 0x0D);
@@ -8711,7 +8711,8 @@ TEST(Sab80C517, CaptureOnLowByteWriteLatchesBothTimer2Bytes) {
         EXPECT_EQ(cpu.mSFR[REG_IRCON], 0);
 
         cpu.mSFR[REG_CCEN] = test.compare_mode;
-        tick(&cpu);
+        while (!tick(&cpu));
+        while (!tick(&cpu));
         EXPECT_EQ(cpu.mSFR[low], 0xBB);
         EXPECT_EQ(cpu.mSFR[low + 1], 0x56);
     }
@@ -8759,3 +8760,327 @@ TEST(Sab80C517, Cc3Mode1TransfersPortShadowOnlyAtTimer2Compare) {
     EXPECT_EQ(cpu.cc3_output_pin, 0);
 }
 #endif
+
+TEST(InstructionFlags, AddSubbAuxiliaryCarryOracle) {
+    std::array<unsigned char, 16> code{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 15;
+    reset(&cpu, true);
+
+    // Spot-checks requested in H13
+    // 1. ADD A, #1 with A=0x07 -> no carry from bit 3 to 4, AC must be 0
+    code[0] = 0x24; // ADD A,#imm
+    code[1] = 0x01;
+    cpu.mPC = 0;
+    cpu.mSFR[REG_ACC] = 0x07;
+    cpu.mSFR[REG_PSW] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0x08);
+    EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, 0);
+
+    // 2. ADD A, #8 with A=0x08 -> carry from bit 3 to 4 (8+8=16), AC must be 1
+    cpu.mPC = 0;
+    code[1] = 0x08;
+    cpu.mSFR[REG_ACC] = 0x08;
+    cpu.mSFR[REG_PSW] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0x10);
+    EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, 1);
+
+    // 3. SUBB A, #1 with A=0x08 and C=0 -> 8-1=7, no borrow from bit 4, AC must be 0
+    code[0] = 0x94; // SUBB A,#imm
+    code[1] = 0x01;
+    cpu.mPC = 0;
+    cpu.mSFR[REG_ACC] = 0x08;
+    cpu.mSFR[REG_PSW] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0x07);
+    EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, 0);
+
+    // 4. SUBB A, #1 with A=0x00 and C=0 -> 0-1 requires borrow from bit 4, AC must be 1
+    cpu.mPC = 0;
+    code[1] = 0x01;
+    cpu.mSFR[REG_ACC] = 0x00;
+    cpu.mSFR[REG_PSW] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0xFF);
+    EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, 1);
+
+    // 5. Exhaustive oracle across all 256 operands for ADD and SUBB
+    for (int a = 0; a <= 255; ++a) {
+        for (int b = 0; b <= 255; ++b) {
+            // Test ADD
+            code[0] = 0x24; // ADD A,#imm
+            code[1] = static_cast<unsigned char>(b);
+            cpu.mPC = 0;
+            cpu.mSFR[REG_ACC] = static_cast<uint8_t>(a);
+            cpu.mSFR[REG_PSW] = 0;
+            cpu.mTickDelay = 0;
+            tick(&cpu);
+            const uint8_t expected_add = static_cast<uint8_t>(a + b);
+            const int expected_add_c = (a + b) > 255 ? 1 : 0;
+            const int expected_add_ac = ((a & 0x0F) + (b & 0x0F)) > 0x0F ? 1 : 0;
+            EXPECT_EQ(cpu.mSFR[REG_ACC], expected_add);
+            EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_C) & 1, expected_add_c);
+            EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, expected_add_ac);
+
+            // Test SUBB with Carry=0
+            code[0] = 0x94; // SUBB A,#imm
+            code[1] = static_cast<unsigned char>(b);
+            cpu.mPC = 0;
+            cpu.mSFR[REG_ACC] = static_cast<uint8_t>(a);
+            cpu.mSFR[REG_PSW] = 0;
+            cpu.mTickDelay = 0;
+            tick(&cpu);
+            const uint8_t expected_sub = static_cast<uint8_t>(a - b);
+            const int expected_sub_c = a < b ? 1 : 0;
+            const int expected_sub_ac = (a & 0x0F) < (b & 0x0F) ? 1 : 0;
+            EXPECT_EQ(cpu.mSFR[REG_ACC], expected_sub);
+            EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_C) & 1, expected_sub_c);
+            EXPECT_EQ((cpu.mSFR[REG_PSW] >> PSW_AC) & 1, expected_sub_ac);
+        }
+    }
+}
+
+#ifdef __SAB80C517__
+TEST(Sab80C517, PriorityZeroSecondarySourcesAreServiced) {
+    std::array<unsigned char, 256> code{};
+    std::array<unsigned char, 256> xram{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 255;
+    cpu.mExtData = xram.data();
+    cpu.mExtDataMaxIdx = 255;
+
+    // 1. Test IEX3 (Source 7, Group 2) with priority 0
+    reset(&cpu, true);
+    cpu.mPC = 0x10;
+    cpu.mSFR[REG_IEN0] = IEN0MASK_EA;
+    cpu.mSFR[REG_IEN1] = IEN1MASK_EX3;
+    cpu.mSFR[REG_IRCON] = IRCONMASK_IEX3;
+    cpu.mSFR[REG_IP0] = 0;
+    cpu.mSFR[REG_IP1] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mPC, ISR_517_IEX3);
+    EXPECT_EQ(cpu.mInterruptActive, 0);
+
+    // 2. Test IADC (Source 3, Group 0) with priority 0
+    reset(&cpu, true);
+    cpu.mPC = 0x10;
+    cpu.mSFR[REG_IEN0] = IEN0MASK_EA;
+    cpu.mSFR[REG_IEN1] = IEN1MASK_EADC;
+    cpu.mSFR[REG_IRCON] = IRCONMASK_IADC;
+    cpu.mSFR[REG_IP0] = 0;
+    cpu.mSFR[REG_IP1] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mPC, ISR_517_IADC);
+    EXPECT_EQ(cpu.mInterruptActive, 0);
+
+    // 3. Test IEX6 (Source 14, Group 5) with priority 0
+    reset(&cpu, true);
+    cpu.mPC = 0x10;
+    cpu.mSFR[REG_IEN0] = IEN0MASK_EA;
+    cpu.mSFR[REG_IEN1] = IEN1MASK_EX6;
+    cpu.mSFR[REG_IRCON] = IRCONMASK_IEX6;
+    cpu.mSFR[REG_IP0] = 0;
+    cpu.mSFR[REG_IP1] = 0;
+    cpu.mTickDelay = 0;
+    tick(&cpu);
+    EXPECT_EQ(cpu.mPC, ISR_517_IEX6);
+    EXPECT_EQ(cpu.mInterruptActive, 0);
+}
+
+TEST(Sab80C517, OneInstructionDelayAfterIeWriteAndReti) {
+    std::array<unsigned char, 256> code{};
+    std::array<unsigned char, 256> xram{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 255;
+    cpu.mExtData = xram.data();
+    cpu.mExtDataMaxIdx = 255;
+    reset(&cpu, true);
+
+    // Program:
+    // 0x0000: MOV IEN0, #0x82 (75 A8 82) -> enables EA and ET0; sets irq_inhibit
+    // 0x0003: MOV A, #0x55    (74 55)    -> instruction MUST execute before ISR
+    // 0x0005: NOP             (00)
+    code[0] = 0x75; code[1] = 0xA8; code[2] = 0x82;
+    code[3] = 0x74; code[4] = 0x55;
+    code[5] = 0x00;
+
+    // TF0 is already set!
+    cpu.mSFR[REG_TCON] = TCONMASK_TF0;
+    cpu.mPC = 0;
+    cpu.mTickDelay = 0;
+
+    // Step 1: Execute MOV IEN0, #0x82 (takes 2 ticks: tick 1 dispatch, tick 2 delay)
+    tick(&cpu); // tick 1
+    EXPECT_EQ(cpu.mSFR[REG_IEN0], 0x82);
+    EXPECT_EQ(cpu.irq_inhibit, 1);
+    while (cpu.mTickDelay > 0) {
+        tick(&cpu);
+    }
+    // Now MOV IEN0 instruction has completed, irq_inhibit is still 1!
+    EXPECT_EQ(cpu.irq_inhibit, 1);
+
+    // Step 2: Next instruction MUST execute (MOV A, #0x55 at PC=3), NOT jump to ISR_517_TF0!
+    tick(&cpu);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0x55); // MOV A,#0x55 executed!
+    EXPECT_EQ(cpu.irq_inhibit, 0);      // inhibit has expired!
+
+    // Step 3: Now interrupt can be acknowledged and jump to TF0 ISR vector (0x0B)
+    while (cpu.mTickDelay > 0) {
+        tick(&cpu);
+    }
+    tick(&cpu);
+    EXPECT_EQ(cpu.mPC, ISR_517_TF0);
+}
+#endif
+
+TEST(InstructionTiming, ExactCyclesWithoutManualZeroing) {
+    std::array<unsigned char, 256> code{};
+    std::array<unsigned char, 256> xram{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 255;
+    cpu.mExtData = xram.data();
+    cpu.mExtDataMaxIdx = 255;
+    reset(&cpu, true);
+
+    // Setup Timer 0 in Mode 2 (8-bit auto-reload, counts every machine cycle)
+    cpu.mSFR[REG_TMOD] = 0x02;
+    cpu.mSFR[REG_TH0] = 0x00;
+    cpu.mSFR[REG_TL0] = 0x00;
+    cpu.mSFR[REG_TCON] = TCONMASK_TR0; // Run timer 0
+
+    const auto measure_instruction_ticks = [&](const std::vector<uint8_t> &opbytes) -> int {
+        for (size_t i = 0; i < opbytes.size(); ++i) {
+            code[i] = opbytes[i];
+        }
+        code[opbytes.size()] = 0x00; // NOP following
+        cpu.mPC = 0;
+        const uint8_t timer_before = cpu.mSFR[REG_TL0];
+
+        // First tick dispatches the instruction
+        bool dispatched = tick(&cpu);
+        EXPECT_TRUE(dispatched);
+        int total_ticks = 1;
+
+        // Subsequent ticks must be delay ticks (returning false) until instruction finishes
+        while (cpu.mTickDelay > 0) {
+            bool delay_tick = tick(&cpu);
+            EXPECT_FALSE(delay_tick);
+            total_ticks++;
+        }
+
+        const uint8_t timer_after = cpu.mSFR[REG_TL0];
+        EXPECT_EQ(static_cast<uint8_t>(timer_after - timer_before), total_ticks);
+        return total_ticks;
+    };
+
+    // 1. NOP (opcode 0x00): exactly 1 cycle
+    EXPECT_EQ(measure_instruction_ticks({0x00}), 1);
+
+    // 2. LJMP (opcode 0x02 0x00 0x10): exactly 2 cycles
+    EXPECT_EQ(measure_instruction_ticks({0x02, 0x00, 0x10}), 2);
+
+    // 3. MOVX A,@DPTR (opcode 0xE0): exactly 2 cycles
+    EXPECT_EQ(measure_instruction_ticks({0xE0}), 2);
+
+    // 4. MOVC A,@A+DPTR (opcode 0x93): exactly 2 cycles
+    EXPECT_EQ(measure_instruction_ticks({0x93}), 2);
+
+    // 5. MUL AB (opcode 0xA4): exactly 4 cycles
+    EXPECT_EQ(measure_instruction_ticks({0xA4}), 4);
+
+    // 6. DIV AB (opcode 0x84): exactly 4 cycles
+    EXPECT_EQ(measure_instruction_ticks({0x84}), 4);
+
+    // 7. RET (opcode 0x22): exactly 2 cycles
+    push_to_stack(&cpu, 0x20);
+    push_to_stack(&cpu, 0x00);
+    EXPECT_EQ(measure_instruction_ticks({0x22}), 2);
+
+    // 8. RETI (opcode 0x32): exactly 2 cycles
+    push_to_stack(&cpu, 0x30);
+    push_to_stack(&cpu, 0x00);
+    EXPECT_EQ(measure_instruction_ticks({0x32}), 2);
+}
+
+TEST(InstructionObservability, StackReadsUpperIramWhenSpAbove7F) {
+    std::array<unsigned char, 256> code{};
+    std::array<unsigned char, 256> xram{};
+    std::array<unsigned char, 128> upper{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 255;
+    cpu.mExtData = xram.data();
+    cpu.mExtDataMaxIdx = 255;
+    cpu.mUpperData = upper.data();
+    reset(&cpu, true);
+
+    // Set SP = 0x81 (stack entry 0x81 is in upper IRAM)
+    cpu.mSFR[REG_SP] = 0x81;
+    cpu.mLowerData[1] = 0x11; // If buggy lower IRAM indexing is used
+    cpu.mUpperData[1] = 0x22;
+
+    // POP ACC (opcode 0xD0 0xE0)
+    code[0] = 0xD0;
+    code[1] = 0xE0;
+    cpu.mPC = 0;
+    cpu.mTickDelay = 0;
+    while (!tick(&cpu));
+
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0x22);
+    EXPECT_EQ(cpu.mSFR[REG_SP], 0x80);
+
+    // PUSH ACC with ACC=0x77
+    cpu.mSFR[REG_ACC] = 0x77;
+    code[2] = 0xC0;
+    code[3] = 0xE0;
+    while (!tick(&cpu));
+
+    EXPECT_EQ(cpu.mSFR[REG_SP], 0x81);
+    EXPECT_EQ(cpu.mUpperData[1], 0x77);
+    EXPECT_EQ(cpu.mLowerData[1], 0x11);
+}
+
+TEST(InstructionObservability, MovcDirectCallbackObservation) {
+    std::array<unsigned char, 256> code{};
+    em8051 cpu{};
+    cpu.mCodeMem = code.data();
+    cpu.mCodeMemMaxIdx = 255;
+    reset(&cpu, true);
+
+    static std::vector<uint16_t> observed_addresses;
+    observed_addresses.clear();
+    cpu.coderead = [](em8051 *, uint16_t addr) {
+        observed_addresses.push_back(addr);
+    };
+
+    // MOVC A, @A+DPTR (0x93)
+    code[0] = 0x93;
+    code[0x45] = 0xAB;
+    cpu.mSFR[REG_DPH] = 0x00;
+    cpu.mSFR[REG_DPL] = 0x40;
+    cpu.mSFR[REG_ACC] = 0x05;
+    cpu.mPC = 0;
+    cpu.mTickDelay = 0;
+
+    // Tick 1: MOVC dispatches, coderead callback should fire
+    tick(&cpu);
+    EXPECT_EQ(observed_addresses.size(), 1u);
+    EXPECT_EQ(observed_addresses[0], 0x0045);
+    EXPECT_EQ(cpu.mSFR[REG_ACC], 0xAB);
+
+    // Tick 2: wait cycle of MOVC (mTickDelay == 1 -> 0), callback must NOT fire again!
+    tick(&cpu);
+    EXPECT_EQ(observed_addresses.size(), 1u);
+}

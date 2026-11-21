@@ -54,11 +54,10 @@ inline bool freeze_curve(std::vector<DynoCurve> &curves,
     DynoCurve copy = *live;
     copy.label = "FROZEN " + live_label;
     copy.frozen = true;
-    curves.erase(std::remove_if(curves.begin(), curves.end(),
-                                [&](const DynoCurve &curve) {
-                                    return curve.label == copy.label;
-                                }),
-                 curves.end());
+    const std::string frozen_label = copy.label;
+    std::erase_if(curves, [&](const DynoCurve &curve) {
+        return curve.label == frozen_label;
+    });
     curves.push_back(std::move(copy));
     return true;
 }

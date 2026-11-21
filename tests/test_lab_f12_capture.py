@@ -27,9 +27,9 @@ with tempfile.TemporaryDirectory(prefix="sevel-f12-") as directory:
                                stdout=log_file, stderr=subprocess.STDOUT)
     try:
         window = ""
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + 15.0
         while time.monotonic() < deadline and process.poll() is None:
-            found = subprocess.run(["xdotool", "search", "--name", "SEVEL MA1.7"],
+            found = subprocess.run(["xdotool", "search", "--name", "FIAT TIPO"],
                                    capture_output=True, text=True)
             if found.returncode == 0 and found.stdout.strip():
                 window = found.stdout.splitlines()[-1]

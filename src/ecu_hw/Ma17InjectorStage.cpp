@@ -31,6 +31,11 @@ Ma17InjectorStage::Ma17InjectorStage(InjectorStageParameters parameters)
         !std::isfinite(parameters.pull_in_current_a) ||
         parameters.pull_in_current_a <= 0.0)
         throw std::invalid_argument("invalid injector stage parameters");
+    const double delta_pa =
+        parameters_.rail_absolute_pa - parameters_.outlet_absolute_pa;
+    rated_mass_flow_kg_s_ =
+        parameters_.rated_flow_m3_s * parameters_.fuel_density_kg_m3 *
+        std::sqrt(delta_pa / parameters_.rated_delta_pa);
 }
 
 double Ma17InjectorStage::step(bool cc3_pin_high, double dt_s,
@@ -77,12 +82,7 @@ double Ma17InjectorStage::step(bool cc3_pin_high, double dt_s,
     // Pull-in current is estimated; electrical state advances every CPU tick.
     const double flowing_s = coil_current_a_ >= parameters_.pull_in_current_a
                                  ? hydraulic_flowing_s : 0.0;
-    const double delta_pa =
-        parameters_.rail_absolute_pa - parameters_.outlet_absolute_pa;
-    const double mass_flow_kg_s =
-        parameters_.rated_flow_m3_s * parameters_.fuel_density_kg_m3 *
-        std::sqrt(delta_pa / parameters_.rated_delta_pa);
-    const double delivered_kg = flowing_s * mass_flow_kg_s;
+    const double delivered_kg = flowing_s * rated_mass_flow_kg_s_;
     delivered_total_kg_ += delivered_kg;
     return delivered_kg;
 }

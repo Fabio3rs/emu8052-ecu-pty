@@ -234,6 +234,7 @@ int main(int argc, char **argv) {
     lab::SimSession terminal_pause({"lab_control_replay", argv[1],
                                     "--physical-crank", "--stop-ticks", "50000",
                                     "--starter-ticks", "1000"});
+    terminal_pause.set_pedal_target(0.010);
     terminal_pause.schedule_control({50000, lab::ControlType::Pause, 0.0});
     terminal_pause.set_speed(16.0);
     terminal_pause.start();
@@ -245,7 +246,9 @@ int main(int argc, char **argv) {
     ma17::EmulatorSnapshot terminal_snapshot;
     if (!terminal_pause.finished() || terminal_pause.result() != 0 ||
         !terminal_pause.latest(terminal_snapshot) ||
-        terminal_snapshot.tick != 50000)
+        terminal_snapshot.tick != 50000 ||
+        terminal_snapshot.pedal_pull_m < 0.0006 ||
+        terminal_snapshot.pedal_pull_m > 0.0010)
         return 1;
     terminal_pause.stop();
     std::printf("[LAB-REPLAY] tick=%lld rpm=%.3f controls=%zu events=%zu\n",

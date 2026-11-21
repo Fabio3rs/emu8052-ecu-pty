@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Lifetime.hpp"
 #include "renderer.h"
 #include "shaders.h"
 
@@ -96,7 +97,7 @@ class RecordingRenderer final : public Renderer {
 
     void endFrame() override {}
 
-    const ysVector &clear_color() const { return clear_color_; }
+    const ysVector &clear_color() const EMU_LIFETIMEBOUND { return clear_color_; }
     int draw_calls() const { return draw_calls_; }
     int scene_draw_calls() const { return scene_draw_calls_; }
     std::size_t triangle_count() const { return triangles_.size(); }
