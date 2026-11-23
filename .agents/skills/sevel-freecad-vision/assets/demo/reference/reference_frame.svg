@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+ width="400.4000mm" height="118.4000mm" viewBox="-59.2000 -59.2000 400.4000 118.4000">
+<desc>Fiat Tipo 1.6 SPI SOHC 8V, 82 cv, 1993-1995 | PASS_PROVISIONAL_FOR_VISUAL_ONLY | bores only, gasket holes NOT inferred</desc>
+<line x1="-59.2000" y1="0" x2="341.2000" y2="0" stroke="#64748b" stroke-width="0.35" stroke-dasharray="4,2"/>
+<circle cx="0.0000" cy="0" r="43.2000" fill="none" stroke="#2563eb" stroke-width="0.8"/>
+<line x1="0.0000" y1="-48.2000" x2="0.0000" y2="48.2000" stroke="#64748b" stroke-width="0.25" stroke-dasharray="2,2"/>
+<text x="0.0000" y="4" text-anchor="middle" font-size="8" fill="#0f172a">C1</text>
+<circle cx="93.0000" cy="0" r="43.2000" fill="none" stroke="#2563eb" stroke-width="0.8"/>
+<line x1="93.0000" y1="-48.2000" x2="93.0000" y2="48.2000" stroke="#64748b" stroke-width="0.25" stroke-dasharray="2,2"/>
+<text x="93.0000" y="4" text-anchor="middle" font-size="8" fill="#0f172a">C2</text>
+<circle cx="189.0000" cy="0" r="43.2000" fill="none" stroke="#2563eb" stroke-width="0.8"/>
+<line x1="189.0000" y1="-48.2000" x2="189.0000" y2="48.2000" stroke="#64748b" stroke-width="0.25" stroke-dasharray="2,2"/>
+<text x="189.0000" y="4" text-anchor="middle" font-size="8" fill="#0f172a">C3</text>
+<circle cx="282.0000" cy="0" r="43.2000" fill="none" stroke="#2563eb" stroke-width="0.8"/>
+<line x1="282.0000" y1="-48.2000" x2="282.0000" y2="48.2000" stroke="#64748b" stroke-width="0.25" stroke-dasharray="2,2"/>
+<text x="282.0000" y="4" text-anchor="middle" font-size="8" fill="#0f172a">C4</text>
+</svg>

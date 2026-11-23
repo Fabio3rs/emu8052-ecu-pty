@@ -1,0 +1,56 @@
+{
+  "schema": "sevel.reference-parameters.v1",
+  "target_variant": "Fiat Tipo 1.6 SPI SOHC 8V, 82 cv, 1993-1995",
+  "coordinate_convention": {
+    "origin": "cylinder_1_axis_intersection_with_block_deck",
+    "x": "cylinder_1_to_cylinder_4",
+    "y": "transverse_to_engine",
+    "z": "cylinder_axis_pointing_toward_cylinder_head",
+    "block_deck_z_mm": 0.0
+  },
+  "dimensions": {
+    "cylinder_bore_diameter_mm": {
+      "value": 86.4,
+      "evidence": "MANUAL_TARGET",
+      "source": "OCR_03-1.Tipo 1.6 SPI.pdf, printed pages 5 and 7",
+      "note": "Cylinder bore; not the physical head-gasket hole diameter"
+    },
+    "stroke_mm": {
+      "value": 67.4,
+      "evidence": "MANUAL_TARGET",
+      "source": "OCR_03-1.Tipo 1.6 SPI.pdf, printed page 5"
+    },
+    "center_spacings_mm": [
+      {
+        "value": 93.0,
+        "evidence": "OTHER_VARIANT_REFERENCE",
+        "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+        "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+      },
+      {
+        "value": 96.0,
+        "evidence": "OTHER_VARIANT_REFERENCE",
+        "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+        "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+      },
+      {
+        "value": 93.0,
+        "evidence": "OTHER_VARIANT_REFERENCE",
+        "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+        "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+      }
+    ],
+    "head_gasket_opening_diameter_mm": {
+      "value": null,
+      "evidence": "UNKNOWN",
+      "source": "Not independently measured",
+      "note": "Do not set this equal to cylinder_bore_diameter_mm by assumption"
+    },
+    "crank_axis_z_mm": {
+      "value": null,
+      "evidence": "UNKNOWN",
+      "source": "Deck-to-crank distance not yet documented",
+      "note": "Must not be inferred from raster illustration as exact"
+    }
+  }
+}

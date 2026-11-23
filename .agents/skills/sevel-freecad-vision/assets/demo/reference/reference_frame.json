@@ -1,0 +1,98 @@
+{
+  "schema": "sevel.reference-frame.v1",
+  "units": "mm",
+  "target_variant": "Fiat Tipo 1.6 SPI SOHC 8V, 82 cv, 1993-1995",
+  "frame": {
+    "origin": "cylinder_1_axis_intersection_with_block_deck",
+    "x": "cylinder_1_to_cylinder_4",
+    "y": "transverse_to_engine",
+    "z": "cylinder_axis_pointing_toward_cylinder_head",
+    "block_deck_z_mm": 0.0
+  },
+  "status": "PASS_PROVISIONAL_FOR_VISUAL_ONLY",
+  "cylinder_bore_diameter_mm": 86.4,
+  "stroke_mm": 67.4,
+  "crank_radius_mm_derived": 33.7,
+  "center_spacings_mm": [
+    93.0,
+    96.0,
+    93.0
+  ],
+  "center_to_center_span_mm": 282.0,
+  "edge_gaps_nominal_mm": [
+    6.6,
+    9.6,
+    6.6
+  ],
+  "bore_bounds_x_mm": [
+    -43.2,
+    325.2
+  ],
+  "bore_circle_centers_mm": [
+    {
+      "cylinder": 1,
+      "x": 0.0,
+      "y": 0,
+      "z": 0,
+      "radius_mm": 43.2,
+      "diameter_mm": 86.4
+    },
+    {
+      "cylinder": 2,
+      "x": 93.0,
+      "y": 0,
+      "z": 0,
+      "radius_mm": 43.2,
+      "diameter_mm": 86.4
+    },
+    {
+      "cylinder": 3,
+      "x": 189.0,
+      "y": 0,
+      "z": 0,
+      "radius_mm": 43.2,
+      "diameter_mm": 86.4
+    },
+    {
+      "cylinder": 4,
+      "x": 282.0,
+      "y": 0,
+      "z": 0,
+      "radius_mm": 43.2,
+      "diameter_mm": 86.4
+    }
+  ],
+  "cylinder_bore_source": {
+    "value": 86.4,
+    "evidence": "MANUAL_TARGET",
+    "source": "OCR_03-1.Tipo 1.6 SPI.pdf, printed pages 5 and 7",
+    "note": "Cylinder bore; not the physical head-gasket hole diameter"
+  },
+  "stroke_source": {
+    "value": 67.4,
+    "evidence": "MANUAL_TARGET",
+    "source": "OCR_03-1.Tipo 1.6 SPI.pdf, printed page 5"
+  },
+  "center_spacing_sources": [
+    {
+      "value": 93.0,
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+      "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+    },
+    {
+      "value": 96.0,
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+      "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+    },
+    {
+      "value": 93.0,
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv",
+      "url": "https://www.clubedounobrasil.com.br/forum/viewtopic.php?t=73"
+    }
+  ],
+  "head_gasket_opening_diameter_mm": null,
+  "crank_axis_z_mm": null
+}

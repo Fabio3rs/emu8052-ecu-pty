@@ -1,0 +1,30 @@
+{
+  "schema": "sevel.reference-gate.v1",
+  "target_variant": "Fiat Tipo 1.6 SPI SOHC 8V, 82 cv, 1993-1995",
+  "status": "PASS_PROVISIONAL_FOR_VISUAL_ONLY",
+  "unknown_or_unconfirmed": [
+    {
+      "dimension": "center_spacing_12_mm",
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv"
+    },
+    {
+      "dimension": "center_spacing_23_mm",
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv"
+    },
+    {
+      "dimension": "center_spacing_34_mm",
+      "evidence": "OTHER_VARIANT_REFERENCE",
+      "source": "Clube do Uno Brasil, technical table dated 2013-03-02, SEVEL injected 92 cv"
+    }
+  ],
+  "gasket_opening_mm": "UNMEASURED_AND_SEPARATE_FROM_CYLINDER_BORE",
+  "cad_fabrication_approved": false,
+  "tested_invariants": [
+    "coordinates_ordered",
+    "no_bore_overlap",
+    "source_and_unit_present",
+    "deck_z_zero"
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "source_png_dimensions_px": [
+    858,
+    814
+  ],
+  "all_components_over_1000px": [
+    {
+      "label": 2,
+      "area_px": 63997,
+      "bbox_px": [
+        48,
+        40,
+        620,
+        236
+      ],
+      "centroid_px": [
+        344.61623201087554,
+        166.11038017407066
+      ]
+    },
+    {
+      "label": 8,
+      "area_px": 40396,
+      "bbox_px": [
+        50,
+        278,
+        572,
+        289
+      ],
+      "centroid_px": [
+        332.82391820972373,
+        428.5182196257055
+      ]
+    },
+    {
+      "label": 10,
+      "area_px": 16761,
+      "bbox_px": [
+        597,
+        361,
+        144,
+        301
+      ],
+      "centroid_px": [
+        673.5746077203031,
+        514.6142234950182
+      ]
+    },
+    {
+      "label": 3,
+      "area_px": 16750,
+      "bbox_px": [
+        665,
+        40,
+        147,
+        314
+      ],
+      "centroid_px": [
+        743.453552238806,
+        199.87253731343284
+      ]
+    },
+    {
+      "label": 19,
+      "area_px": 12552,
+      "bbox_px": [
+        60,
+        615,
+        130,
+        169
+      ],
+      "centroid_px": [
+        125.35524219247928,
+        698.5112332695985
+      ]
+    },
+    {
+      "label": 17,
+      "area_px": 9434,
+      "bbox_px": [
+        352,
+        558,
+        162,
+        148
+      ],
+      "centroid_px": [
+        435.4746661013356,
+        636.4323722705109
+      ]
+    },
+    {
+      "label": 18,
+      "area_px": 4540,
+      "bbox_px": [
+        218,
+        600,
+        86,
+        126
+      ],
+      "centroid_px": [
+        261.12422907488985,
+        662.152422907489
+      ]
+    }
+  ],
+  "selected_component": {
+    "label": 2,
+    "area_px": 63997,
+    "bbox_px": [
+      48,
+      40,
+      620,
+      236
+    ],
+    "centroid_px": [
+      344.61623201087554,
+      166.11038017407066
+    ]
+  },
+  "head_gasket_holes_total": 43,
+  "analytic_bore_count": 4,
+  "other_holes_count": 39,
+  "bore_diameters_px": [
+    [
+      136.031,
+      140.045
+    ],
+    [
+      138.276,
+      141.999
+    ],
+    [
+      137.253,
+      139.439
+    ],
+    [
+      130.604,
+      136.573
+    ]
+  ],
+  "bore_ovalization_pct": [
+    2.951,
+    2.692,
+    1.593,
+    4.571
+  ],
+  "center_spacing_px": [
+    145.444,
+    152.103,
+    141.456
+  ],
+  "estimated_center_spacing_mm": [
+    90.93,
+    95.1,
+    88.44
+  ],
+  "estimated_scale_mm_per_px": 0.6252170141572643,
+  "bore_centerline_fit_residual_px": [
+    -0.458,
+    0.206,
+    0.994,
+    -0.742
+  ],
+  "aligned_nominal_bore_centers": true,
+  "warnings": [
+    "The photo may be scaled, perspective distorted, anti-aliased or resampled.",
+    "Cylinder-to-cylinder spacing is an image estimate, NOT a verified engine dimension.",
+    "Nominal CAD bore centers are aligned to a straight line by default; photo perspective remains uncorrected.",
+    "The reference circle is the nominal cylinder bore; gasket opening diameter might differ.",
+    "Do NOT machine a gasket or engine component from this provisional tracing.",
+    "Other gasket parts of the collage may have different image scales; calibrate separately.",
+    "SVG outlines may require CAD cleanup (self-intersections, very short edges, tangent holes)."
+  ]
+}
