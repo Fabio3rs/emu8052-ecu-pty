@@ -2,6 +2,34 @@
 #include "lab/MeshAsset.hpp"
 
 #include <gtest/gtest.h>
+#include <sstream>
+
+TEST(LabMeshAsset, LoadsCadBatchNamesWithoutRequiringDonorParts) {
+    const std::string obj = "v 0 0 0\nv 0.0864 0 0\nv 0 0.0674 0\n"
+                            "vn 0 0 1\no batch_000\nf 1//1 2//1 3//1\n";
+    AuthoredMeshLibrary library;
+    std::istringstream cad(obj);
+    ASSERT_TRUE(library.loadAll(cad));
+    const auto *mesh = library.find("batch_000");
+    ASSERT_NE(mesh, nullptr);
+    ASSERT_EQ(mesh->vertices.size(), 3U);
+    EXPECT_FLOAT_EQ(mesh->vertices[1].Pos.x, 0.0864f);
+    EXPECT_FLOAT_EQ(mesh->vertices[2].Pos.y, 0.0674f);
+    EXPECT_FLOAT_EQ(mesh->vertices[0].Normal.z, 1.0f);
+    std::istringstream donor(obj);
+    EXPECT_FALSE(library.load(donor));
+}
+
+TEST(LabMeshAsset, RejectsEmptyDuplicateAndInvalidCadBatches) {
+    for (const std::string &text : {
+             std::string("o batch_000\n"),
+             std::string("o batch_000\no batch_000\n"),
+             std::string("v 0 0 0\nvn 0 0 1\no batch_000\nf 1//1 2//1 3//1\n")}) {
+        AuthoredMeshLibrary library;
+        std::istringstream input(text);
+        EXPECT_FALSE(library.loadAll(input));
+    }
+}
 
 TEST(LabMeshAsset, LoadsOriginalDonorGeometry) {
     AuthoredMeshLibrary library;
