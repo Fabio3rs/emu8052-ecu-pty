@@ -35,6 +35,20 @@ bool AuthoredMeshLibrary::load(const std::string &path) {
 }
 
 bool AuthoredMeshLibrary::load(std::istream &input) {
+    return loadImpl(input, false);
+}
+
+bool AuthoredMeshLibrary::loadAll(const std::string &path) {
+    std::ifstream file(path);
+    if (!file) return false;
+    return loadAll(file);
+}
+
+bool AuthoredMeshLibrary::loadAll(std::istream &input) {
+    return loadImpl(input, true);
+}
+
+bool AuthoredMeshLibrary::loadImpl(std::istream &input, bool allObjects) {
     m_meshes.clear();
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
@@ -61,7 +75,10 @@ bool AuthoredMeshLibrary::load(std::istream &input) {
             if (!(stream >> name)) return false;
             currentMesh = nullptr;
             vertexIndices.clear();
-            if (required(name)) currentMesh = &m_meshes[name];
+            if (allObjects || required(name)) {
+                if (allObjects && m_meshes.count(name)) return false;
+                currentMesh = &m_meshes[name];
+            }
         }
         else if (kind == "f") {
             if (currentMesh == nullptr) continue;
@@ -91,6 +108,13 @@ bool AuthoredMeshLibrary::load(std::istream &input) {
         }
     }
 
+    if (allObjects) {
+        if (m_meshes.empty()) return false;
+        for (const auto &entry : m_meshes) {
+            if (entry.second.vertices.empty() || entry.second.indices.empty()) return false;
+        }
+        return true;
+    }
     return find("Piston") != nullptr && find("ConnectingRod") != nullptr
         && find("CylinderHead") != nullptr && find("Crankshaft") != nullptr
         && find("CrankSnout") != nullptr && find("CrankSnoutThreads") != nullptr
