@@ -44,15 +44,27 @@ def run(binary,rom,base,revised,log_path):
                     match = re.search(r'LIVE ([-\d.]+) deg',name)
                     return float(match[1]) if match else 0.
                 first = wait(phase)
-                for revision,token in [(revised.name,'reload=ready revision='+revised.name),
-                                       ('0'*64,'reload=rejected active='+revised.name),
-                                       (base.name,'reload=ready revision='+base.name)]:
+                def reload(revision,token):
+                    offset = log_path.stat().st_size
                     point(revision)
                     xdo('key','--window',win,'F5')
-                    wait(lambda: token in log_path.read_text())
+                    def result():
+                        with log_path.open('rb') as current:
+                            current.seek(offset)
+                            return token.encode() in current.read()
+                    wait(result)
+                reload(revised.name,'reload=ready revision='+revised.name)
+                mesh = next((root/base.name).glob('*.obj'))
+                saved = root/'mesh.backup'
+                mesh.rename(saved)
+                mesh.write_bytes(b'damaged test mesh\n')
+                reload(base.name,'SHA-256 mismatch')
+                saved.replace(mesh)
+                reload('0'*64,'reload=rejected active='+revised.name)
+                reload(base.name,'reload=ready revision='+base.name)
                 last = phase()
                 assert last > first and log_path.read_text().count('preview_ready=1') == 1,(first,last)
-                print(f'PASS hot reload, rejected missing package, rollback; continuous LIVE {first} -> {last} deg')
+                print(f'PASS hot reload, rejected corrupt and missing packages, rollback; continuous LIVE {first} -> {last} deg')
             finally:
                 proc.terminate()
                 proc.wait(timeout=10)

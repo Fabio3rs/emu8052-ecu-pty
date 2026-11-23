@@ -21,13 +21,12 @@ public:
     // CAD exports use stable component/batch names instead of the donor set.
     bool loadAll(const std::string &path);
     bool loadAll(std::istream &input);
-    bool loadSolid(std::istream &input) { return loadBatches(input,true); }
+    bool loadSolid(std::istream &input);
     std::size_t positionCount() const { return m_positions; }
     std::size_t size() const { return m_meshes.size(); }
     const Mesh *find(const std::string &name) const;
 
 private:
-    bool loadBatches(std::istream &input, bool validateSolid);
     std::size_t m_positions{};
     bool loadImpl(std::istream &input, bool allObjects);
     std::unordered_map<std::string, Mesh> m_meshes;

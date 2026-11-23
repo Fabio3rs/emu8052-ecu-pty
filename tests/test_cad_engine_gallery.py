@@ -1,16 +1,16 @@
 """Render a fixed ROM replay and compare a single exterior CAD revision in the Lab."""
+import argparse
 import json
 import hashlib
 import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
-def run(binary, rom, baseline, trial, out):
+def run(binary, rom, baseline, trial, out, overview=None):
     out.mkdir(exist_ok=True,parents=True)
     inputs = Path(__file__).resolve().parent
     long_cut = json.loads((inputs/'cad_longitudinal.json').read_text())
@@ -48,9 +48,13 @@ def run(binary, rom, baseline, trial, out):
         assert float(phase) == angle
     capture('panel',baseline,long_cut,True)
     capture('perspective',baseline,{})
-    capture('top-ghost',baseline,dict(pitch_rad=1.28,ghost=['head','cover','block'],hidden=['intake','exhaust']))
+    capture('top-ghost',baseline,dict(pitch_rad=1.28,ghost=['head','cover','block'],
+                                      hidden=['intake','exhaust','accessories']))
     capture('moving-oblique',baseline,dict(long_cut,normal=[.6,0,.8],cut_moving=True,offset_mm=87))
-    capture('transverse',baseline,dict(long_cut,normal=[1,0,0],offset_mm=94,yaw_rad=-1.3))
+    capture('transverse',baseline,dict(long_cut,normal=[1,0,0],offset_mm=94,yaw_rad=1.25,
+                                      target_mm=[94,-60,0],cut_moving=True))
+    capture('horizontal',baseline,dict(long_cut,normal=[0,1,0],offset_mm=-25,pitch_rad=1.22,cut_moving=True))
+    capture('exploded',baseline,dict(explode_mm=75))
     manifests = [json.loads((p/'parts_manifest.json').read_bytes()) for p in (baseline,trial)]
     parts = [{row['id']:row['mesh_id'] for row in m['parts']} for m in manifests]
     assert parts[0].keys() == parts[1].keys()
@@ -84,8 +88,27 @@ def run(binary, rom, baseline, trial, out):
     detail = Image.new('RGB',(2*w,h))
     for i,im in enumerate(close): detail.paste(im,(w*i,0))
     detail.resize((4*w,2*h)).save(out/'rib-detail.png')
+    if overview:
+        sheet = Image.new('RGB',(1100,796),'#161b21')
+        draw = ImageDraw.Draw(sheet)
+        font = ImageFont.truetype('DejaVuSans.ttf',18)
+        views = [('perspective-gpu.png','Montagem v005',0,0),
+                 ('cut-90-gpu.png','Corte longitudinal em 90°',550,0),
+                 ('panel.png','Mechanics e osciloscópio',0,392),
+                 ('rib-detail.png','Nervura original e revisão de ensaio',550,392)]
+        for file,label,x,y in views:
+            frame = Image.open(out/file).convert('RGB')
+            frame.thumbnail((530,350))
+            sheet.paste(frame,(x+(550-frame.width)//2,y+34+(350-frame.height)//2))
+            draw.text((x+14,y+6),label,font=font,fill='#e8edf0')
+        overview.parent.mkdir(parents=True,exist_ok=True)
+        sheet.save(overview)
     print(f'PASS {changed} changed rib pixels, stable replay and poses. {state}',flush=True)
 
 
 if __name__ == '__main__':
-    run(*(Path(a).resolve() for a in sys.argv[1:]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ('binary','rom','baseline','trial','out'):
+        parser.add_argument(name,type=lambda arg: Path(arg).resolve())
+    parser.add_argument('--overview',type=Path,help='Write a contact sheet of the actual captures')
+    run(**vars(parser.parse_args()))

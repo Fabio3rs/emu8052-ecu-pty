@@ -545,7 +545,7 @@ void SdlGpuRenderer::endFrame() {
                 {swapchainTexture,0,0,0,0,swapchainWidth,swapchainHeight},
                 SDL_GPU_LOADOP_LOAD,{},SDL_FLIP_NONE,SDL_GPU_FILTER_NEAREST,false,0,0,0};
             SDL_BlitGPUTexture(commands,&backgroundBlit);
-            if (m_submissions.empty()) {
+            if (m_sceneViewportWidth == 0 || m_sceneViewportHeight == 0) {
                 if (!SDL_SubmitGPUCommandBuffer(commands)) m_error = SDL_GetError();
                 return;
             }

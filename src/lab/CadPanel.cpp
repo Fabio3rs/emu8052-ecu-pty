@@ -68,7 +68,7 @@ bool CadPanel::present(SdlGpuRenderer &gpu, SevelCadView &view, SDL_Renderer *sc
             static_cast<int>(region.w*sx),static_cast<int>(region.h*sy)};
     visible = show && area.w > 0 && area.h > 0;
     if (visible) view.draw(gpu,area.w,area.h,phase,area.x,area.y);
-    else { gpu.beginFrame({0,0,0,1}); gpu.setSceneViewport(0,0,1,1); gpu.endFrame(); }
+    else { gpu.beginFrame({0,0,0,1}); gpu.setSceneViewport(0,0,0,0); gpu.endFrame(); }
     return !gpu.failed();
 }
 

@@ -15,7 +15,7 @@ constexpr std::array<SDL_Keycode,18> keys{SDLK_I,SDLK_SPACE,SDLK_RIGHT,SDLK_TAB,
 }
 
 void CadToolbar::draw(SDL_Renderer *screen, FontRenderer &font, SevelCadView &v, SDL_FRect region) {
-    bounds = {region.x,region.y,region.w,5*row_height};
+    bounds = {region.x,region.y,region.w,(v.selected.empty() ? 5 : 7)*row_height};
     const auto plane_label = std::abs(v.normal.z)>.999f ? "LONG" : std::abs(v.normal.y)>.999f ? "TOP" :
         std::abs(v.normal.x)<.999f ? "FREE" : plane_preset>=1 && plane_preset<=4 ?
         "C"+std::to_string(plane_preset) : "TRANS";
@@ -54,8 +54,11 @@ void CadToolbar::draw(SDL_Renderer *screen, FontRenderer &font, SevelCadView &v,
     std::string hint = "Drag orbit / RMB pan / XYZ tilt plane / F6 save / F7 load";
     if (!v.reload_status.empty()) hint = v.reload_status;
     for (const auto &part : v.scene.parts) if (part.id == v.selected) {
-        hint = part.label+" | "+part.id+" | "+part.motion+
-               (part.cylinder ? " C"+std::to_string(part.cylinder) : "")+" | "+part.evidence;
+        hint = part.label+" | "+part.motion+(part.cylinder ? " C"+std::to_string(part.cylinder) : "");
+        font.draw(screen,bounds.x+3,bounds.y+5*row_height+1,
+                  font.ellipsize(part.id,12,bounds.w-6),{223,199,143,255},.9f);
+        font.draw(screen,bounds.x+3,bounds.y+6*row_height+1,
+                  font.ellipsize(part.evidence,12,bounds.w-6),{182,196,206,255},.9f);
         break;
     }
     font.draw(screen,bounds.x+3,bounds.y+4*row_height+1,

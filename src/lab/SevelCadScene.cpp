@@ -61,15 +61,23 @@ SevelCadScene load_cad_scene(std::filesystem::path path) {
             string(field(field(root,"units"),"angle")) == "rad" &&
             number(field(root,"theta_deg")) == 0, "unit or zero phase mismatch");
     require(string(field(root,"theta_zero")) == "C1 compression TDC", "phase origin");
+    if (const auto *frame = root.get("cad_to_runtime"))
+        require(string(*frame) == "(x,y,z) mm -> 0.001*(x,z,-y) m; vertices and poses converted exactly once",
+                "unsupported coordinate convention");
     require(string(field(field(root,"units"),"time")) == "s", "time unit");
     const auto &engine = field(root,"root");
     require(string(field(engine,"id")) == "engine_root" && field(engine,"parent_id").type == Json::Type::Null &&
             array<3>(field(engine,"translation_m")) == std::array{0.f,0.f,0.f} &&
             array<4>(field(engine,"rotation_xyzw")) == std::array{0.f,0.f,0.f,1.f}, "engine root transform");
-    if (auto *generator = root.get("generator"))
+    if (auto *generator = root.get("generator")) {
         scene.datum_hash = string(field(*generator,"datum_sha256"));
-    if (auto *runtime = root.get("runtime"))
+        require(scene.datum_hash.size() == 64 && scene.datum_hash.find_first_not_of("0123456789abcdef")
+                == std::string::npos,"datum SHA-256");
+    }
+    if (auto *runtime = root.get("runtime")) {
+        require(!scene.datum_hash.empty(),"animated package missing datum");
         scene.rig = read_rig(*runtime);
+    }
     load_meshes(scene, field(root,"meshes"));
     std::map<std::string,ysVector> materials;
     for (const auto &m : field(root,"materials").object) {
@@ -104,6 +112,17 @@ SevelCadScene load_cad_scene(std::filesystem::path path) {
         p.spring = field(row,"spring_kind").string;
         static const std::set<std::string> motions{"fixed","piston","rod","valve","spring","cam","crank","tensioner","aux"};
         require(motions.contains(p.motion), "unknown motion " + p.id);
+        if (const auto *axis = row.get("motion_axis_local")) {
+            const bool vertical = p.motion=="fixed" || p.motion=="piston" || p.motion=="spring" || p.motion=="valve";
+            require(array<3>(*axis) == (vertical ? std::array{0.f,1.f,0.f} : std::array{1.f,0.f,0.f}),
+                    "unsupported motion axis " + p.id);
+        }
+        if (const auto *joints = row.get("connection_points_local_m"); joints && joints->is_object() && scene.rig.available) {
+            const auto small = array<3,double>(field(*joints,"small_end"));
+            require(p.motion == "rod" && array<3>(field(*joints,"big_end")) == std::array{0.f,0.f,0.f}
+                    && small[0] == 0 && small[2] == 0 && std::abs(small[1]-scene.rig.rod) < 1e-7,
+                    "incompatible joint centers " + p.id);
+        }
         if (p.motion == "valve" || p.motion == "spring")
             require(p.valve == "exhaust" || p.valve == "intake", "valve kind " + p.id);
         if (p.motion == "spring" || p.motion == "valve" || p.motion == "piston" || p.motion == "rod")
@@ -115,6 +134,8 @@ SevelCadScene load_cad_scene(std::filesystem::path path) {
         p.rest = rest_matrix(row);
         for (int i=0; i<3; ++i) require(std::abs(p.rest.m[i][3]) < 10, "out-of-bounds translation " + p.id);
         require(scene.meshes.contains(p.mesh), "unknown geometry " + p.id);
+        require(string(field(row,"mesh_file")) == string(field(field(field(root,"meshes"),p.mesh),"file")),
+                "inconsistent mesh filename " + p.id);
         const auto &batch_names = field(row,"mesh_batches").array;
         require(batch_names.size() == scene.meshes.at(p.mesh).size(), "batch references " + p.id);
         for (const auto &batch : scene.meshes.at(p.mesh)) {

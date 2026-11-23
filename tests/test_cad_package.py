@@ -28,7 +28,8 @@ def check(binary, root):
         expect(False,*([baseline,'--compare',candidate] if compare else [candidate]))
     expect(True,baseline,'--compare',candidate)
     for path,value in [
-        (['schema'],'v900'),(['units','length'],'mm'),(['parts',1,'id'],'cube'),
+        (['schema'],'v900'),(['units','length'],'mm'),(['cad_to_runtime'],'changed basis'),
+        (['parts',1,'id'],'cube'),(['parts',0,'motion_axis_local'],[0,0,1]),
         (['parts',0,'rest_rotation_xyzw'],[0,0,0,5]),(['parts',0,'rest_scale'],[1,2,1]),
         (['materials','fixture','opacity'],2),(['parts',0,'mesh_id'],'missing'),
         (['parts',0,'parent_id'],'missing'),(['parts',0,'mesh_batches'],[]),

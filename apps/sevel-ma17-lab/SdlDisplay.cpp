@@ -1446,9 +1446,23 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         presentation_height = pixel_height;
         return true;
     };
+    const auto restore_window_renderer = [&] {
+        std::fprintf(stderr,"[LAB-CAD] returning to shaft view: %s\n",
+                     gpu_renderer && gpu_renderer->failed() ? gpu_renderer->lastError() : SDL_GetError());
+        font.release_textures();
+        gpu_renderer.reset();
+        SDL_DestroyRenderer(screen);
+        screen = SDL_CreateRenderer(window,nullptr);
+        if (!screen) screen = SDL_CreateRenderer(window,"software");
+        cad_panel = cad_compositor.visible = cad_compositor.focused = false;
+        cad_toolbar.bounds = {};
+        view_mode = 0;
+        presentation_width = presentation_height = -1;
+        return screen != nullptr;
+    };
     for (int frame = 0; running && (frame_limit <= 0 || frame < frame_limit);
          ++frame) {
-        if (cad_panel && !cad_compositor.resize(window,screen,&font)) break;
+        if (cad_panel && !cad_compositor.resize(window,screen,&font) && !restore_window_renderer()) break;
         if (gpu_renderer && !cad_view.scene.parts.empty()) cad_view.pollReload(*gpu_renderer);
         if (!update_presentation()) {
             std::fprintf(stderr, "SDL logical presentation: %s\n",
@@ -2313,8 +2327,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 event.key.key == SDLK_0 && dyno_view && dyno_scene &&
                 (SDL_GetModState() & SDL_KMOD_CTRL) == 0) {
                 // Keep the RUN WOT curve for comparison with the next run.
-                if (freeze_curve(dyno_scene->curves, "RUN WOT"))
+                if (freeze_curve(dyno_scene->curves, "RUN WOT")) {
                     std::fprintf(stdout, "[LAB-DYNO] froze RUN WOT curve\n");
+                    std::fflush(stdout);
+                }
             }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
@@ -3607,11 +3623,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     if (!sweep_row_seen)
                         sweep_state.on_failure();
                     sweep_child.terminate();
-                    if (!sweep_state.running)
+                    if (!sweep_state.running) {
                         std::fprintf(stdout,
                                      "[LAB-DYNO-SWEEP] done accepted=%zu points=%zu\n",
                                      sweep_state.curve.points.size(),
                                      sweep_state.plan.size());
+                        std::fflush(stdout);
+                    }
                 }
             }
             dyno_scene->curves.erase(
@@ -4286,8 +4304,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             region.h -= cad_toolbar.bounds.h+ruler_height;
             const double phase = (displayed.crank_angle_rad-displayed.tdc_phase_rad)*180/std::numbers::pi;
             if (!cad_compositor.present(*gpu_renderer,cad_view,screen,region,phase,show_cad_tools)) {
-                std::fprintf(stderr,"[LAB-CAD] panel presentation failed: %s\n",SDL_GetError());
-                break;
+                if (!restore_window_renderer()) break;
+                continue;
             }
             if (cad_compositor.visible && !captured && displayed.tick >= capture_after_tick) {
                 save_gpu_scene(*gpu_renderer,screenshot_path,displayed.tick,&cad_view);

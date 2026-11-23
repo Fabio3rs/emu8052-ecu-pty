@@ -50,10 +50,10 @@ bool AuthoredMeshLibrary::loadAll(const std::string &path) {
 }
 
 bool AuthoredMeshLibrary::loadAll(std::istream &input) {
-    return loadBatches(input,false);
+    return loadImpl(input,true);
 }
 
-bool AuthoredMeshLibrary::loadBatches(std::istream &input,bool validateSolid) {
+bool AuthoredMeshLibrary::loadSolid(std::istream &input) {
     // The versioned CAD OBJ dialect contains triangular position//normal
     // faces. Avoid allocating streams and strings for millions of corners.
     m_meshes.clear();
@@ -112,7 +112,7 @@ bool AuthoredMeshLibrary::loadBatches(std::istream &input,bool validateSolid) {
                 pos[static_cast<std::size_t>(i)] = vi-1;
                 norm[static_cast<std::size_t>(i)] = ni-1;
             }
-            if (validateSolid) {
+            {
                 const auto &a = positions[pos[0]], &b = positions[pos[1]], &c = positions[pos[2]];
                 const auto ux = b.x-a.x, uy = b.y-a.y, uz = b.z-a.z;
                 const auto vx = c.x-a.x, vy = c.y-a.y, vz = c.z-a.z;
@@ -134,12 +134,10 @@ bool AuthoredMeshLibrary::loadBatches(std::istream &input,bool validateSolid) {
         if (!token(rest).empty()) return false;
     }
     if (m_meshes.empty()) return false;
-    if (validateSolid) {
-        if (signedVolume <= 0 || edges.size()%2) return false;
-        std::sort(edges.begin(),edges.end());
-        for (std::size_t i=0; i<edges.size(); i+=2) {
-            if ((edges[i]^1) != edges[i+1] || (i && edges[i-1]/2 == edges[i]/2)) return false;
-        }
+    if (signedVolume <= 0 || edges.size()%2) return false;
+    std::sort(edges.begin(),edges.end());
+    for (std::size_t i=0; i<edges.size(); i+=2) {
+        if ((edges[i]^1) != edges[i+1] || (i && edges[i-1]/2 == edges[i]/2)) return false;
     }
     m_positions = positions.size();
     for (const auto &entry : m_meshes) if (entry.second.indices.empty()) return false;
