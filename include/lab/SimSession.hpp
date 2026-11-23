@@ -11,6 +11,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -102,6 +103,15 @@ class SimSession {
     bool latest(ma17::EmulatorSnapshot &snapshot) const;
     std::vector<ma17::EmulatorSnapshot>
     snapshot_window(long long first_tick) const;
+    struct SnapshotWindowCache {
+        std::vector<ma17::EmulatorSnapshot> samples;
+        long long first_tick = 0;
+        const SimSession *session = nullptr;
+        std::size_t generation = 0;
+    };
+    // The view stays valid until this reader next updates its own cache.
+    std::span<const ma17::EmulatorSnapshot>
+    snapshot_window(long long first_tick, SnapshotWindowCache &cache) const;
     struct SnapshotRetention {
         std::size_t raw_evicted = 0;
         std::size_t archive_evicted = 0;
@@ -146,6 +156,8 @@ class SimSession {
     ma17::EmulatorSnapshot snapshot_{};
     ma17::EmulatorSnapshot capture_snapshot_{};
     std::deque<ma17::EmulatorSnapshot> snapshot_history_;
+    std::vector<ma17::EmulatorSnapshot> copy_snapshot_window_locked(long long first_tick) const;
+    std::size_t history_generation_ = 0;
     std::deque<ma17::EmulatorSnapshot> snapshot_archive_;
     std::vector<ma17::EmulatorSnapshot> archive_pending_;
     SnapshotRetention snapshot_retention_{};

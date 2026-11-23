@@ -575,6 +575,11 @@ bool SimSession::latest(ma17::EmulatorSnapshot &snapshot) const {
 std::vector<ma17::EmulatorSnapshot>
 SimSession::snapshot_window(long long first_tick) const {
     std::lock_guard lock(mutex_);
+    return copy_snapshot_window_locked(first_tick);
+}
+
+std::vector<ma17::EmulatorSnapshot>
+SimSession::copy_snapshot_window_locked(long long first_tick) const {
     std::vector<ma17::EmulatorSnapshot> result;
     if (!snapshot_archive_.empty() && !snapshot_history_.empty()) {
         const auto archive_first = std::lower_bound(
@@ -597,6 +602,33 @@ SimSession::snapshot_window(long long first_tick) const {
         });
     result.insert(result.end(), first, snapshot_history_.end());
     return result;
+}
+
+std::span<const ma17::EmulatorSnapshot>
+SimSession::snapshot_window(long long first_tick, SnapshotWindowCache &cache) const {
+    std::lock_guard lock(mutex_);
+    auto &samples = cache.samples;
+    const bool needs_archive = snapshot_retention_.raw_evicted && !snapshot_history_.empty() &&
+                               first_tick < snapshot_history_.front().tick;
+    if (cache.session != this || cache.generation != history_generation_ ||
+        first_tick < cache.first_tick || samples.empty() || needs_archive) {
+        samples = copy_snapshot_window_locked(first_tick);
+        cache.session = this;
+        cache.generation = history_generation_;
+    } else {
+        const auto next = std::upper_bound(snapshot_history_.begin(), snapshot_history_.end(),
+            samples.back().tick, [](long long tick, const auto &s) { return tick < s.tick; });
+        samples.insert(samples.end(), next, snapshot_history_.end());
+    }
+    cache.first_tick = first_tick;
+    const auto first = std::lower_bound(samples.begin(), samples.end(), first_tick,
+        [](const auto &s, long long tick) { return s.tick < tick; });
+    // Compact occasionally so advancing a scope by one sample doesn't move its entire history.
+    if (first - samples.begin() > samples.end() - first) {
+        samples.erase(samples.begin(), first);
+        return samples;
+    }
+    return {first, samples.end()};
 }
 
 SimSession::SnapshotRetention SimSession::snapshot_retention() const {
@@ -695,6 +727,7 @@ void SimSession::receive_snapshot(const ma17::EmulatorSnapshot &snapshot,
     if (!self.snapshot_history_.empty() &&
         snapshot.tick < self.snapshot_history_.back().tick) {
         self.snapshot_history_.clear();
+        ++self.history_generation_;
         self.snapshot_archive_.clear();
         self.archive_pending_.clear();
         self.snapshot_retention_ = {};

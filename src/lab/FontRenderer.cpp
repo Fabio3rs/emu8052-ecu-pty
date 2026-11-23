@@ -1,4 +1,5 @@
 #include "lab/FontRenderer.hpp"
+#include "ma17/Diagnostics.hpp"
 
 #include "lab/MeshAsset.hpp"
 
@@ -355,7 +356,7 @@ FontRenderer::FontRenderer(const std::string &path, const FontSpec &spec,
     }
     // Startup logs the primary face only; the fallback hash is computed when
     // face_identity() is first requested (PNG metadata, manifests).
-    std::fprintf(stderr, "[LAB-FONT] face=%s sha256=%s%s%s pixel=%d\n",
+    ma17::diagnostic_log(stderr, "[LAB-FONT] face=%s sha256=%s%s%s pixel=%d\n",
                  data_->primary.family.c_str(), data_->primary.sha256().c_str(),
                  data_->fallback.face ? " +fallback " : "",
                  data_->fallback.face ? data_->fallback.family.c_str() : "",

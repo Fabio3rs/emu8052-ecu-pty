@@ -1,4 +1,5 @@
 #include "ma17/EmulatorLoop.hpp"
+#include "ma17/Diagnostics.hpp"
 
 #include "CrankshaftSimulator.hpp"
 #include "ma17/AdcSimulator.hpp"
@@ -89,6 +90,7 @@ static void print_dyno_point(const EmulatorLoopContext &context) {
 }
 
 static void print_plant_line(const EmulatorLoopContext &context) {
+    if (!verbose_diagnostics && !fine_plant_windows()) return;
     const auto &w = context.plant_window.last();
             fprintf(stdout,
                     "{\"type\":\"plant\",\"tick\":%lld,\"rpm\":%.1f,"
@@ -625,38 +627,38 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.idle_bridge_candidate &&
             context.ticks == context.idle_motor_disconnect_tick) {
             context.idle_motor_connected = false;
-            fprintf(stdout, "{\"type\":\"idle_motor_disconnect\","
+            diagnostic_log(stdout, "{\"type\":\"idle_motor_disconnect\","
                             "\"tick\":%lld}\n", context.ticks);
         }
         if (context.idle_bridge_candidate &&
             context.ticks == context.idle_motor_reconnect_tick) {
             context.idle_motor_connected = true;
-            fprintf(stdout, "{\"type\":\"idle_motor_reconnect\","
+            diagnostic_log(stdout, "{\"type\":\"idle_motor_reconnect\","
                             "\"tick\":%lld}\n", context.ticks);
         }
         if (context.injector_stage &&
             context.ticks == context.injector_disconnect_tick) {
             context.injector_stage->set_connected(false);
-            fprintf(stdout, "{\"type\":\"injector_disconnect\","
+            diagnostic_log(stdout, "{\"type\":\"injector_disconnect\","
                             "\"tick\":%lld}\n", context.ticks);
         }
         if (context.injector_stage &&
             context.ticks == context.injector_reconnect_tick) {
             context.injector_stage->set_connected(true);
-            fprintf(stdout, "{\"type\":\"injector_reconnect\","
+            diagnostic_log(stdout, "{\"type\":\"injector_reconnect\","
                             "\"tick\":%lld}\n", context.ticks);
         }
         if (context.physical_crank &&
             context.ticks == context.coil_disconnect_tick) {
             context.ignition_stage.set_connected(context.coil_channel, false);
-            fprintf(stdout, "{\"type\":\"coil_disconnect\","
+            diagnostic_log(stdout, "{\"type\":\"coil_disconnect\","
                             "\"tick\":%lld,\"channel\":%u}\n",
                     context.ticks, context.coil_channel);
         }
         if (context.physical_crank &&
             context.ticks == context.coil_reconnect_tick) {
             context.ignition_stage.set_connected(context.coil_channel, true);
-            fprintf(stdout, "{\"type\":\"coil_reconnect\","
+            diagnostic_log(stdout, "{\"type\":\"coil_reconnect\","
                             "\"tick\":%lld,\"channel\":%u}\n",
                     context.ticks, context.coil_channel);
         }
@@ -673,13 +675,13 @@ static void run_tick_batch(EmulatorLoopContext &context,
         }
         if (context.throttle && context.ticks == context.pedal_step_tick) {
             if (context.pedal_rise_ticks) {
-                fprintf(stdout, "{\"type\":\"pedal_command\",\"tick\":%lld,"
+                diagnostic_log(stdout, "{\"type\":\"pedal_command\",\"tick\":%lld,"
                                 "\"target_pull_m\":%.6f,\"rise_ticks\":%lld}\n",
                         context.ticks, context.pedal_pull_m,
                         context.pedal_rise_ticks);
             } else {
                 context.throttle->set_cable_pull_m(context.pedal_pull_m);
-                fprintf(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
+                diagnostic_log(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
                                 "\"pull_m\":%.6f,\"angle_rad\":%.6f,"
                                 "\"contact\":%s}\n",
                         context.ticks, context.pedal_pull_m,
@@ -696,7 +698,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<double>(context.pedal_rise_ticks));
             } else if (elapsed == context.pedal_rise_ticks) {
                 context.throttle->set_cable_pull_m(context.pedal_pull_m);
-                fprintf(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
+                diagnostic_log(stdout, "{\"type\":\"pedal\",\"tick\":%lld,"
                                 "\"pull_m\":%.6f,\"angle_rad\":%.6f,"
                                 "\"contact\":%s}\n",
                         context.ticks, context.pedal_pull_m,
@@ -706,45 +708,45 @@ static void run_tick_batch(EmulatorLoopContext &context,
         }
         if (context.throttle && context.ticks == context.pedal_release_tick) {
             context.throttle->set_cable_pull_m(0.0);
-            fprintf(stdout, "{\"type\":\"pedal_release\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"pedal_release\",\"tick\":%lld,"
                             "\"angle_rad\":%.6f,\"contact\":%s}\n",
                     context.ticks, context.throttle->angle_rad(),
                     context.throttle->contact_closed() ? "true" : "false");
         }
         if (context.physical_crank && context.ticks == context.load_step_tick)
-            fprintf(stdout, "{\"type\":\"load_step\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"load_step\",\"tick\":%lld,"
                             "\"torque_nm\":%.3f}\n",
                     context.ticks, context.load_torque_nm);
         if (context.throttle && context.ticks == context.tps1_high_tick) {
-            fprintf(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
                             "\"channel\":6,\"voltage_v\":%.3f}\n",
                     context.ticks, context.tps_circuit->reference_voltage());
         }
         if (context.throttle && context.ticks == context.tps1_restore_tick) {
-            fprintf(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
                             "\"channel\":6}\n", context.ticks);
         }
         if (context.throttle && context.ticks == context.tps2_high_tick)
-            fprintf(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"tps_fault\",\"tick\":%lld,"
                             "\"channel\":0,\"voltage_v\":%.3f}\n",
                     context.ticks, context.tps_circuit->reference_voltage());
         if (context.throttle && context.ticks == context.tps2_restore_tick)
-            fprintf(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"tps_restore\",\"tick\":%lld,"
                             "\"channel\":0}\n", context.ticks);
         if (context.thermal && context.ticks == context.ect_open_tick)
-            fprintf(stdout, "{\"type\":\"ect_open\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"ect_open\",\"tick\":%lld,"
                             "\"adc3_v\":5.0}\n", context.ticks);
         if (context.thermal && context.ticks == context.ect_restore_tick)
-            fprintf(stdout, "{\"type\":\"ect_restore\",\"tick\":%lld}\n",
+            diagnostic_log(stdout, "{\"type\":\"ect_restore\",\"tick\":%lld}\n",
                     context.ticks);
         movc_tick = static_cast<uint64_t>(context.ticks);
         set_adc_tick(static_cast<uint64_t>(context.ticks));
         if (context.physical_crank) {
             if (context.ticks == context.crank_sensor_open_tick)
-                fprintf(stdout, "{\"type\":\"crank_sensor_open\","
+                diagnostic_log(stdout, "{\"type\":\"crank_sensor_open\","
                                 "\"tick\":%lld}\n", context.ticks);
             if (context.ticks == context.crank_sensor_restore_tick)
-                fprintf(stdout, "{\"type\":\"crank_sensor_restore\","
+                diagnostic_log(stdout, "{\"type\":\"crank_sensor_restore\","
                                 "\"tick\":%lld}\n", context.ticks);
             const bool sensor_connected =
                 !context.crank_sensor_open_tick ||
@@ -848,7 +850,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     print_plant_line(context);
             }
             if (context.physical_input->missing_positions != gaps_before) {
-                fprintf(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
+                diagnostic_log(stdout, "{\"type\":\"crank_gap\",\"tick\":%lld,"
                                 "\"position\":%d,\"rpm\":%.3f}\n",
                         context.ticks,
                         context.physical_input->last_missing_position,
@@ -984,7 +986,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
             const bool closed =
                 context.pump_relay.step(p34_high, context.ticks);
             if (closed != was_closed)
-                fprintf(stdout, "{\"type\":\"pump_relay_candidate\","
+                diagnostic_log(stdout, "{\"type\":\"pump_relay_candidate\","
                                 "\"tick\":%lld,\"closed\":%s,"
                                 "\"p34_high\":%s,\"pc\":%u}\n",
                         context.ticks, closed ? "true" : "false",
@@ -1040,7 +1042,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mSFR[0xC8 - 0x80]));
         if (context.physical_crank &&
             p54_before != (cpu.mSFR[0xF8 - 0x80] & 0x10u))
-            fprintf(stdout, "{\"type\":\"p54_raw\","
+            diagnostic_log(stdout, "{\"type\":\"p54_raw\","
                             "\"tick\":%lld,\"pc\":%u,\"p54\":%u,"
                             "\"ram2d\":%u,\"xram_f881\":%u,"
                             "\"ram47\":%u}\n",
@@ -1058,7 +1060,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                  context.physical_crank->rpm()},
                 context.event_context);
         if (context.physical_crank && cpu.mExtData[0xF847] != idle_state_before)
-            fprintf(stdout, "{\"type\":\"idle_state_raw\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"idle_state_raw\",\"tick\":%lld,"
                             "\"pc\":%u,\"before\":%u,\"after\":%u,"
                             "\"ram24\":%u,\"ram27\":%u,\"f84e\":%u}\n",
                     context.ticks, static_cast<unsigned>(last_pc),
@@ -1070,7 +1072,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.physical_crank &&
             (cpu.mLowerData[0x27] != idle_fault_before ||
              cpu.mExtData[0xF84E] != published_fault_before))
-            fprintf(stdout, "{\"type\":\"idle_fault_raw\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"idle_fault_raw\",\"tick\":%lld,"
                             "\"pc\":%u,\"ram27\":%u,\"f84e\":%u,"
                             "\"f83b\":%u,\"contact\":%s}\n",
                     context.ticks, static_cast<unsigned>(last_pc),
@@ -1081,7 +1083,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.physical_crank &&
             (cpu.mLowerData[0x28] != ram28_before ||
              cpu.mExtData[0xF84F] != f84f_before))
-            fprintf(stdout, "{\"type\":\"sensor_fault_raw\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"sensor_fault_raw\",\"tick\":%lld,"
                             "\"pc\":%u,\"ram28\":%u,\"f84f\":%u,"
                             "\"ram63\":%u,\"ram60\":%u,\"ram66\":%u}\n",
                     context.ticks, static_cast<unsigned>(last_pc),
@@ -1093,7 +1095,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         const uint8_t lambda_flags_after =
             (cpu.mLowerData[0x2F] & 0x02u) | (cpu.mLowerData[0x2C] & 0x08u);
         if (context.physical_crank && lambda_flags_after != lambda_flags_before)
-            fprintf(stdout, "{\"type\":\"lambda_class_raw\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"lambda_class_raw\",\"tick\":%lld,"
                             "\"pc\":%u,\"ram65\":%u,\"flags\":%u,"
                             "\"f8e8\":%u,\"f8ea\":%u}\n",
                     context.ticks, static_cast<unsigned>(last_pc),
@@ -1104,7 +1106,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.physical_crank) {
             const uint8_t bridge_after = cpu.mSFR[0x90 - 0x80] & 0x60u;
             if (bridge_before != bridge_after)
-                fprintf(stdout, "{\"type\":\"bridge_candidate\","
+                diagnostic_log(stdout, "{\"type\":\"bridge_candidate\","
                                 "\"tick\":%lld,\"p15\":%u,\"p16\":%u,"
                                 "\"pc\":%u,\"ram1c\":%u,\"ram1f\":%u,"
                                 "\"ram24\":%u,\"contact\":%s}\n",
@@ -1127,7 +1129,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         }
         if (context.idle_bridge_candidate && context.throttle &&
             context.throttle->contact_closed() != idle_contact_before)
-            fprintf(stdout, "{\"type\":\"idle_contact\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"idle_contact\",\"tick\":%lld,"
                             "\"closed\":%s,\"cable_rad\":%.6f,"
                             "\"stop_rad\":%.6f}\n",
                     context.ticks,
@@ -1176,7 +1178,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                             context.event_context);
                 }
                 if ((ignition_before ^ ignition_after) & mask) {
-                    fprintf(stdout, "{\"type\":\"ignition_pin\","
+                    diagnostic_log(stdout, "{\"type\":\"ignition_pin\","
                                     "\"tick\":%lld,\"channel\":%u,"
                                     "\"high\":%s,\"angle_rad\":%.6f,"
                                     "\"rpm\":%.3f}\n",
@@ -1196,7 +1198,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         }
         if (context.injector_stage) {
             if (cpu.cc3_output_pin != cc3_before)
-                fprintf(stdout, "{\"type\":\"cc3_pin\",\"tick\":%lld,"
+                diagnostic_log(stdout, "{\"type\":\"cc3_pin\",\"tick\":%lld,"
                                 "\"high\":%s,\"shadow_high\":%s,"
                                 "\"ram14_15\":%u,\"lambda_flags\":%u,"
                                 "\"ram65\":%u}\n",
@@ -1257,7 +1259,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
             }
         }
         if (context.thermal && context.ticks % 990000 == 0) {
-            fprintf(stdout, "{\"type\":\"thermal\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"thermal\",\"tick\":%lld,"
                             "\"air_c\":%.3f,\"wall_c\":%.3f,"
                             "\"coolant_c\":%.3f,\"vehicle_kmh\":%.2f,"
                             "\"thermostat_open\":%.3f,\"fan_on\":%u,"
@@ -1281,7 +1283,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mLowerData[0x63]));
         }
         if (context.intake && context.ticks % 990000 == 0)
-            fprintf(stdout, "{\"type\":\"intake\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"intake\",\"tick\":%lld,"
                             "\"pressure_pa\":%.1f,\"air_kg\":%.9f,"
                             "\"air_in_kg\":%.9f,\"air_out_kg\":%.9f,"
                             "\"injected_kg\":%.9f,\"film_kg\":%.9f,"
@@ -1298,7 +1300,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.injector_stage->pulse_count());
         if (context.physical_crank && context.ticks % 990000 == 0) {
             const auto &by_cylinder = context.combustion.burns_by_cylinder();
-            fprintf(stdout, "{\"type\":\"combustion\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"combustion\",\"tick\":%lld,"
                             "\"burns\":%llu,\"missed\":%llu,"
                             "\"burned_fuel_kg\":%.9f,\"rpm\":%.3f,"
                             "\"burns_cyl_1\":%llu,\"burns_cyl_2\":%llu,"
@@ -1313,7 +1315,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
             context.ticks % 990000 == 0 && !fine_plant_windows() && context.plant_window.last().valid)
             print_plant_line(context);
         if (context.physical_crank && context.ticks % 990000 == 0)
-            fprintf(stdout, "{\"type\":\"lambda\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"lambda\",\"tick\":%lld,"
                             "\"physical\":%.3f,"
                             "\"oxygen_equivalent\":%.3f,"
                             "\"voltage_v\":%.4f,"
@@ -1334,7 +1336,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     context.exhaust.valid() ? "true" : "false",
                     static_cast<unsigned>(cpu.mLowerData[0x65]));
         if (context.physical_crank && context.ticks % 990000 == 0)
-            fprintf(stdout, "{\"type\":\"diagnostic\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"diagnostic\",\"tick\":%lld,"
                             "\"ram27\":%u,\"ram28\":%u,"
                             "\"f84e\":%u,\"f84f\":%u,\"f850\":%u,"
                             "\"f85e\":%u,\"f85f\":%u,\"f860\":%u,"
@@ -1349,7 +1351,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mExtData[0xF860]),
                     context.diagnostic_lamp.lamp_on() ? "true" : "false");
         if (context.idle_bridge_candidate && context.ticks % 990000 == 0)
-            fprintf(stdout, "{\"type\":\"idle_actuator\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"idle_actuator\",\"tick\":%lld,"
                             "\"stem_m\":%.6f,\"stop_rad\":%.6f,"
                             "\"angle_rad\":%.6f,\"contact\":%s,"
                             "\"ram60\":%u,\"ram66\":%u}\n",
@@ -1360,7 +1362,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
                     static_cast<unsigned>(cpu.mLowerData[0x60]),
                     static_cast<unsigned>(cpu.mLowerData[0x66]));
         if (context.physical_crank && cpu.mLowerData[0x47] != rpm_before) {
-            fprintf(stdout, "[COSIM-RPM] tick=%lld physical_rpm=%.3f "
+            diagnostic_log(stdout, "[COSIM-RPM] tick=%lld physical_rpm=%.3f "
                             "ram47=%u pc=%04X\n",
                     context.ticks, context.physical_crank->rpm(),
                     static_cast<unsigned>(cpu.mLowerData[0x47]), last_pc);
@@ -1368,7 +1370,7 @@ static void run_tick_batch(EmulatorLoopContext &context,
         if (context.throttle &&
             (cpu.mLowerData[0x60] != tps2_before ||
              cpu.mLowerData[0x66] != tps1_before)) {
-            fprintf(stdout, "{\"type\":\"tps_ram\",\"tick\":%lld,"
+            diagnostic_log(stdout, "{\"type\":\"tps_ram\",\"tick\":%lld,"
                             "\"angle_rad\":%.6f,\"adc0_v\":%.6f,"
                             "\"adc6_v\":%.6f,\"ram60\":%u,\"ram66\":%u}\n",
                     context.ticks, context.throttle->angle_rad(),
@@ -1394,12 +1396,14 @@ static void run_tick_batch(EmulatorLoopContext &context,
             trace_port_edges(cpu, context.ticks, last_pc);
 
         context.uart.tick(&cpu, context.ticks);
-        trace_isr_vector(cpu);
-        trace_timer0_stall(cpu);
-        trace_kline_decoder(cpu, context.ticks);
-        trace_rpm_state(cpu, context.trace_pc);
-        trace_reset_watchdog(cpu);
-        trace_stack_range(cpu);
+        if (verbose_diagnostics || context.trace_pc) {
+            trace_isr_vector(cpu);
+            trace_timer0_stall(cpu);
+            trace_kline_decoder(cpu, context.ticks);
+            trace_rpm_state(cpu, context.trace_pc);
+            trace_reset_watchdog(cpu);
+            trace_stack_range(cpu);
+        }
     }
 }
 
@@ -1712,7 +1716,7 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             break;
         }
         context.bridge.read_and_process();
-        trace_performance(cpu, context.ticks, context.startup_time);
+        if (verbose_diagnostics) trace_performance(cpu, context.ticks, context.startup_time);
         if (context.bench && context.bench->done()) {
             fprintf(stderr, "[DYNO-BENCH] %s ticks=%lld\n",
                     dyno_state_name(context.bench->state()), context.ticks);
@@ -1720,7 +1724,7 @@ void run_emulator_loop(EmulatorLoopContext &context) {
             break;
         }
         if (stop_ticks && context.ticks >= stop_ticks) {
-            fprintf(stderr, "[TRACE-STOP] ticks=%lld\n", context.ticks);
+            diagnostic_log(stderr, "[TRACE-STOP] ticks=%lld\n", context.ticks);
             context.running.store(false);
             break;
         }
@@ -1751,7 +1755,8 @@ void run_emulator_loop(EmulatorLoopContext &context) {
         }
     }
 
-    if (context.physical_crank) {
+    if (context.physical_crank && context.bench) print_dyno_point(context);
+    if (context.physical_crank && verbose_diagnostics) {
         fprintf(stdout, "[PHYSICAL-CRANK] ticks=%lld rpm=%.3f "
                         "angle_rad=%.6f rising=%llu falling=%llu "
                         "missing=%llu ram47=%u ram46=%u\n",
@@ -1804,7 +1809,6 @@ void run_emulator_loop(EmulatorLoopContext &context) {
                     context.combustion.energy_scheduled_j(), tail_j,
                     context.combustion_integrated_j, context.combustion.burns());
         }
-        if (context.bench) print_dyno_point(context);
         fprintf(stdout, "[PHYSICAL-INTAKE] pressure_pa=%.1f air_kg=%.9f "
                         "air_in_kg=%.9f air_out_kg=%.9f "
                         "injected_kg=%.9f film_kg=%.9f vapor_kg=%.9f "

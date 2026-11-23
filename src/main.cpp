@@ -3,6 +3,7 @@
 // profile is configured here.
 
 #include "engine/ControlLimits.hpp"
+#include "ma17/Diagnostics.hpp"
 #include <atomic>
 #include <array>
 #include <cerrno>
@@ -294,7 +295,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         drivetrain->set_clutch_pressure(config->clutch_percent / 100.0);
         // Provisional road-load estimates, separate from donor calibration.
         drivetrain->set_road_resistance(100.0, 1.184, 0.32, 2.0);
-        fprintf(stderr, "Drivetrain estimates: mass=%d kg radius=0.29 m "
+        ma17::diagnostic_log(stderr, "Drivetrain estimates: mass=%d kg radius=0.29 m "
                         "clutch=%d Nm rolling=100 N rho=1.184 Cd=0.32 A=2 m2\n",
                 config->vehicle_mass_kg, config->clutch_max_nm);
     }
@@ -400,7 +401,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         sim.startup_delay_instrs = 0;
 
     // Inicializa PTY
-    fprintf(stderr, "[DEBUG] Iniciando abertura de PTY...\n");
+    ma17::diagnostic_log(stderr, "[DEBUG] Iniciando abertura de PTY...\n");
     fflush(stderr);
 
     if (!g_uart.open_pty_4800_8N1()) {
@@ -410,7 +411,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
 
     fprintf(stdout, "[emu8051-pty] PTY pronto em: %s (4800 8N1)\n",
             g_uart.slave_path.c_str());
-    fprintf(stdout,
+    ma17::diagnostic_log(stdout,
             "Conecte seu scanner a esse dispositivo. Ctrl+C para sair.\n");
     fflush(stdout);
 
@@ -421,7 +422,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     hooks.install_uart(cpu);
 
     // Reset - agora é seguro chamar com aWipe=true
-    fprintf(stderr, "[DEBUG] Chamando reset()...\n");
+    ma17::diagnostic_log(stderr, "[DEBUG] Chamando reset()...\n");
     fflush(stderr);
     reset(&cpu, true);
     const char *xram_state_file = std::getenv("MA17_XRAM_STATE_FILE");
@@ -447,25 +448,25 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
 
     // Timer 2 support now fully implemented via PR #40
     // (https://github.com/jarikomppa/emu8051/pull/40)
-    fprintf(
+    ma17::diagnostic_log(
         stderr,
         "[8052] Timer 2 support enabled (T2CON, TL2, TH2, RCAP2L, RCAP2H)\n");
     fflush(stderr);
 
     // Carrega ROM sobre a memória zerada
-    fprintf(stderr, "[DEBUG] Carregando ROM de: %s\n", rompath);
+    ma17::diagnostic_log(stderr, "[DEBUG] Carregando ROM de: %s\n", rompath);
     fflush(stderr);
     if (!ma17::load_bin_to_code(&cpu, rompath, 0x0000))
         return 1;
 
     // DEBUG: Verify ROM was loaded correctly
-    fprintf(stderr, "[DEBUG] ROM verification: mCodeMem=%p\n",
+    ma17::diagnostic_log(stderr, "[DEBUG] ROM verification: mCodeMem=%p\n",
             static_cast<void *>(cpu.mCodeMem));
-    fprintf(stderr,
+    ma17::diagnostic_log(stderr,
             "[DEBUG] ROM[0x0000]=0x%02X ROM[0x0001]=0x%02X ROM[0x0002]=0x%02X "
             "(reset vector)\n",
             cpu.mCodeMem[0x0000], cpu.mCodeMem[0x0001], cpu.mCodeMem[0x0002]);
-    fprintf(stderr,
+    ma17::diagnostic_log(stderr,
             "[DEBUG] ROM[0x002B]=0x%02X ROM[0x002D]=0x%02X (Timer 2 ISR)\n",
             cpu.mCodeMem[0x002B], cpu.mCodeMem[0x002D]);
     fflush(stderr);
@@ -488,13 +489,13 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     // 0x4C44)
     if (!config->physical_crank) {
         cpu.mLowerData[0x17] = 0x7F;
-        fprintf(stderr, "[K-LINE] Habilitado detecção 5-baud "
+        ma17::diagnostic_log(stderr, "[K-LINE] Habilitado detecção 5-baud "
                         "(RAM_17=0x7F)\n");
     }
 
     // P4 @ 0xE8: Initialize port (initial value from ROM @ 0x085E)
     cpu.mSFR[SFR_P4 - 0x80] = 0xEA;
-    fprintf(stderr, "[K-LINE] P4 inicializado (0x%02X)\n",
+    ma17::diagnostic_log(stderr, "[K-LINE] P4 inicializado (0x%02X)\n",
             cpu.mSFR[SFR_P4 - 0x80]);
     fflush(stderr);
 
@@ -502,12 +503,12 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
     signal(SIGINT, sigint_handler);
     signal(SIGUSR1, sigusr1_handler);
 
-    fprintf(stderr, "[DEBUG] Iniciando loop principal de emulação...\n");
-    fprintf(stderr,
+    ma17::diagnostic_log(stderr, "[DEBUG] Iniciando loop principal de emulação...\n");
+    ma17::diagnostic_log(stderr,
             "[DEBUG] Send SIGUSR1 to inject 5-baud init: kill -USR1 %d\n",
             getpid());
-    fprintf(stderr, "[DEBUG] PC inicial: 0x%04X\n", cpu.mPC);
-    fprintf(stderr,
+    ma17::diagnostic_log(stderr, "[DEBUG] PC inicial: 0x%04X\n", cpu.mPC);
+    ma17::diagnostic_log(stderr,
             "[CRANKSHAFT] Waiting %lld ticks before pulse injection "
             "(RPM=%d)...\n",
             sim.startup_delay_instrs, sim.target_rpm);
@@ -524,7 +525,7 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         std::chrono::nanoseconds(std::chrono::seconds(1)) /
         (machine_cycles_per_second / steps_per_tick);
 
-    fprintf(stderr, "[DEBUG] Emulation timing: %d steps/tick, ~%lld ns/step\n",
+    ma17::diagnostic_log(stderr, "[DEBUG] Emulation timing: %d steps/tick, ~%lld ns/step\n",
             steps_per_tick,
             static_cast<long long>(tick_duration_ns.count() /
                                    static_cast<long long>(steps_per_tick)));
@@ -661,6 +662,6 @@ int ma17::run_cli(int argc, char **argv, RunObserver observer) {
         return 2;
     }
 
-    printf("\n[emu8051-pty] Encerrando.\n");
+    ma17::diagnostic_log(stdout, "\n[emu8051-pty] Encerrando.\n");
     return 0;
 }

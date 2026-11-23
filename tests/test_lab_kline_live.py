@@ -16,7 +16,7 @@ import time
 xvfb, binary, rom = sys.argv[1:4]
 client = Path(__file__).resolve().parents[1] / "test_pty.py"
 command = [
-    xvfb, "-a", binary, rom, "--live", "--auto-start", "--bench-preset",
+    xvfb, "-a", binary, rom, "--live", "--verbose", "--no-cad", "--auto-start", "--bench-preset",
     "--no-audio", "--physical-pty-realtime", "--ect-open-tick", "2000000",
     "--ect-restore-tick", "15000000", "--load-step-tick", "800000",
     "--load-nm", "24", "--stop-ticks", "25000000", "--window-frames", "1800",

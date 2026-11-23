@@ -8,9 +8,9 @@
 
 namespace lab {
 
-template <typename Sample, typename Value>
+template <typename Samples, typename Value>
 std::vector<std::size_t> decimate_scope_samples(
-    const std::vector<Sample> &samples, long long first_tick,
+    const Samples &samples, long long first_tick,
     long long last_tick, int columns, long long max_gap_ticks,
     Value value_of) {
     std::vector<std::size_t> selected;

@@ -4,20 +4,26 @@ O modo **3D CAD** abre a montagem FreeCAD em perspectiva dentro do painel Mechan
 
 ## Compilar e abrir
 
-Com SDL3, FreeType, zlib e libpng disponíveis, execute na raiz do projeto:
+Com SDL 3.4 ou superior, FreeType, zlib e libpng disponíveis, execute na raiz do projeto:
 
 ```sh
 cmake -S . -B build-lab -DENABLE_SEVEL_MA17_LAB=ON -DENABLE_TESTS=ON
 cmake --build build-lab --target sevel-ma17-lab sevel-cad-check -j8
 cmake --build build-lab --target sevel-cad-assets
-build-lab/sevel-ma17-lab "$ROM" --live --cad-panel
+build-lab/sevel-ma17-lab "$ROM"
 ```
 
-O alvo de assets instala a revisão ativa de `build/sevel-cad/runtime-assets` junto ao executável. Configure `SEVEL_CAD_ASSET_DIR` para usar outro registro. Em uma sessão interativa comum com assets instalados, a tecla **V** ou o seletor de vista também permitem entrar em **3D CAD**. A opção `--cad-panel` abre diretamente em Mechanics. Para abrir uma segunda janela sincronizada, use `--live --cad-assets bundled`. O argumento também aceita o registro, a pasta de uma revisão ou o próprio `parts_manifest.json`. Um manifest histórico sem o rig numérico abre em pose estática.
+O alvo de assets instala a revisão ativa de `build/sevel-cad/runtime-assets` junto ao executável. Configure `SEVEL_CAD_ASSET_DIR` para usar outro registro. Ao abrir a ROM, o Lab inicia em **Live**, com o preset de bancada e **3D CAD** em Mechanics. Se o pacote estiver ausente, incompleto ou inválido, a simulação abre na vista mecânica clássica. Use `--no-cad` para escolhê-la diretamente ou `--no-bench-preset` para iniciar com o cenário físico bruto. Para abrir o CAD em uma segunda janela sincronizada, use `--cad-assets bundled`. O argumento também aceita o registro, a pasta de uma revisão ou o próprio `parts_manifest.json`. Um manifest histórico sem o rig numérico abre em pose estática.
+
+Para medir a taxa do laboratório completo durante o uso, execute
+`SEVEL_LAB_FPS=1 build-lab/sevel-ma17-lab "$ROM"`. Para incluir rastreamento da ECU, use `--verbose`.
+A linha `[LAB-VIDEO]` identifica a GPU e `[LAB-FPS]` mostra a taxa de apresentação do último segundo e a média acumulada.
+Ao medir com `--window-frames`, acrescente `--frame-delay-ms 0` para retirar a pausa das capturas automatizadas.
+`SEVEL_CAD_PROFILE=1` acrescenta uma espera pela GPU a cada quadro para cronometrar o desenho do CAD.
 
 ```sh
 cmake --install build-lab --prefix "$PWD/build-lab/ma17-distribution"
-build-lab/ma17-distribution/bin/sevel-ma17-lab "$ROM" --live --cad-panel
+build-lab/ma17-distribution/bin/sevel-ma17-lab "$ROM"
 ```
 
 A instalação leva os shaders, fontes, créditos e a revisão CAD ativa. Forneça a ROM separadamente. O pacote CAD usa caminhos relativos. A execução requer um driver SDL_GPU compatível. Se a inicialização gráfica do CAD falhar, o Lab registra o motivo e oferece as vistas mecânicas anteriores.

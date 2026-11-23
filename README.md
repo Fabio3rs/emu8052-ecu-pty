@@ -62,15 +62,15 @@ after a pedal step, and silence with the key off; see the Lab progress ledger.
 ```sh
 cmake -S . -B build-lab -DENABLE_SEVEL_MA17_LAB=ON -DENABLE_TESTS=ON
 cmake --build build-lab --parallel 4
-./build-lab/sevel-ma17-lab path/to/FiatTipo_MA17_dump_27c256.bin --live --bench-preset
+./build-lab/sevel-ma17-lab path/to/FiatTipo_MA17_dump_27c256.bin
 ```
 
-TODO (Lab startup): Make the missing bench setup visible before cranking.
-Without `--bench-preset` or an explicit ADC7 input, the raw scenario leaves
-ADC7 at its internal default (105); the ROM can hold the CC3 injection gate,
-so `cc3_pulses=0`, `injected_kg=0` and the engine stalls after the starter
-stops. Detect this state in the Lab and show an actionable warning or an
-explicit startup choice. Keep the unverified candidate bindings opt-in.
+Opening a ROM starts a live session with the warm bench preset and the
+integrated CAD view. If the CAD package is missing, invalid, or the GPU
+cannot open the view, the session continues in the classic mechanical view.
+Use `--no-cad` to select it directly. Press **K** for ignition and **S** for
+the starter, or pass `--auto-start`. Use `--verbose` for ECU traces and
+periodic frame-rate reports. Explicit captures retain their batch defaults.
 
 TODO (external K-Line slow init): PTY scanners send 5-baud levels in wall time,
 while the ECU decoder runs in emulated ticks. If host throughput falls below
@@ -89,8 +89,8 @@ Validate startup, steady idle and fuel cutoff as separate scenarios. Other
 independently failing suites can be investigated later without changing K-line
 behavior to match engine torque.
 
-The Lab needs SDL3 3.2 or newer. CMake uses an installed SDL3, or fetches the
-pinned 3.2.8 source. An existing local SDL3 build can be selected with
+The graphical Lab needs SDL3 3.4 or newer. CMake uses an installed SDL3, or fetches the
+pinned 3.4.20 source. An existing local SDL3 build can be selected with
 `-DSDL3_DIR=/path/to/SDL3Config-directory`. Builds with the Lab option off do
 not need SDL3. For an offline headless build, add
 `-DENABLE_SEVEL_MA17_LAB_GUI=OFF`. The GUI also needs ZLIB, FreeType and Python 3
@@ -105,7 +105,7 @@ runtime libraries shown by `ldd build-lab/sevel-ma17-lab`.
 P4.6 idle contact, P1.5/P1.6 idle bridge, 90 °C coolant, 5 mrad idle stop,
 9 mm² throttle leak and lambda ADC gain 5. These are simulation bindings and
 estimates, not a verified Fiat wiring/calibration. Explicit values for those
-options override the preset; omit it to run the raw physical scenario. The
+options override the preset. Use `--no-bench-preset` for the raw interactive scenario. The
 startup log prints `[LAB-BENCH]` and the window marks the candidate setup when
 the preset is active. Use the same preset
 for headless capture and control-trace replay. With the estimated mechanical
@@ -260,11 +260,18 @@ not verify audible speaker output. Stop with Esc. The supplied ROM and
 `.work/` captures remain local and ignored by Git.
 
 For repeatability checks, `--live --no-audio` skips the SDL audio stream and
-`--frame-delay-ms N` sets the GUI delay (1–1000 ms, default 16). A bounded GUI
+`--frame-delay-ms N` adds a delay after each live frame (0–1000 ms).
+Interactive runs default to 0. Runs with `--window-frames` default to 16 ms
+to give the simulation time to reach scripted events and capture ticks. A bounded GUI
 run exits when its simulation reaches `--stop-ticks`. Live and headless replay
 print `[LAB-STATE]` with the final tick, physical/ECU state fingerprint,
 ordered event fingerprint and overflow count; these fingerprints are diagnostic
 64-bit FNV-1a values, not cryptographic hashes.
+
+Set `SEVEL_LAB_FPS=1` to log only the FPS counter alongside normal output, or
+use `--verbose` for full diagnostics. The rate includes the
+instruments, scope, CAD and frame delay. The average begins after two warm-up
+frames. The integrated CAD view and instruments share one SDL GPU device.
 
 Use `--live --save-controls trace.txt` to save applied-tick key, starter,
 pedal, load, pause, resume and step commands. Run again with

@@ -565,7 +565,7 @@ std::optional<double> analog_scope_value(const ma17::EmulatorSnapshot &sample,
 }
 
 std::optional<ScopeAxisRanges>
-fit_analog_scope_axes(const std::vector<ma17::EmulatorSnapshot> &history,
+fit_analog_scope_axes(std::span<const ma17::EmulatorSnapshot> history,
                       int group, long long first_tick, long long last_tick,
                       DisplayUnits units) {
     ScopeAxisRanges fitted{};
@@ -703,7 +703,7 @@ void draw_lab_scope(
     const LayoutState &layout_state, SDL_Renderer *renderer, FontRenderer &font,
     int width, int height, long long tick,
     const std::vector<ma17::EmulatorEvent> &events,
-    const std::vector<ma17::EmulatorSnapshot> &history,
+    std::span<const ma17::EmulatorSnapshot> history,
     const std::array<bool, 4> &channels_visible, long long span_ticks,
     const std::array<std::optional<DigitalScopeCursor>, 2> &cursors,
     bool frozen, int focus_cylinder) {
@@ -1041,7 +1041,7 @@ void draw_lab_scope(
 void draw_lab_analog_scope(
     const LayoutState &layout_state, SDL_Renderer *renderer, FontRenderer &font,
     int width, int height, const ma17::EmulatorSnapshot &current,
-    const std::vector<ma17::EmulatorSnapshot> &history, int group,
+    std::span<const ma17::EmulatorSnapshot> history, int group,
     long long span_ticks, bool frozen,
     const std::array<long long, 2> &cursor_ticks, long long view_end_tick,
     long long trigger_tick, const char *trigger_status, std::size_t raw_evicted,
@@ -1053,12 +1053,14 @@ void draw_lab_analog_scope(
     const bool tps_group = group == 1;
     const bool thermal_group = group == 2;
     const bool overlaid_group = tps_group || thermal_group;
-    const auto value_of = [group, units](const ma17::EmulatorSnapshot &sample,
-                                         std::size_t channel) {
+    const std::size_t signal_count = analog_scope_signal_count(group);
+    std::array<UnitTransform, 3> transforms{};
+    for (std::size_t signal = 0; signal < signal_count; ++signal)
+        transforms[signal] = unit_transform(analog_scope_instrument(group, signal), units);
+    const auto value_of = [group, &transforms](const ma17::EmulatorSnapshot &sample,
+                                               std::size_t channel) {
         const auto value = analog_scope_value(sample, group, channel);
-        return value ? display_value(*value,
-                                     analog_scope_instrument(group, channel),
-                                     units)
+        return value ? *value * transforms[channel].factor + transforms[channel].offset
                      : std::numeric_limits<double>::quiet_NaN();
     };
     const long long span = std::clamp(span_ticks, 990000LL, 300LL * 990000);
@@ -1272,8 +1274,9 @@ void draw_lab_analog_scope(
                   selected ? kAccent
                            : SDL_Color{145, 177, 190, 255},
                   kTextSmall * scale);
-        const auto spec =
-            display_profile(analog_scope_instrument(preview, 0), units);
+        const auto &instrument = analog_scope_instrument(preview, 0);
+        const auto spec = display_profile(instrument, units);
+        const auto transform = unit_transform(instrument, units);
         const auto points = decimate_scope_samples(
             history, first_tick, view_end_tick,
             std::max(1, static_cast<int>(card.w)), 247500LL,
@@ -1286,16 +1289,12 @@ void draw_lab_analog_scope(
         for (const std::size_t index : points) {
             const auto &sample = history[index];
             const auto raw = analog_scope_value(sample, preview, 0);
-            const auto value =
-                raw ? std::optional<double>{display_value(
-                          *raw, analog_scope_instrument(preview, 0), units)}
-                    : std::nullopt;
-            if (!value) {
+            if (!raw) {
                 connected = false;
                 continue;
             }
             const float fraction = static_cast<float>(std::clamp(
-                (*value - spec.minimum) / (spec.maximum - spec.minimum), 0.0,
+                (*raw * transform.factor + transform.offset - spec.minimum) / (spec.maximum - spec.minimum), 0.0,
                 1.0));
             const SDL_FPoint point{
                 card.x + 3.0f +
@@ -1647,10 +1646,8 @@ void draw_lab_analog_scope(
     std::array<std::string, 2> cursor_rows{};
     std::array<std::array<double, 3>, 2> cursor_values{};
     std::array<const char *, 3> cursor_units{};
-    const std::size_t signal_count = analog_scope_signal_count(group);
     for (std::size_t signal = 0; signal < signal_count; ++signal)
-        cursor_units[signal] =
-            unit_transform(analog_scope_instrument(group, signal), units).unit;
+        cursor_units[signal] = transforms[signal].unit;
     for (std::size_t cursor = 0; cursor < cursor_ticks.size(); ++cursor) {
         if (cursor_ticks[cursor] < 0)
             continue;

@@ -9,7 +9,7 @@ from sevel_preset import BENCH_LEAK_MM2
 
 
 xvfb, binary, rom, image = sys.argv[1:5]
-command = [xvfb, "-a", binary, rom, "--live", "--auto-start",
+command = [xvfb, "-a", binary, rom, "--live", "--verbose", "--auto-start",
            "--window-frames", "180", "--capture-tick", "600000",
            "--screenshot", image, "--adc7-mv", "1232",
            "--idle-bridge-p15-p16", "--idle-contact-p46", "--coolant-c",

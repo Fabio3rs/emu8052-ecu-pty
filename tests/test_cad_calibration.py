@@ -38,11 +38,12 @@ def check(binary,rom,export,out):
                 rest_translation_m=[m[3],m[7],m[11]],rest_rotation_xyzw=quat,material_bindings={batch:pid}))
             bounds.append(m[16:22])
         (folder/'parts_manifest.json').write_text(json.dumps(scene))
-        for name,yaw in [('front',0),('back',math.pi)]:
+        for name,yaw in [('front',0),('back',math.pi),('panel',0)]:
             preset = out/(name+'.json')
             preset.write_text(json.dumps(dict(version=1,yaw_rad=yaw,pitch_rad=0,ortho=True,
                                                target_mm=[135,75,0],distance_mm=450)))
-            subprocess.run([binary,rom,'--live','--no-audio','--cad-assets',folder,'--cad-preset',preset,
+            panel_args = ['--cad-panel'] if name == 'panel' else []
+            subprocess.run([binary,rom,'--live','--no-audio','--cad-assets',folder,*panel_args,'--cad-preset',preset,
                             '--window-frames','10','--capture-tick','50000','--screenshot',out/(name+'.png')],
                            env=dict(os.environ,SDL_VIDEODRIVER='offscreen',SDL_AUDIODRIVER='dummy'),
                            check=True,stdout=subprocess.DEVNULL,timeout=30)
@@ -57,6 +58,17 @@ def check(binary,rom,export,out):
                 expected = [min(xs),image.height/2-(ymax-.075)*scale,
                             max(xs),image.height/2-(ymin-.075)*scale]
                 assert box and max(abs(a-b) for a,b in zip(box,expected)) < 2,(box,expected)
+            if name == 'panel':
+                # Locate a scanline crossing the blue fiducial, then verify
+                # that the UI sampled the complete CAD texture at native resolution.
+                row = (box[1] + box[3]) // 2
+                scanline = image.crop((0,row,image.width,row+1)).tobytes()
+                frame = Image.open(out/'panel.png').convert('RGB')
+                offset = frame.tobytes().find(scanline)
+                assert offset >= 0 and offset % 3 == 0
+                y,x = divmod(offset // 3,frame.width)
+                top = y-row
+                assert frame.crop((x,top,x+image.width,top+image.height)).tobytes() == image.tobytes()
         print('PASS opposite views of both asymmetric landmarks, under 2 pixels from FreeCAD bounds')
 
 

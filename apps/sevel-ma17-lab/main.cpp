@@ -6,6 +6,7 @@
 #ifdef SEVEL_LAB_SDL3
 #include "lab/SdlDisplay.hpp"
 #endif
+#include "ma17/Diagnostics.hpp"
 #include "ma17/Runner.hpp"
 
 #include <algorithm>
@@ -17,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -48,13 +50,13 @@ void on_event(const ma17::EmulatorEvent &event, void *raw) {
         ++state.event_overflow;
 }
 
-bool parse_tick(const char *text, long long &tick) {
+bool parse_tick(const char *text, long long &tick, long long minimum = 1) {
     if (!text || !*text)
         return false;
     errno = 0;
     char *end = nullptr;
     const long long parsed = std::strtoll(text, &end, 10);
-    if (errno || *end != '\0' || parsed <= 0)
+    if (errno || *end != '\0' || parsed < minimum)
         return false;
     tick = parsed;
     return true;
@@ -149,20 +151,23 @@ bool trace_metadata(const std::vector<std::string> &args,
 
 void usage(const char *program) {
     std::fprintf(stderr,
-                 "Usage: %s ROM --headless --capture-tick N --capture-svg PATH "
+                 "Usage: %s ROM [--headless] [--capture-tick N] [--capture-svg PATH] "
                  "[--capture-wav PATH] [--screenshot PATH.png] "
                  "[--window-frames N] [--live] [--auto-start] [--gpu-preview] "
-                 "[--cad-assets DIRECTORY|MANIFEST|bundled] [--cad-panel] [--cad-preset JSON] [--bench-preset] "
-                 "[--no-audio] [--frame-delay-ms N] "
+                 "[--cad-assets DIRECTORY|MANIFEST|bundled] [--cad-panel|--no-cad] [--cad-preset JSON] [--bench-preset|--no-bench-preset] "
+                 "[--no-audio] [--frame-delay-ms N] [--verbose] "
                  "[--ui-scale 100|150|200] "
                  "[--save-controls PATH] [--replay-controls PATH] "
-                 "[MA1.7 physical scenario options]\n",
+                 "[MA1.7 physical scenario options]\n"
+                 "Interactive defaults: live, bundled CAD panel, warm bench preset, uncapped frame pacing.\n",
                  program);
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
+    // Keep diagnostic records intact and timely when a launcher combines both streams.
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     if (argc < 2) {
         usage(argv[0]);
         return 2;
@@ -176,15 +181,18 @@ int main(int argc, char **argv) {
     bool headless = false;
     bool live = false;
     bool auto_start = false;
-    bool bench_preset = false;
+    std::optional<bool> bench_option;
+    bool disable_cad = false;
+    bool capture_tick_requested = false;
     bool gpu_preview = false;
     std::string cad_assets;
     std::string cad_preset;
     bool cad_panel = false;
     bool enable_audio = true;
     int window_frames = 0;
-    int frame_delay_ms = 16;
+    std::optional<int> frame_delay_ms;
     int ui_scale_percent = 0;
+    ma17::verbose_diagnostics = false;
     // The calibration view reads the table bytes from the same ROM.
     setenv("SEVEL_ROM_PATH", argv[1], 1);
     std::vector<std::string> harness_args{argv[0], argv[1], "--physical-crank"};
@@ -194,10 +202,14 @@ int main(int argc, char **argv) {
             headless = true;
         } else if (option == "--live") {
             live = true;
+        } else if (option == "--verbose") {
+            ma17::verbose_diagnostics = true;
         } else if (option == "--auto-start") {
             auto_start = true;
-        } else if (option == "--bench-preset") {
-            bench_preset = true;
+        } else if (option == "--bench-preset" || option == "--no-bench-preset") {
+            bench_option = option == "--bench-preset";
+        } else if (option == "--no-cad") {
+            disable_cad = true;
         } else if (option == "--gpu-preview") {
             gpu_preview = true;
         } else if (option == "--cad-assets" && index+1 < argc) {
@@ -213,7 +225,7 @@ int main(int argc, char **argv) {
             enable_audio = false;
         } else if (option == "--frame-delay-ms" && index + 1 < argc) {
             long long parsed = 0;
-            if (!parse_tick(argv[++index], parsed) || parsed > 1000) {
+            if (!parse_tick(argv[++index], parsed, 0) || parsed > 1000) {
                 usage(argv[0]);
                 return 2;
             }
@@ -231,6 +243,7 @@ int main(int argc, char **argv) {
         } else if (option == "--replay-controls" && index + 1 < argc) {
             replay_controls_path = argv[++index];
         } else if (option == "--capture-tick" && index + 1 < argc) {
+            capture_tick_requested = true;
             if (!parse_tick(argv[++index], capture.target_tick)) {
                 usage(argv[0]);
                 return 2;
@@ -252,12 +265,20 @@ int main(int argc, char **argv) {
             harness_args.push_back(option);
         }
     }
-    if ((headless && svg_path.empty() && wav_path.empty()) ||
+    const bool interactive = !headless && !capture_tick_requested &&
+        screenshot_path.empty() && svg_path.empty() && wav_path.empty();
+    live |= interactive;
+    if (interactive && !disable_cad && !gpu_preview) {
+        gpu_preview = cad_panel = true;
+        cad_assets = "bundled";
+    }
+    if ((disable_cad && (gpu_preview || !cad_preset.empty())) ||
+        (headless && svg_path.empty() && wav_path.empty()) ||
         (auto_start && !live) || (gpu_preview && !live) || (headless && live) ||
         (!cad_preset.empty() && cad_assets.empty()) ||
         (!live && !headless &&
          (!save_controls_path.empty() || !replay_controls_path.empty())) ||
-        (!live && (!enable_audio || frame_delay_ms != 16)) ||
+        (!live && (!enable_audio || frame_delay_ms.has_value())) ||
         (headless && !save_controls_path.empty() &&
          replay_controls_path.empty())) {
         usage(argv[0]);
@@ -270,6 +291,25 @@ int main(int argc, char **argv) {
         return 2;
     }
 #endif
+    std::vector<lab::AppliedControl> replay_controls;
+    lab::ControlTraceMetadata recorded_metadata;
+    if (!replay_controls_path.empty() &&
+        !lab::load_control_trace(replay_controls_path, replay_controls,
+                                 &recorded_metadata)) {
+        std::fprintf(stderr, "Invalid control trace: %s\n",
+                     replay_controls_path.c_str());
+        return 1;
+    }
+    bool bench_preset = bench_option.value_or(interactive && replay_controls_path.empty());
+    if (interactive && !bench_option.has_value() && recorded_metadata.present) {
+        // A trace recorded before the interactive defaults may use the raw scenario.
+        auto raw_args = harness_args;
+        if (std::find(raw_args.begin(), raw_args.end(), "--starter-ticks") == raw_args.end())
+            raw_args.insert(raw_args.end(), {"--starter-ticks", "495000"});
+        lab::ControlTraceMetadata raw;
+        if (!trace_metadata(raw_args, raw)) return 1;
+        bench_preset = raw.scenario_args != recorded_metadata.scenario_args;
+    }
     if (bench_preset) {
         const auto has_option = [](const std::vector<std::string> &args,
                                    const char *option) {
@@ -334,15 +374,6 @@ int main(int argc, char **argv) {
         harness_args.push_back(
             std::to_string(live ? 1000000000000LL : capture.target_tick));
     }
-    std::vector<lab::AppliedControl> replay_controls;
-    lab::ControlTraceMetadata recorded_metadata;
-    if (!replay_controls_path.empty() &&
-        !lab::load_control_trace(replay_controls_path, replay_controls,
-                                 &recorded_metadata)) {
-        std::fprintf(stderr, "Invalid control trace: %s\n",
-                     replay_controls_path.c_str());
-        return 1;
-    }
     lab::ControlTraceMetadata current_metadata;
     if ((live || !save_controls_path.empty() || recorded_metadata.present) &&
         !trace_metadata(harness_args, current_metadata)) {
@@ -377,7 +408,7 @@ int main(int argc, char **argv) {
         const bool shown = lab::show_sdl_display(
             initial, window_frames, screenshot_path, &session,
             capture.target_tick, nullptr, !replay_controls_path.empty(),
-            gpu_preview, enable_audio, frame_delay_ms, bench_preset,
+            gpu_preview, enable_audio, frame_delay_ms.value_or(window_frames > 0 ? 16 : 0), bench_preset,
             &current_metadata, ui_scale_percent, cad_assets, cad_preset, cad_panel);
         session.stop();
         ma17::EmulatorSnapshot final_snapshot;

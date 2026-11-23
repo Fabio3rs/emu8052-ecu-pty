@@ -17,7 +17,7 @@ replay_trace = sys.argv[6] if len(sys.argv) >= 7 else ""
 with tempfile.TemporaryDirectory(prefix="sevel-f12-") as directory:
     environment = os.environ.copy()
     environment["SDL_AUDIODRIVER"] = "dummy"
-    command = [binary, rom, "--live", "--auto-start", "--bench-preset",
+    command = [binary, rom, "--live", "--no-cad", "--auto-start", "--bench-preset",
                "--no-audio", "--window-frames", "1000"]
     if replay_trace:
         command.remove("--auto-start")

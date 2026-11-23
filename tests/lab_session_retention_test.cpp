@@ -63,5 +63,13 @@ int main(int argc, char **argv) {
     const auto tail = session.snapshot_window(window[window.size() / 2].tick);
     CHECK(!tail.empty() && tail.front().tick >= window[window.size() / 2].tick);
     CHECK(tail.back().tick == window.back().tick);
+    lab::SimSession::SnapshotWindowCache cache;
+    for (const long long start : {0LL, kStop / 2, kStop - 99000, kStop + 1, 0LL}) {
+        const auto cached = session.snapshot_window(start, cache);
+        const auto expected = session.snapshot_window(start);
+        CHECK(cached.size() == expected.size());
+        for (std::size_t i = 0; i < expected.size(); ++i)
+            CHECK(cached[i].tick == expected[i].tick && cached[i].rpm == expected[i].rpm);
+    }
     return 0;
 }

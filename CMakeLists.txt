@@ -182,7 +182,7 @@ target_link_libraries(sevel-dyno emu8051-tty_lib)
 if(ENABLE_SEVEL_MA17_LAB)
     find_package(Threads REQUIRED)
     if(ENABLE_SEVEL_MA17_LAB_GUI)
-        find_package(SDL3 3.2 CONFIG QUIET)
+        find_package(SDL3 3.4 CONFIG QUIET)
         if(NOT TARGET SDL3::SDL3)
             if(CMAKE_VERSION VERSION_LESS 3.14)
                 message(FATAL_ERROR
@@ -191,7 +191,7 @@ if(ENABLE_SEVEL_MA17_LAB)
             include(FetchContent)
             FetchContent_Declare(SDL3
                 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-                GIT_TAG release-3.2.8
+                GIT_TAG release-3.4.20
                 GIT_SHALLOW TRUE)
             FetchContent_MakeAvailable(SDL3)
         endif()
@@ -329,11 +329,19 @@ if(ENABLE_SEVEL_MA17_LAB)
         add_custom_target(sevel-lab-shaders DEPENDS ${SEVEL_SHADER_OUTPUTS})
         add_dependencies(sevel-ma17-lab sevel-lab-shaders)
         add_library(open-engine-sim-gpu STATIC
-            third_party/open-engine-sim/src/sdl_gpu_panel.cpp
             third_party/open-engine-sim/src/sdl_gpu_renderer.cpp)
         target_include_directories(open-engine-sim-gpu SYSTEM PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-engine-sim/include)
         target_link_libraries(open-engine-sim-gpu PUBLIC SDL3::SDL3)
+        # The default single-config build is also used for interactive sessions.
+        # Keep per-frame work optimized while respecting explicit debug/release flags.
+        if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE AND
+           CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            foreach(lab_target IN ITEMS sevel-ma17-lab sevel-cad-scene open-engine-sim-geometry
+                                        open-engine-sim-gpu open-engine-sim-audio)
+                target_compile_options(${lab_target} PRIVATE -O2)
+            endforeach()
+        endif()
         if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             target_compile_options(open-engine-sim-gpu PRIVATE -Wno-error)
         endif()
@@ -579,6 +587,12 @@ if(ENABLE_SEVEL_MA17_LAB)
                             ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin
                             ${SEVEL_XVFB_RUN} ${CMAKE_CURRENT_BINARY_DIR})
                     set_tests_properties(LabSession.BenchPreset PROPERTIES TIMEOUT 120)
+                    add_test(NAME LabSession.StartupDefaults
+                        COMMAND ${SEVEL_XVFB_RUN} -a ${Python3_EXECUTABLE}
+                            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_startup_defaults.py
+                            $<TARGET_FILE:sevel-ma17-lab>
+                            ${CMAKE_CURRENT_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                    set_tests_properties(LabSession.StartupDefaults PROPERTIES TIMEOUT 120)
                     add_test(NAME LabAudio.LiveDummyStream
                         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lab_live_audio.py
                             ${SEVEL_XVFB_RUN} $<TARGET_FILE:sevel-ma17-lab>

@@ -1,4 +1,5 @@
 #include "ma17/AdcSimulator.hpp"
+#include "ma17/Diagnostics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -190,7 +191,7 @@ void write_ircon(em8051 *cpu, uint8_t address) {
     // The Fiat Timer 0 ISR waits at 0711h for IRCON.0 (ADC ready).
     // This is an internal completion flag, not a power-on input or CPU pin.
     static int write_count = 0;
-    if (write_count < 10)
+    if (verbose_diagnostics && write_count < 10)
         fprintf(stderr, "[IRCON-WRITE] #%d IRCON=0x%02X, forcing bit 0=1\n",
                 ++write_count, cpu->mSFR[address - 0x80]);
     cpu->mSFR[address - 0x80] |= 0x01;

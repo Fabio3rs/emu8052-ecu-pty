@@ -1,4 +1,5 @@
 #include "ma17/CpuHooks.hpp"
+#include "ma17/Diagnostics.hpp"
 
 #include "ma17/AdcSimulator.hpp"
 #include "ma17/InterruptTracer.hpp"
@@ -98,14 +99,14 @@ void CpuHooks::xram_write(em8051 *cpu, uint16_t address, uint8_t value) {
 void CpuHooks::install_uart(em8051 &cpu) {
     cpu.sfrwrite[0x99 - 0x80] = sbuf_write;
     cpu.sfrread[0x99 - 0x80] = sbuf_read;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[DEBUG] Callback registrado: SBUF (0x%02X) -> UART TX/RX\n",
             0x99u);
     fflush(stderr);
 
     cpu.sfrwrite[0x98 - 0x80] = scon_write;
     cpu.sfrread[0x98 - 0x80] = scon_read;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[DEBUG] Callback registrado: S0CON (0x%02X) -> Zero-latency RX "
             "injection\n",
             0x98u);
@@ -115,33 +116,33 @@ void CpuHooks::install_uart(em8051 &cpu) {
 void CpuHooks::install_fiat_peripherals(em8051 &cpu) {
     cpu.sfrread[0xE8 - 0x80] = port_read;
     cpu.sfrwrite[0xE8 - 0x80] = port_write;
-    fprintf(stderr, "[DEBUG] Callback registrado: P4 (0x%02X) -> cb_sfr_read\n",
+    diagnostic_log(stderr, "[DEBUG] Callback registrado: P4 (0x%02X) -> cb_sfr_read\n",
             0xE8u);
     fflush(stderr);
 
     cpu.sfrread[0xF8 - 0x80] = port_read;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[DEBUG] Callback registrado: P5 (0x%02X) -> cb_sfr_read "
             "(external-high=%s)\n",
             0xF8u, std::getenv("MA17_P5_FORCE_HIGH") ? "on" : "off");
     fflush(stderr);
 
     cpu.sfrwrite[0xA8 - 0x80] = trace_ie_write;
-    fprintf(stderr, "[DEBUG] Callback registrado: IE write monitor\n");
+    diagnostic_log(stderr, "[DEBUG] Callback registrado: IE write monitor\n");
     fflush(stderr);
 
     // B8h is IEN1 on SAB80C517, not the generic 8051 priority register.
     cpu.sfrwrite[0xB8 - 0x80] = trace_ien1_write;
-    fprintf(stderr, "[DEBUG] Callback registrado: IEN1 (0xB8) write monitor\n");
+    diagnostic_log(stderr, "[DEBUG] Callback registrado: IEN1 (0xB8) write monitor\n");
     fflush(stderr);
 
     cpu.except = trace_cpu_exception;
-    fprintf(stderr, "[DEBUG] Callback registrado: exception handler\n");
+    diagnostic_log(stderr, "[DEBUG] Callback registrado: exception handler\n");
     fflush(stderr);
 
     cpu.xread = read_xram;
     cpu.xwrite = xram_write;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[DEBUG] XRAM trace callbacks registrados (0xD0/0xD1 monitor)\n");
     fflush(stderr);
 
@@ -150,7 +151,7 @@ void CpuHooks::install_fiat_peripherals(em8051 &cpu) {
     // remains immediate here; conversion latency is not yet simulated.
     cpu.mSFR[0xC0 - 0x80] = 0x01;
     cpu.sfrwrite[0xC0 - 0x80] = write_ircon;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[WORKAROUND] IRCON callback registered (fake ADC ready)\n");
 
     // SAB80C517A ADC registers (p. 5-6): D9h is ADDATH and DAh is
@@ -158,7 +159,7 @@ void CpuHooks::install_fiat_peripherals(em8051 &cpu) {
     cpu.sfrread[0xD9 - 0x80] = read_addat;
     cpu.sfrread[0xDA - 0x80] = read_addatl;
     cpu.sfrwrite[0xDA - 0x80] = start_adc_conversion;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[WORKAROUND] ADDATH/ADDATL callbacks registered "
             "(simulated 10-bit ADC values)\n");
 }

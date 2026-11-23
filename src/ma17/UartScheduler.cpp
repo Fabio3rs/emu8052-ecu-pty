@@ -1,4 +1,5 @@
 #include "ma17/UartScheduler.hpp"
+#include "ma17/Diagnostics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -86,7 +87,7 @@ void UartScheduler::on_scanner_byte(uint8_t byte) {
     }
 
     schedule_rx_byte(byte);
-    fprintf(stderr, "[UART] instr=%lld byte=0x%02X → scheduled RX event\n",
+    diagnostic_log(stderr, "[UART] instr=%lld byte=0x%02X → scheduled RX event\n",
             ticks_, byte);
     fflush(stderr);
 }
@@ -126,7 +127,7 @@ void UartScheduler::on_scon_write(em8051 *cpu, uint8_t address) {
     const uint8_t previous_ri = previous_scon_ & scon_ri;
     const uint8_t current_ri = scon & scon_ri;
     const uint8_t current_ren = scon & scon_ren;
-    if (scon_write_count_ < 50) {
+    if (verbose_diagnostics && scon_write_count_ < 50) {
         fprintf(stderr,
                 "[S0CON-WRITE] #%d PC=0x%04X S0CON: 0x%02X→0x%02X (RI: %d→%d, "
                 "REN=%d)\n",

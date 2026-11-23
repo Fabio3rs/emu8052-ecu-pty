@@ -14,6 +14,7 @@
 #include <array>
 #include <deque>
 #include <optional>
+#include <span>
 #include <vector>
 
 class Gauge;
@@ -38,7 +39,7 @@ void draw_lab_scope(
     const LayoutState &layout_state, SDL_Renderer *renderer, FontRenderer &font,
     int width, int height, long long tick,
     const std::vector<ma17::EmulatorEvent> &events,
-    const std::vector<ma17::EmulatorSnapshot> &history,
+    std::span<const ma17::EmulatorSnapshot> history,
     const std::array<bool, 4> &channels_visible, long long span_ticks,
     const std::array<std::optional<DigitalScopeCursor>, 2> &cursors,
     bool frozen, int focus_cylinder = 0);
@@ -46,7 +47,7 @@ void draw_lab_scope(
 void draw_lab_analog_scope(
     const LayoutState &layout_state, SDL_Renderer *renderer, FontRenderer &font,
     int width, int height, const ma17::EmulatorSnapshot &current,
-    const std::vector<ma17::EmulatorSnapshot> &history, int group,
+    std::span<const ma17::EmulatorSnapshot> history, int group,
     long long span_ticks, bool frozen,
     const std::array<long long, 2> &cursor_ticks, long long view_end_tick,
     long long trigger_tick, const char *trigger_status,
@@ -55,7 +56,7 @@ void draw_lab_analog_scope(
     int focus_cylinder = 0, const ScopeAxisRanges *fitted_axes = nullptr);
 
 std::optional<ScopeAxisRanges>
-fit_analog_scope_axes(const std::vector<ma17::EmulatorSnapshot> &history,
+fit_analog_scope_axes(std::span<const ma17::EmulatorSnapshot> history,
                       int group, long long first_tick, long long last_tick,
                       DisplayUnits units);
 bool analog_scope_fit_at(const LayoutState &layout_state, float x, float y,

@@ -55,23 +55,29 @@ SdlGpuRenderer::SdlGpuRenderer()
       m_sceneViewportWidth(0.0f), m_sceneViewportHeight(0.0f) { }
 SdlGpuRenderer::~SdlGpuRenderer() { shutdown(); }
 
-bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &shaderDirectory, bool cadScene) {
+bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &shaderDirectory, bool cadScene,
+                                SDL_GPUDevice *panelDevice, bool uncapped) {
     m_error.clear();
     m_cadScene = cadScene;
     m_window = nativeWindowHandle;
     if (m_window == nullptr) { m_error = "SDL window handle is null"; return false; }
 
-    m_gpuDevice = SDL_CreateGPUDevice(
+    m_sharedDevice = panelDevice != nullptr;
+    m_gpuDevice = panelDevice ? panelDevice : SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
-        true,
+        false,
         nullptr);
     if (m_gpuDevice == nullptr
-        || !SDL_ClaimWindowForGPUDevice(m_gpuDevice, static_cast<SDL_Window *>(m_window))) {
+        || (!m_sharedDevice && !SDL_ClaimWindowForGPUDevice(m_gpuDevice, static_cast<SDL_Window *>(m_window)))) {
         m_error = SDL_GetError();
         shutdown();
         return false;
     }
-    m_windowClaimed = true;
+    m_windowClaimed = !m_sharedDevice;
+    auto *window = static_cast<SDL_Window *>(m_window);
+    if (m_windowClaimed && uncapped &&
+        SDL_WindowSupportsGPUPresentMode(m_gpuDevice,window,SDL_GPU_PRESENTMODE_IMMEDIATE))
+        SDL_SetGPUSwapchainParameters(m_gpuDevice,window,SDL_GPU_SWAPCHAINCOMPOSITION_SDR,SDL_GPU_PRESENTMODE_IMMEDIATE);
 
     const SDL_GPUBufferCreateInfo vertexBufferInfo = {
         SDL_GPU_BUFFERUSAGE_VERTEX,
@@ -138,7 +144,8 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
                     { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, static_cast<Uint32>(offsetof(EngineSimVertex, TexCoord)) }
                 };
                 SDL_GPUColorTargetDescription colorTarget = {};
-                colorTarget.format = SDL_GetGPUSwapchainTextureFormat(m_gpuDevice, static_cast<SDL_Window *>(m_window));
+                colorTarget.format = m_sharedDevice ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM
+                                                    : SDL_GetGPUSwapchainTextureFormat(m_gpuDevice, window);
                 colorTarget.blend_state.enable_blend = true;
                 colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
                 colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -218,11 +225,7 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
 
 void SdlGpuRenderer::shutdown() {
     if (m_gpuDevice != nullptr) {
-        if (m_background) SDL_ReleaseGPUTexture(m_gpuDevice,m_background);
-        if (m_backgroundTransfer) SDL_ReleaseGPUTransferBuffer(m_gpuDevice,m_backgroundTransfer);
-        m_background = nullptr;
-        m_backgroundTransfer = nullptr;
-        m_backgroundWidth = m_backgroundHeight = 0;
+        m_panelTarget = nullptr;
         if (m_parityPipeline) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice,m_parityPipeline);
         if (m_transparentPipeline) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice,m_transparentPipeline);
         m_transparentPipeline = nullptr;
@@ -256,7 +259,7 @@ void SdlGpuRenderer::shutdown() {
             SDL_ReleaseWindowFromGPUDevice(m_gpuDevice, static_cast<SDL_Window *>(m_window));
         }
         m_windowClaimed = false;
-        SDL_DestroyGPUDevice(m_gpuDevice);
+        if (!m_sharedDevice) SDL_DestroyGPUDevice(m_gpuDevice);
         m_gpuDevice = nullptr;
     }
     m_window = nullptr;
@@ -436,7 +439,10 @@ void SdlGpuRenderer::endFrame() {
     SDL_GPUTexture *swapchainTexture = nullptr;
     Uint32 swapchainWidth = 0;
     Uint32 swapchainHeight = 0;
-    if (!SDL_WaitAndAcquireGPUSwapchainTexture(
+    if (m_sharedDevice) {
+        swapchainWidth = static_cast<Uint32>(m_sceneViewportWidth);
+        swapchainHeight = static_cast<Uint32>(m_sceneViewportHeight);
+    } else if (!SDL_WaitAndAcquireGPUSwapchainTexture(
             commands, static_cast<SDL_Window *>(m_window), &swapchainTexture,
             &swapchainWidth, &swapchainHeight)) {
         m_error = SDL_GetError();
@@ -444,7 +450,7 @@ void SdlGpuRenderer::endFrame() {
         return;
     }
 
-    if (swapchainTexture != nullptr) {
+    if (swapchainTexture != nullptr || m_panelTarget != nullptr) {
         const Uint32 sceneX = static_cast<Uint32>(
             std::clamp(m_sceneViewportX, 0.0f, static_cast<float>(swapchainWidth)));
         const Uint32 sceneY = static_cast<Uint32>(
@@ -457,7 +463,10 @@ void SdlGpuRenderer::endFrame() {
             std::max(1u, static_cast<Uint32>(m_sceneViewportWidth)));
         const Uint32 sceneHeight = std::min(swapchainHeight - sceneY,
             std::max(1u, static_cast<Uint32>(m_sceneViewportHeight)));
-        if (m_sceneTexture == nullptr || m_sceneTextureWidth != sceneWidth || m_sceneTextureHeight != sceneHeight) {
+        if (m_panelTarget) {
+            m_sceneTextureWidth = sceneWidth;
+            m_sceneTextureHeight = sceneHeight;
+        } else if (m_sceneTexture == nullptr || m_sceneTextureWidth != sceneWidth || m_sceneTextureHeight != sceneHeight) {
             if (m_sceneTexture != nullptr) SDL_ReleaseGPUTexture(m_gpuDevice, m_sceneTexture);
             const SDL_GPUTextureCreateInfo sceneInfo = { SDL_GPU_TEXTURETYPE_2D,
                 SDL_GetGPUSwapchainTextureFormat(m_gpuDevice, static_cast<SDL_Window *>(m_window)),
@@ -478,7 +487,7 @@ void SdlGpuRenderer::endFrame() {
             m_depthTextureWidth = sceneWidth;
             m_depthTextureHeight = sceneHeight;
         }
-        if (m_sceneTexture == nullptr || m_depthTexture == nullptr) {
+        if ((!m_panelTarget && !m_sceneTexture) || !m_depthTexture) {
             m_error = SDL_GetError();
             SDL_SubmitGPUCommandBuffer(commands);
             return;
@@ -517,7 +526,7 @@ void SdlGpuRenderer::endFrame() {
         };
 
         SDL_GPUColorTargetInfo sceneColorTarget = {};
-        sceneColorTarget.texture = m_sceneTexture;
+        sceneColorTarget.texture = m_panelTarget ? m_panelTarget : m_sceneTexture;
         sceneColorTarget.clear_color = { m_clearColor.x, m_clearColor.y, m_clearColor.z, m_clearColor.w };
         sceneColorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
         sceneColorTarget.store_op = SDL_GPU_STOREOP_STORE;
@@ -530,26 +539,6 @@ void SdlGpuRenderer::endFrame() {
         depthTarget.store_op = m_sections.empty() && !hasTransparent ? SDL_GPU_STOREOP_DONT_CARE : SDL_GPU_STOREOP_STORE;
         depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
         depthTarget.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
-        SDL_GPUColorTargetInfo clearTarget = sceneColorTarget;
-        clearTarget.texture = swapchainTexture;
-        SDL_GPURenderPass *clearPass = SDL_BeginGPURenderPass(commands, &clearTarget, 1, nullptr);
-        if (clearPass == nullptr) {
-            m_error = SDL_GetError();
-            SDL_SubmitGPUCommandBuffer(commands);
-            return;
-        }
-        SDL_EndGPURenderPass(clearPass);
-        if (m_background) {
-            const SDL_GPUBlitInfo backgroundBlit = {
-                {m_background,0,0,0,0,m_backgroundWidth,m_backgroundHeight},
-                {swapchainTexture,0,0,0,0,swapchainWidth,swapchainHeight},
-                SDL_GPU_LOADOP_LOAD,{},SDL_FLIP_NONE,SDL_GPU_FILTER_NEAREST,false,0,0,0};
-            SDL_BlitGPUTexture(commands,&backgroundBlit);
-            if (m_sceneViewportWidth == 0 || m_sceneViewportHeight == 0) {
-                if (!SDL_SubmitGPUCommandBuffer(commands)) m_error = SDL_GetError();
-                return;
-            }
-        }
         SDL_GPURenderPass *scenePass = SDL_BeginGPURenderPass(commands, &sceneColorTarget, 1,
             m_depthTexture != nullptr ? &depthTarget : nullptr);
         if (scenePass == nullptr) {
@@ -600,11 +589,15 @@ void SdlGpuRenderer::endFrame() {
                 SDL_EndGPURenderPass(pass);
             } else m_error = SDL_GetError();
         }
+        if (m_panelTarget) {
+            if (!SDL_SubmitGPUCommandBuffer(commands)) m_error = SDL_GetError();
+            return;
+        }
         if (m_sceneTexture != nullptr) {
             const SDL_GPUBlitInfo blitInfo = {
                 { m_sceneTexture, 0, 0, 0, 0, sceneWidth, sceneHeight },
                 { swapchainTexture, 0, 0, sceneX, sceneY, sceneWidth, sceneHeight },
-                SDL_GPU_LOADOP_LOAD, {}, SDL_FLIP_NONE, SDL_GPU_FILTER_LINEAR, false, 0, 0, 0
+                SDL_GPU_LOADOP_CLEAR, sceneColorTarget.clear_color, SDL_FLIP_NONE, SDL_GPU_FILTER_LINEAR, false, 0, 0, 0
             };
             SDL_BlitGPUTexture(commands, &blitInfo);
         }
@@ -633,11 +626,12 @@ bool SdlGpuRenderer::captureSceneRgba(std::vector<std::uint8_t> &pixels,
     pixels.clear();
     width = height = 0;
     error.clear();
-    if (m_gpuDevice == nullptr || m_sceneTexture == nullptr || !m_error.empty()) {
+    auto *sceneTexture = m_panelTarget ? m_panelTarget : m_sceneTexture;
+    if (m_gpuDevice == nullptr || sceneTexture == nullptr || !m_error.empty()) {
         error = "GPU scene is unavailable";
         return false;
     }
-    const auto format = SDL_GetGPUSwapchainTextureFormat(
+    const auto format = m_sharedDevice ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM : SDL_GetGPUSwapchainTextureFormat(
         m_gpuDevice, static_cast<SDL_Window *>(m_window));
     const bool bgra = format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM ||
                       format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
@@ -675,7 +669,7 @@ bool SdlGpuRenderer::captureSceneRgba(std::vector<std::uint8_t> &pixels,
         return false;
     }
     const SDL_GPUTextureRegion source = {
-        m_sceneTexture, 0, 0, 0, 0, 0,
+        sceneTexture, 0, 0, 0, 0, 0,
         m_sceneTextureWidth, m_sceneTextureHeight, 1};
     const SDL_GPUTextureTransferInfo destination = {transfer, 0, 0, 0};
     SDL_DownloadFromGPUTexture(pass, &source, &destination);

@@ -18,7 +18,7 @@ image = trace.with_suffix(".png")
 image.unlink(missing_ok=True)
 environment = os.environ.copy()
 environment["SDL_AUDIODRIVER"] = "dummy"
-command = [binary, rom, "--live", "--window-frames", "300",
+command = [binary, rom, "--live", "--verbose", "--window-frames", "300",
            "--capture-tick", "3000000",
            "--save-controls", trace_path, "--screenshot", str(image)]
 

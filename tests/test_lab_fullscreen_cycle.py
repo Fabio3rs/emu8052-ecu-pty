@@ -27,6 +27,14 @@ def window_size(window):
     return int(values["WIDTH"]), int(values["HEIGHT"])
 
 
+def click(window, x, y):
+    # Give XInput distinct press/release times. Xvfb can replay a zero-duration
+    # XTEST click twice after the window manager changes fullscreen state.
+    subprocess.run(["xdotool", "mousemove", "--window", window, x, y,
+                    "mousedown", "1", "sleep", "0.07", "mouseup", "1"],
+                   check=True, capture_output=True)
+
+
 def wait_until(check, seconds=5.0):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -81,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-fullscreen-") as directory:
                                stderr=subprocess.DEVNULL)
     wait_until(lambda: "Xfwm4" in subprocess.run(
         ["wmctrl", "-m"], text=True, capture_output=True).stdout)
-    command = [binary, rom, "--live", "--bench-preset", "--no-audio",
+    command = [binary, rom, "--live", "--no-cad", "--bench-preset", "--no-audio",
                "--window-frames", "240000"]
     if ui_scale:
         command.extend(["--ui-scale", ui_scale])
@@ -108,9 +116,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-fullscreen-") as directory:
             subprocess.run(["xdotool", "key", "--window", window, "F11"],
                            check=True, capture_output=True)
         else:
-            subprocess.run(["xdotool", "mousemove", "--window", window,
-                            "790", "79", "click", "1"],
-                           check=True, capture_output=True)
+            click(window, "790", "79")
         try:
             wait_until(lambda: current_size() == (1920, 1080))
         except AssertionError:
@@ -140,9 +146,7 @@ with tempfile.TemporaryDirectory(prefix="sevel-fullscreen-") as directory:
              complete_png(path)), None))
         shutil.copyfile(restored, output)
         assert png_size(restored) == (1280, 720), png_size(restored)
-        subprocess.run(["xdotool", "mousemove", "--window", window,
-                        "681", "156" if ui_scale else "79", "click", "1"],
-                       check=True, capture_output=True)
+        click(window, "681", "156" if ui_scale else "79")
         wait_until(lambda: "| RADIAL |" in subprocess.check_output(
             ["xdotool", "getwindowname", window], text=True))
         subprocess.run(["xdotool", "key", "--window", window, "Escape"],

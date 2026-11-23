@@ -1,4 +1,5 @@
 #include "ma17/FirmwareLoader.hpp"
+#include "ma17/Diagnostics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -39,7 +40,7 @@ bool load_bin_to_code(em8051 *cpu, const char *path, unsigned base) {
         if (address < 0x10000u)
             cpu->mCodeMem[address] = bytes[index];
     }
-    fprintf(stderr,
+    ma17::diagnostic_log(stderr,
             "[emu8051-pty] ROM carregada: %ld bytes em 0x%04X..0x%04X\n",
             length, base, static_cast<unsigned>(base + length - 1));
     return true;

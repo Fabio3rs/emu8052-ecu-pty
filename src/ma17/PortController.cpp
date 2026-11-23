@@ -1,4 +1,5 @@
 #include "ma17/PortController.hpp"
+#include "ma17/Diagnostics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -68,7 +69,7 @@ uint8_t PortController::read(em8051 *cpu, uint8_t address) {
             p4 &= static_cast<uint8_t>(~0x08u);
         }
 
-        if (p4 != last_p4_value_) {
+        if (verbose_diagnostics && p4 != last_p4_value_) {
             const auto elapsed =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - startup_time_);

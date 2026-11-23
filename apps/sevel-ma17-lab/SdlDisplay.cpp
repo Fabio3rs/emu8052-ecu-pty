@@ -1,4 +1,5 @@
 #include "engine/ControlLimits.hpp"
+#include "ma17/Diagnostics.hpp"
 #include "lab/SdlDisplay.hpp"
 #include "lab/TextScale.hpp"
 #include "lab/LabTheme.hpp"
@@ -64,6 +65,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <string_view>
 #include <vector>
 
@@ -191,6 +193,21 @@ std::filesystem::path gpu_scene_path(std::filesystem::path path) {
     return path;
 }
 
+bool draw_scene_triangles(SDL_Renderer *renderer, const std::vector<SDL_Vertex> &vertices,
+                          std::vector<int> &indices) {
+    if (vertices.empty()) return true;
+    const int count = static_cast<int>(vertices.size());
+    if (std::strcmp(SDL_GetRendererName(renderer), "software") != 0)
+        return SDL_RenderGeometry(renderer, nullptr, vertices.data(), count, nullptr, 0);
+    // Preserve triangle coverage. SDL's software quad optimization truncates
+    // fractional rectangle widths, leaving gaps in the piston rings.
+    if (indices.size() < vertices.size()) {
+        indices.resize(vertices.size());
+        std::iota(indices.begin(), indices.end(), 0);
+    }
+    return SDL_RenderGeometry(renderer, nullptr, vertices.data(), count, indices.data(), count);
+}
+
 // B.14: the same scene and viewport through the SDL_Renderer path (recorded
 // triangles replayed with the donor blend) so it can be compared with the
 // donor GPU capture of that scene.
@@ -219,9 +236,8 @@ bool save_sdl_scene_equivalent(const lab::RecordingRenderer &recorded,
             vertices.push_back(vertex);
         }
     });
-    bool ok = vertices.empty() ||
-              SDL_RenderGeometry(renderer, nullptr, vertices.data(),
-                                 static_cast<int>(vertices.size()), nullptr, 0);
+    std::vector<int> indices;
+    bool ok = draw_scene_triangles(renderer, vertices, indices);
     SDL_RenderPresent(renderer);
     ok = ok && save_frame(surface, path.string());
     SDL_DestroyRenderer(renderer);
@@ -276,7 +292,7 @@ namespace lab {
 namespace {
 
 bool save_scope_csv(const std::filesystem::path &path,
-                    const std::vector<ma17::EmulatorSnapshot> &history,
+                    std::span<const ma17::EmulatorSnapshot> history,
                     int group, long long first_tick, long long last_tick,
                     long long view_first_tick, long long view_last_tick,
                     const ControlTraceMetadata *metadata,
@@ -443,7 +459,7 @@ bool save_scope_csv(const std::filesystem::path &path,
 
 bool save_digital_scope_csv(const std::filesystem::path &path,
                             const std::vector<ma17::EmulatorEvent> &events,
-                            const std::vector<ma17::EmulatorSnapshot> &history,
+                            std::span<const ma17::EmulatorSnapshot> history,
                             long long first_tick, long long last_tick,
                             long long view_first_tick, long long view_last_tick,
                             const ControlTraceMetadata *metadata,
@@ -908,7 +924,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                       bool replay_controls, bool gpu_preview, bool enable_audio,
                       int frame_delay_ms, bool bench_preset,
                       const ControlTraceMetadata *metadata,
-                      int ui_scale_percent, const std::string &requested_assets, const std::string &cad_preset,
+                      int ui_scale_percent, const std::string &cad_assets, const std::string &cad_preset,
                       bool cad_panel) {
     if (!SDL_Init(SDL_INIT_VIDEO |
                   (session && enable_audio ? SDL_INIT_AUDIO : 0U))) {
@@ -923,7 +939,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             ui_scale_percent = ui_preferences.scale_percent;
         if (ui_scale_percent == ui_preferences.scale_percent &&
             ui_scale_percent != 0)
-            std::fprintf(stdout, "[LAB-UI-SCALE] source=prefs percent=%d\n",
+            ma17::diagnostic_log(stdout, "[LAB-UI-SCALE] source=prefs percent=%d\n",
                          ui_scale_percent);
     }
     LayoutState layout_state;
@@ -934,7 +950,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     DisplayUnits display_units =
         static_cast<DisplayUnits>(ui_preferences.display_units);
     if (frame_limit <= 0)
-        std::fprintf(stdout,
+        ma17::diagnostic_log(stdout,
                      "[LAB-LAYOUT] source=prefs left=%.3f right=%.3f mode=%d "
                      "scope=%.3f\n",
                      static_cast<double>(ui_preferences.left_fraction),
@@ -963,21 +979,31 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                          initial_height, SDL_WINDOW_RESIZABLE);
     CadPanel cad_compositor;
     CadToolbar cad_toolbar;
-    const bool start_in_cad = cad_panel;
     const auto *base_path = SDL_GetBasePath();
     const auto installed_data = std::filesystem::path(base_path ? base_path : ".")/"assets/lab-data";
     const auto *data_override = std::getenv("SEVEL_DOCS_DIR");
     const std::string docs_dir = data_override ? data_override :
         std::filesystem::is_directory(installed_data) ? installed_data.string() : SEVEL_DOCS_DIR;
-    const bool offer_cad = frame_limit <= 0 && session && !gpu_preview && base_path &&
-        std::filesystem::is_regular_file(std::filesystem::path(base_path)/"assets/sevel-cad/current.json") &&
-        SDL_GPUSupportsShaderFormats(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
-                                     SDL_GPU_SHADERFORMAT_MSL,nullptr);
-    std::string cad_assets = offer_cad ? "bundled" : requested_assets;
-    cad_panel |= offer_cad;
-    gpu_preview |= offer_cad;
+    const auto cad_path = cad_assets == "bundled"
+        ? std::filesystem::path(base_path ? base_path : ".") / "assets/sevel-cad"
+        : std::filesystem::path(cad_assets);
+    if (cad_assets == "bundled") {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(cad_path / "current.json", ec) &&
+            !std::filesystem::is_regular_file(cad_path / "parts_manifest.json", ec)) {
+            std::fprintf(stderr, "[LAB-CAD] No bundled models at %s; using classic view\n",
+                         cad_path.string().c_str());
+            cad_panel = gpu_preview = false;
+        }
+    }
     SDL_Renderer *screen = nullptr;
-    if (cad_panel && window) cad_panel = cad_compositor.resize(window,screen,nullptr);
+    if (cad_panel && window) {
+        screen = SDL_CreateRenderer(window,"gpu");
+        if (!screen) {
+            std::fprintf(stderr,"[LAB-CAD] GPU window renderer unavailable: %s; using classic view\n",SDL_GetError());
+            cad_panel = gpu_preview = false;
+        }
+    }
     if (!screen && window) screen = SDL_CreateRenderer(window,nullptr);
     if (!screen && window) {
         std::fprintf(stderr, "SDL preferred renderer: %s; trying software\n",
@@ -1002,10 +1028,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                               : 0.0f);
     };
     const char *renderer_name = SDL_GetRendererName(screen);
-    // Record the device that actually rasterizes: GL renderers expose it as
-    // GL_RENDERER; others report "n/a" (the DRI node is checked externally).
     std::string video_device = "n/a";
-    if (SDL_GL_GetCurrentContext()) {
+    if (renderer_name && std::strcmp(renderer_name, "gpu") == 0) {
+        const auto props = SDL_GetGPUDeviceProperties(SDL_GetGPURendererDevice(screen));
+        video_device = SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, "n/a");
+    } else if (SDL_GL_GetCurrentContext()) {
         using GlGetString = const unsigned char *(*)(unsigned);
         const SDL_FunctionPointer address =
             SDL_GL_GetProcAddress("glGetString");
@@ -1053,8 +1080,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     SDL_Window *gpu_window = nullptr;
     std::unique_ptr<SdlGpuRenderer> gpu_renderer;
     SevelCadView cad_view;
-    const auto cad_path = cad_assets == "bundled" ? std::filesystem::path(base_path)/"assets/sevel-cad" :
-                                                   std::filesystem::path(cad_assets);
     if (gpu_preview) {
         if (!cad_panel) gpu_window = SDL_CreateWindow(cad_assets.empty() ? "SEVEL donor GPU scene" : "SEVEL 3D CAD",
                                       960, 640,
@@ -1063,7 +1088,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             gpu_renderer = std::make_unique<SdlGpuRenderer>();
             const auto shader_path =
                 std::filesystem::path(base_path) / "assets/shaders";
-            if (!gpu_renderer->initialize(cad_panel ? window : gpu_window, shader_path.string(), !cad_assets.empty())) {
+            if (!gpu_renderer->initialize(cad_panel ? window : gpu_window, shader_path.string(), !cad_assets.empty(),
+                    cad_panel ? SDL_GetGPURendererDevice(screen) : nullptr, frame_delay_ms == 0)) {
                 std::fprintf(stderr, "SDL GPU preview unavailable: %s\n",
                              gpu_renderer->lastError());
                 gpu_renderer.reset();
@@ -1089,10 +1115,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             gpu_window = nullptr;
         }
         if (!gpu_renderer && cad_panel) {
-            SDL_DestroyRenderer(screen);
+            std::fprintf(stderr, "[LAB-CAD] Using classic view\n");
             cad_panel = false;
-            screen = SDL_CreateRenderer(window,nullptr);
-            if (!screen) { SDL_DestroyWindow(window); SDL_Quit(); return false; }
         }
     }
     SDL_SetWindowTitle(window,"FIAT TIPO 1.6 i.e. | SEVEL MA1.7 Lab");
@@ -1111,7 +1135,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
         if (audio_stream) {
             const char *audio_driver = SDL_GetCurrentAudioDriver();
-            std::fprintf(stdout,
+            ma17::diagnostic_log(stdout,
                          "[LAB-AUDIO] stream_open=1 driver=%s format=S16 "
                          "channels=1 rate=44100\n",
                          audio_driver ? audio_driver : "unknown");
@@ -1190,7 +1214,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     std::optional<ScopeAxisRanges> fitted_scope_axes;
     bool fit_scope_axes_requested = false;
     if (frame_limit <= 0)
-        std::fprintf(stdout,
+        ma17::diagnostic_log(stdout,
                      "[LAB-SCOPE-PREF] source=prefs analog=%d group=%d "
                      "analog_span=%lld digital_span=%lld mask=%u\n",
                      analog_scope ? 1 : 0, analog_group, analog_span_ticks,
@@ -1245,15 +1269,17 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         fitted_scene_height = -1.0f;
     };
     int view_mode = ui_preferences.view_mode == 4 && !cad_panel ? 0 : ui_preferences.view_mode;
-    if (cad_panel && start_in_cad) {
+    if (cad_panel) {
         layout_state.mode = LabPresentationMode::Mechanics;
         view_mode = 4;
     }
     bool show_help = false;
     bool show_debug = false;
     std::array<Gauge, 3> gauges{};
-    std::vector<ma17::EmulatorSnapshot> analog_history;
-    std::vector<ma17::EmulatorSnapshot> digital_history;
+    SimSession::SnapshotWindowCache analog_cache;
+    std::vector<ma17::EmulatorSnapshot> held_history;
+    std::span<const ma17::EmulatorSnapshot> analog_history;
+    SimSession::SnapshotWindowCache digital_cache;
     Uint64 last_frame_ticks = SDL_GetTicks();
     Uint64 last_snapshot_wall_ms = last_frame_ticks;
     long long last_snapshot_tick = snapshot.tick;
@@ -1295,6 +1321,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         digital_frozen = true;
     };
     std::vector<SDL_Vertex> scene_vertices;
+    std::vector<int> scene_indices;
     constexpr std::size_t scene_batch_vertices = 8190;
     scene_vertices.reserve(scene_batch_vertices);
     gauges[0].m_max = static_cast<float>(profile::rpm.maximum);
@@ -1460,9 +1487,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         presentation_width = presentation_height = -1;
         return screen != nullptr;
     };
+    const char *fps_setting = std::getenv("SEVEL_LAB_FPS");
+    const bool measure_fps = fps_setting ? std::strcmp(fps_setting, "0") != 0 : (session && ma17::verbose_diagnostics);
+    Uint64 fps_start = 0, fps_interval = 0;
+    unsigned long long measured_frames = 0, interval_frames = 0;
     for (int frame = 0; running && (frame_limit <= 0 || frame < frame_limit);
          ++frame) {
-        if (cad_panel && !cad_compositor.resize(window,screen,&font) && !restore_window_renderer()) break;
         if (gpu_renderer && !cad_view.scene.parts.empty()) cad_view.pollReload(*gpu_renderer);
         if (!update_presentation()) {
             std::fprintf(stderr, "SDL logical presentation: %s\n",
@@ -1617,8 +1647,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     if (event.type != SDL_EVENT_MOUSE_BUTTON_UP ||
                         event.button.button != SDL_BUTTON_LEFT)
                         continue;
-                } else if (cad_panel) {
-                    cad_compositor.coordinates(window,screen,event);
                 } else if (!SDL_ConvertEventToRenderCoordinates(screen,
                                                                 &event)) {
                     continue;
@@ -2621,17 +2649,16 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         else if (captured_events)
             event_window.events = *captured_events;
         const auto &events = event_window.events;
+        std::span<const ma17::EmulatorSnapshot> digital_scope_history = frozen_digital_history;
         if (!analog_scope && !digital_frozen) {
             const long long first_history_tick =
                 std::max(0LL, displayed.tick - scope_span_ticks - 247500LL);
-            digital_history =
-                session ? session->snapshot_window(first_history_tick)
-                        : std::vector<ma17::EmulatorSnapshot>{displayed};
+            digital_scope_history =
+                session ? session->snapshot_window(first_history_tick, digital_cache)
+                        : std::span<const ma17::EmulatorSnapshot>(&displayed, 1);
         }
         const auto &digital_events =
             digital_frozen ? frozen_digital_events : events;
-        const auto &digital_scope_history =
-            digital_frozen ? frozen_digital_history : digital_history;
         const long long digital_scope_end_tick =
             digital_frozen ? frozen_digital_tick : displayed.tick;
         if (analog_scope && !analog_frozen) {
@@ -2643,9 +2670,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     ? std::max(0LL, *analog_navigation_end_tick -
                                         analog_span_ticks - 247500LL)
                     : displayed.tick - retention;
-            analog_history =
-                session ? session->snapshot_window(first_history_tick)
-                        : std::vector<ma17::EmulatorSnapshot>{displayed};
+            if (session) {
+                analog_history = session->snapshot_window(first_history_tick, analog_cache);
+            } else {
+                held_history.assign(1, displayed);
+                analog_history = held_history;
+            }
         }
         analog_scope_displayed =
             analog_frozen ? frozen_scope_snapshot : displayed;
@@ -2711,7 +2741,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     normal_capture = {
                         trigger_armed_tick,     *crossing,
                         analog_span_ticks,      analog_scope_end_tick,
-                        analog_scope_displayed, analog_history};
+                        analog_scope_displayed, {analog_history.begin(), analog_history.end()}};
                 }
                 if (trigger_mode == TriggerMode::Single) {
                     frozen_scope_snapshot = analog_scope_displayed;
@@ -2734,12 +2764,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         normal_capture.armed_tick == trigger_armed_tick &&
                         normal_capture.span == analog_span_ticks;
                     if (retained) {
-                        analog_history = normal_capture.history;
+                        held_history = normal_capture.history;
+                        analog_history = held_history;
                         analog_scope_displayed = normal_capture.snapshot;
                         analog_scope_end_tick = normal_capture.end;
                         active_trigger_tick = normal_capture.trigger_tick;
                     } else {
-                        analog_history.clear();
+                        analog_history = {};
                     }
                 }
             }
@@ -2914,7 +2945,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         ui_preferences.axial_pan_y * scene_height;
                 }
                 restore_camera_pending = false;
-                std::fprintf(stdout,
+                ma17::diagnostic_log(stdout,
                              "[LAB-CAMERA-PREF] %s view=%d "
                              "shaft=%.3f/%.3f/%.3f axial=%.3f/%.3f/%.3f\n",
                              compatible_viewport ? "restored" : "fitted",
@@ -3005,6 +3036,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         pulses[0].pin_strength = pulses[3].pin_strength = pin_glows[0];
         pulses[1].pin_strength = pulses[2].pin_strength = pin_glows[1];
         RecordingRenderer secondary_geometry;
+        const bool embedded_cad = cad_panel && view_mode == 4 && !show_help;
         if (radial_view) {
             render_sevel_radial_donor(geometry, displayed, pane_width,
                                       scene_height, meshes, {}, {},
@@ -3012,7 +3044,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             render_sevel_scene_donor(secondary_geometry, displayed, pane_width,
                                      scene_height, {}, {}, render_camera,
                                      &meshes, pulses);
-        } else {
+        } else if (!embedded_cad) {
             render_sevel_scene_donor(geometry, displayed, pane_width,
                                      scene_height, {}, {}, render_camera,
                                      &meshes, pulses);
@@ -3090,10 +3122,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         scene_vertices.clear();
         bool geometry_ok = true;
         const auto flush_geometry = [&] {
-            if (!scene_vertices.empty() &&
-                !SDL_RenderGeometry(screen, nullptr, scene_vertices.data(),
-                                    static_cast<int>(scene_vertices.size()),
-                                    nullptr, 0))
+            if (!draw_scene_triangles(screen, scene_vertices, scene_indices))
                 geometry_ok = false;
             scene_vertices.clear();
         };
@@ -4313,7 +4342,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
         if (!captured && displayed.tick >= capture_after_tick) {
             SDL_Surface *surface = SDL_RenderReadPixels(screen, nullptr);
-            if (cad_panel) cad_compositor.compose_capture(*gpu_renderer,surface);
             captured = surface && save_frame(surface, screenshot_path);
             if (surface)
                 SDL_DestroySurface(surface);
@@ -4459,7 +4487,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                      (gpu_renderer &&
                       std::filesystem::exists(gpu_scene_path(path))));
             SDL_Surface *surface = SDL_RenderReadPixels(screen, nullptr);
-            if (cad_panel) cad_compositor.compose_capture(*gpu_renderer,surface);
             const bool saved = surface && save_frame(surface, path.string());
             if (surface)
                 SDL_DestroySurface(surface);
@@ -4473,8 +4500,30 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                              path.string().c_str(), SDL_GetError());
             manual_capture_requested = false;
         }
-        if (!cad_panel) SDL_RenderPresent(screen);
-        SDL_Delay(static_cast<Uint32>(frame_delay_ms));
+        if (!SDL_RenderPresent(screen)) {
+            if (cad_panel && restore_window_renderer()) continue;
+            std::fprintf(stderr, "SDL present: %s\n", SDL_GetError());
+            running = false;
+            break;
+        }
+        if (frame_delay_ms > 0) SDL_Delay(static_cast<Uint32>(frame_delay_ms));
+        if (measure_fps && frame >= 1) {
+            const Uint64 now = SDL_GetTicksNS();
+            if (!fps_start) {
+                fps_start = fps_interval = now;
+            } else {
+                ++measured_frames;
+                ++interval_frames;
+                if (now - fps_interval >= SDL_NS_PER_SECOND) {
+                    std::printf("[LAB-FPS] fps=%.1f average=%.1f frames=%llu\n",
+                        static_cast<double>(interval_frames) * 1e9 / static_cast<double>(now - fps_interval),
+                        static_cast<double>(measured_frames) * 1e9 / static_cast<double>(now - fps_start),
+                        measured_frames);
+                    fps_interval = now;
+                    interval_frames = 0;
+                }
+            }
+        }
         if (session && session->finished() && frame_limit > 0) {
             ma17::EmulatorSnapshot final_snapshot;
             const bool needs_final_frame =
@@ -4516,7 +4565,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 axial_camera.pan_y / fitted_scene_height, -0.5f, 0.5f);
         }
         const bool saved = save_ui_preferences(ui_preferences);
-        std::fprintf(stdout,
+        ma17::diagnostic_log(stdout,
                      "[LAB-SCOPE-PREF] saved=%d analog=%d group=%d "
                      "analog_span=%lld digital_span=%lld mask=%u\n",
                      saved ? 1 : 0, ui_preferences.scope_mode,
@@ -4526,7 +4575,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                      ui_preferences.digital_channel_mask);
     }
     if (session)
-        std::fprintf(
+        ma17::diagnostic_log(
             stdout,
             "[LAB-LIVE] audio_dropped_samples=%llu "
             "audio_empty_queue=%llu audio_write_errors=%llu "

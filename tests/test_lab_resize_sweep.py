@@ -49,7 +49,7 @@ def complete_png(path):
 with tempfile.TemporaryDirectory(prefix="sevel-resize-sweep-") as directory:
     environment = os.environ.copy()
     environment["SDL_AUDIODRIVER"] = "dummy"
-    command = [binary, rom, "--live", "--auto-start", "--bench-preset",
+    command = [binary, rom, "--live", "--no-cad", "--auto-start", "--bench-preset",
                "--no-audio", "--window-frames", "240000"]
     log_file = open(Path(directory) / "run.log", "w+")
     process = subprocess.Popen(command, cwd=directory, env=environment,

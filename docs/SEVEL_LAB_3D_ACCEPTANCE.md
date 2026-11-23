@@ -42,6 +42,19 @@ SDL 3.2.8, Vulkan RADV, Radeon RX 7900 XTX, cena de 960 × 640. Cada linha usa 5
 
 Na captura do painel, a referência levou cerca de 0,70 s para abrir e 11 ms para instalar a geometria. Os dois buffers estáticos somam 33.409.080 bytes, incluindo o quadrilátero reutilizado pelo stencil. As arenas contêm 685.638 vértices e 997.260 triângulos incluindo esse quadrilátero. A contagem submetida por frame também inclui as instâncias compartilhadas e os passes de seção. A memória das texturas, do driver e dos dados CPU fica fora dessa medição.
 
+### Painel integrado com SDL 3.4.20
+
+O ensaio de 30 segundos simulados usou o Ryzen 9 5900X, a mesma Radeon RX 7900 XTX com Vulkan offscreen, a montagem v005 em LIVE, o osciloscópio analógico e o áudio com saída dummy. A resolução abaixo é a da janela inteira. Em 1280 × 720, o CAD ocupou 537 × 298 pixels e submeteu 1.359.482 triângulos por quadro.
+
+| Painel | Janela | Medição | FPS médios |
+|---|---|---|---:|
+| Executável anterior, interface em software e pausa de 16 ms | 1280 × 720 | Com espera de diagnóstico da GPU | 15,5 |
+| Interface e CAD na GPU, pausa de 0 ms | 1280 × 720 | Com espera de diagnóstico da GPU | 879,9 |
+| Interface e CAD na GPU, pausa de 0 ms | 1280 × 720 | Apresentação normal | 1.145,9 |
+| Interface e CAD na GPU, pausa de 0 ms | 1920 × 1080 | Apresentação normal | 506,6 |
+
+O comando comum foi `--live --cad-panel --auto-start --bench-preset --window-frames 150000 --stop-ticks 29700000`. A versão atual usou `--frame-delay-ms 0`. Todas as execuções terminaram no mesmo tick com 902 combustões, 5.419 eventos, `state=5fdf93851f736c27` e `event_hash=d296a01741067b34`.
+
 ## Reproduzir os ensaios
 
 Forneça ao CMake `SEVEL_CAD_TEST_EXPORT`, `SEVEL_CAD_TEST_PARAMETERS` e `SEVEL_CAD_TEST_DATUM` para incluir as provas da montagem local além dos testes sintéticos. Os testes gráficos Python usam Pillow. Esta revisão executou as provas gráficas, offscreen e de ptrace via Native Lab MCP.

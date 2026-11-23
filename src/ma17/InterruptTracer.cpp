@@ -1,4 +1,5 @@
 #include "ma17/InterruptTracer.hpp"
+#include "ma17/Diagnostics.hpp"
 
 extern "C" {
 #include "emu8051.h"
@@ -27,7 +28,7 @@ void trace_cpu_exception(em8051 *cpu, int code) {
 
     const unsigned char s1 = sp < 127 ? cpu->mLowerData[sp + 1] : 0xFF;
     const unsigned char s2 = sp < 126 ? cpu->mLowerData[sp + 2] : 0xFF;
-    fprintf(stderr,
+    diagnostic_log(stderr,
             "[EXCEPTION] Stack[SP+1]=0x%02X Stack[SP+2]=0x%02X (return "
             "addr would be 0x%02X%02X)\n",
             static_cast<unsigned int>(s1), static_cast<unsigned int>(s2),
@@ -42,7 +43,7 @@ void trace_ie_write(em8051 *cpu, uint8_t address) {
 #endif
     const unsigned char ie = cpu->mSFR[address - 0x80];
     static int ie_write_count = 0;
-    if (ie_write_count >= 50)
+    if (!verbose_diagnostics || ie_write_count >= 50)
         return;
 
     fprintf(stderr,
@@ -66,7 +67,7 @@ void trace_ien1_write(em8051 *cpu, uint8_t address) {
     const bool old_ex3 = (last_ien1 & 0x04) != 0;
     const bool new_ex3 = (new_ien1 & 0x04) != 0;
 
-    if (old_ex3 != new_ex3 || ien1_write_count < 20) {
+    if (verbose_diagnostics && (old_ex3 != new_ex3 || ien1_write_count < 20)) {
         fprintf(stderr, "[IEN1] 0x%02X → 0x%02X (EX3: %d→%d) PC=0x%04X\n",
                 last_ien1, new_ien1, old_ex3 ? 1 : 0, new_ex3 ? 1 : 0,
                 cpu->mPC);

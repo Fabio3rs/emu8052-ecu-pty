@@ -1,4 +1,5 @@
 #include "ma17/PtyBridge.hpp"
+#include "ma17/Diagnostics.hpp"
 
 #include <cstdio>
 #include <fcntl.h>
@@ -48,14 +49,14 @@ bool PtyBridge::open_pty_4800_8N1() {
     char namebuf[128] = {0};
     struct termios tio {};
 
-    fprintf(stderr, "[DEBUG] Tentando abrir PTY...\n");
+    diagnostic_log(stderr, "[DEBUG] Tentando abrir PTY...\n");
     fflush(stderr);
     if (openpty(&mfd, &sfd, namebuf, nullptr, nullptr) < 0) {
         perror("openpty");
         return false;
     }
 
-    fprintf(stderr, "[DEBUG] PTY aberto: %s (mfd=%d, sfd=%d)\n", namebuf, mfd,
+    diagnostic_log(stderr, "[DEBUG] PTY aberto: %s (mfd=%d, sfd=%d)\n", namebuf, mfd,
             sfd);
     fflush(stderr);
     if (tcgetattr(sfd, &tio) < 0) {
@@ -93,7 +94,7 @@ bool PtyBridge::open_pty_4800_8N1() {
     fcntl(mfd, F_SETFL, flags | O_NONBLOCK);
 
     slave_path = namebuf;
-    fprintf(stderr, "[DEBUG] Configuração PTY concluída com sucesso\n");
+    diagnostic_log(stderr, "[DEBUG] Configuração PTY concluída com sucesso\n");
     fflush(stderr);
     return true;
 }

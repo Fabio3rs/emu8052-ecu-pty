@@ -29,7 +29,7 @@ def run_with_keys(environment, keys, extra=(), drags=(), scope_drag=False,
     if screenshot:
         screenshot.unlink(missing_ok=True)
     process = subprocess.Popen(
-        [binary, rom, "--live", "--bench-preset", "--no-audio", *extra,
+        [binary, rom, "--live", "--verbose", "--no-cad", "--bench-preset", "--no-audio", *extra,
          *(["--screenshot", str(screenshot)] if screenshot else [])],
         env=environment,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

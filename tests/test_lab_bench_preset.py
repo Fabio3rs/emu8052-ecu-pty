@@ -23,7 +23,7 @@ def run(argv):
     return result.stdout
 
 
-headless = run([binary, rom, "--headless", "--bench-preset",
+headless = run([binary, rom, "--headless", "--verbose", "--bench-preset",
                 "--capture-tick", tick, "--capture-svg", str(svg)])
 assert "<path " in svg.read_text() and "<polygon" not in svg.read_text()
 pulses = [int(value) for value in re.findall(r"cc3_pulses=(\d+)", headless)]
