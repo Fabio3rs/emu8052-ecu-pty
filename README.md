@@ -9,6 +9,15 @@ A C++20 project integrating the [emu8051](https://github.com/jarikomppa/emu8051)
 **Protocol:** ISO 9141-2 K-line @ 4800 8N1
 **Implementation:** Cycle-accurate UART timing and 5-baud slow-init support
 
+## Distribution packages
+
+The [Build and package workflow](.github/workflows/packages.yml) creates Linux
+x86_64 program and asset archives, with checksums, from an installed runtime.
+Version tags (`v*`) publish a Release after validation. ECU ROMs remain
+user supplied; the optional FreeCAD runtime is imported from a separately
+versioned Release asset with a pinned SHA-256. See [RELEASING.md](docs/RELEASING.md)
+for the first CAD upload, CI variables, runtime requirements, and local packaging.
+
 ## SEVEL MA1.7 Lab (experimental)
 
 The optional `sevel-ma17-lab` runs the original Fiat ROM with the repository's

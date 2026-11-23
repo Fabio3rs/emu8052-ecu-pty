@@ -13,6 +13,19 @@ option(ENABLE_SANITIZERS "Enable sanitizers" OFF)
 option(ENABLE_SAB80C517 "Enable SAB80C517 interrupt support" ON)
 option(ENABLE_SEVEL_MA17_LAB "Build the SEVEL MA1.7 Lab" OFF)
 option(ENABLE_SEVEL_MA17_LAB_GUI "Build the SDL3 Lab window" ON)
+option(SEVEL_REQUIRE_CAD_ASSETS "Require verified CAD assets in the installed runtime" OFF)
+set(SEVEL_CAD_ASSET_DIR "${CMAKE_SOURCE_DIR}/build/sevel-cad/runtime-assets"
+    CACHE PATH "Registry containing the active verified SEVEL CAD revision")
+if(SEVEL_REQUIRE_CAD_ASSETS)
+    if(NOT ENABLE_SEVEL_MA17_LAB OR NOT ENABLE_SEVEL_MA17_LAB_GUI)
+        message(FATAL_ERROR "SEVEL_REQUIRE_CAD_ASSETS requires the Lab and its GUI")
+    endif()
+    if(NOT EXISTS "${SEVEL_CAD_ASSET_DIR}/current.json")
+        message(FATAL_ERROR
+            "Required CAD registry is missing: ${SEVEL_CAD_ASSET_DIR}/current.json. "
+            "Stage a verified registry and set SEVEL_CAD_ASSET_DIR before configuring.")
+    endif()
+endif()
 
 # Enable 8052 mode by default (Timer 2, 6 interrupt sources, 256B IRAM)
 # This is required for Bosch Monomotronic MA1.7 firmware which uses Timer 2
@@ -179,6 +192,15 @@ target_link_libraries(emu8051-tty emu8051-tty_lib)
 add_executable(sevel-dyno apps/sevel-dyno/main.cpp)
 target_link_libraries(sevel-dyno emu8051-tty_lib)
 
+install(TARGETS emu8051-tty sevel-dyno RUNTIME DESTINATION bin COMPONENT Runtime)
+set(SEVEL_LICENSE_DIR "share/licenses/emu8052-ecu-pty")
+install(FILES LICENSE DESTINATION "${SEVEL_LICENSE_DIR}"
+    RENAME LICENSE.txt COMPONENT Runtime)
+install(FILES emu8051/LICENSE DESTINATION "${SEVEL_LICENSE_DIR}"
+    RENAME emu8051_LICENSE.txt COMPONENT Runtime)
+install(FILES README.md docs/RELEASING.md
+    DESTINATION share/doc/emu8052-ecu-pty COMPONENT Runtime)
+
 if(ENABLE_SEVEL_MA17_LAB)
     find_package(Threads REQUIRED)
     if(ENABLE_SEVEL_MA17_LAB_GUI)
@@ -193,7 +215,15 @@ if(ENABLE_SEVEL_MA17_LAB)
                 GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
                 GIT_TAG release-3.4.20
                 GIT_SHALLOW TRUE)
+            # SDL and its nested C libraries have their own warning policy.
+            # Directory options are inherited when add_subdirectory runs, so
+            # exclude this project's private flags while FetchContent adds SDL.
+            # Restore them before declaring any of our own targets.
+            get_directory_property(SEVEL_SAVED_COMPILE_OPTIONS COMPILE_OPTIONS)
+            set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "")
             FetchContent_MakeAvailable(SDL3)
+            set_property(DIRECTORY PROPERTY COMPILE_OPTIONS "${SEVEL_SAVED_COMPILE_OPTIONS}")
+            unset(SEVEL_SAVED_COMPILE_OPTIONS)
         endif()
         if(TARGET SDL3::SDL3)
             get_target_property(_sdl3_target SDL3::SDL3 ALIASED_TARGET)
@@ -256,6 +286,11 @@ if(ENABLE_SEVEL_MA17_LAB)
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-engine-sim/include)
     target_link_libraries(sevel-ma17-lab PRIVATE emu8051-tty_lib
         open-engine-sim-audio open-engine-sim-geometry)
+    install(TARGETS sevel-ma17-lab sevel-cad-check
+        RUNTIME DESTINATION bin COMPONENT Runtime)
+    install(FILES third_party/open-engine-sim/LICENSE
+        DESTINATION "${SEVEL_LICENSE_DIR}" RENAME OpenEngineSim_LICENSE.txt
+        COMPONENT Runtime)
     if(ENABLE_SEVEL_MA17_LAB_GUI)
         find_package(ZLIB REQUIRED)
         find_package(Freetype REQUIRED)
@@ -402,40 +437,58 @@ if(ENABLE_SEVEL_MA17_LAB)
             sevel-cad-scene
             SDL3::SDL3 ZLIB::ZLIB
             Freetype::Freetype)
-        set(SEVEL_CAD_ASSET_DIR "${CMAKE_SOURCE_DIR}/build/sevel-cad/runtime-assets"
-            CACHE PATH "Registry containing the active verified SEVEL CAD revision")
         add_custom_target(sevel-cad-assets
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/sevel_cad_assets.py
                 "${SEVEL_CAD_ASSET_DIR}" --destination "$<TARGET_FILE_DIR:sevel-ma17-lab>/assets/sevel-cad"
                 --checker $<TARGET_FILE:sevel-cad-check>
             DEPENDS sevel-cad-check VERBATIM)
-        install(TARGETS sevel-ma17-lab sevel-cad-check emu8051-tty RUNTIME DESTINATION bin)
-        install(FILES docs/MA17_CALIBRATION_CATALOG.json docs/dyno_wot_e0.csv DESTINATION bin/assets/lab-data)
+        install(FILES docs/MA17_CALIBRATION_CATALOG.json docs/dyno_wot_e0.csv
+            DESTINATION bin/assets/lab-data COMPONENT Runtime)
         install(FILES docs/dyno/rom/sweep_tdc117.csv docs/dyno/rom/sweep_tdc120.csv
-            docs/dyno/rom/sweep_tdc123.csv DESTINATION bin/assets/lab-data/dyno/rom)
+            docs/dyno/rom/sweep_tdc123.csv DESTINATION bin/assets/lab-data/dyno/rom
+            COMPONENT Runtime)
         set(SEVEL_LAB_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/assets")
         install(FILES "${SEVEL_LAB_ASSETS}/slkscr.ttf.zlib.b64"
             "${SEVEL_LAB_ASSETS}/DejaVuSansMono-Bold.ttf.zlib.b64"
             "${SEVEL_LAB_ASSETS}/authored_meshes.obj.zlib.b64"
             "${SEVEL_LAB_ASSETS}/Kottke Silkscreen License.txt"
             "${SEVEL_LAB_ASSETS}/DejaVu_LICENSE.txt" "${SEVEL_LAB_ASSETS}/SDL3_LICENSE.txt"
-            DESTINATION bin/assets)
+            DESTINATION bin/assets COMPONENT Runtime)
+        install(FILES "${SEVEL_LAB_ASSETS}/Kottke Silkscreen License.txt"
+            DESTINATION "${SEVEL_LICENSE_DIR}" RENAME Silkscreen_LICENSE.txt
+            COMPONENT Runtime)
+        install(FILES "${SEVEL_LAB_ASSETS}/DejaVu_LICENSE.txt" "${SEVEL_LAB_ASSETS}/SDL3_LICENSE.txt"
+            DESTINATION "${SEVEL_LICENSE_DIR}" COMPONENT Runtime)
         foreach(shader_name IN ITEMS engine_sim sevel_cad)
             foreach(stage IN ITEMS vertex fragment)
                 foreach(format IN ITEMS spv dxil msl)
                     install(FILES "${SEVEL_LAB_ASSETS}/shaders/${shader_name}.${stage}.${format}"
-                        DESTINATION bin/assets/shaders)
+                        DESTINATION bin/assets/shaders COMPONENT Runtime)
                 endforeach()
             endforeach()
         endforeach()
         install(FILES third_party/open-engine-sim/LICENSE DESTINATION bin/assets
-            RENAME OpenEngineSim_LICENSE.txt)
+            RENAME OpenEngineSim_LICENSE.txt COMPONENT Runtime)
         install(CODE "
             if(EXISTS \"${SEVEL_CAD_ASSET_DIR}/current.json\")
                 execute_process(COMMAND \"${Python3_EXECUTABLE}\" \"${CMAKE_SOURCE_DIR}/tools/sevel_cad_assets.py\"
                     \"${SEVEL_CAD_ASSET_DIR}\" --destination \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/assets/sevel-cad\"
-                    --checker \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/sevel-cad-check${CMAKE_EXECUTABLE_SUFFIX}\" COMMAND_ERROR_IS_FATAL ANY)
-            endif()")
+                    --checker \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/sevel-cad-check${CMAKE_EXECUTABLE_SUFFIX}\"
+                    RESULT_VARIABLE cad_install_result)
+                if(NOT cad_install_result STREQUAL \"0\")
+                    message(FATAL_ERROR \"CAD runtime validation/staging failed: \${cad_install_result}\")
+                endif()
+                # Release registries carry their own attribution and provenance.
+                # Older development registries can omit these optional notices.
+                foreach(cad_notice IN ITEMS LICENSE.txt provenance.json)
+                    if(EXISTS \"${SEVEL_CAD_ASSET_DIR}/\${cad_notice}\")
+                        file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/bin/assets/sevel-cad\"
+                            TYPE FILE FILES \"${SEVEL_CAD_ASSET_DIR}/\${cad_notice}\")
+                    endif()
+                endforeach()
+            elseif(${SEVEL_REQUIRE_CAD_ASSETS})
+                message(FATAL_ERROR \"Required CAD registry disappeared: ${SEVEL_CAD_ASSET_DIR}/current.json\")
+            endif()" COMPONENT Runtime)
         if(UNIX AND NOT APPLE)
             get_target_property(SEVEL_SDL3_TYPE SDL3::SDL3 TYPE)
             if(SEVEL_SDL3_TYPE STREQUAL "SHARED_LIBRARY")
@@ -443,7 +496,7 @@ if(ENABLE_SEVEL_MA17_LAB)
                     BUILD_RPATH "$ORIGIN")
                 set_property(TARGET sevel-ma17-lab PROPERTY INSTALL_RPATH "$ORIGIN")
                 install(FILES $<TARGET_FILE:SDL3::SDL3> DESTINATION bin
-                    RENAME $<TARGET_SONAME_FILE_NAME:SDL3::SDL3>)
+                    RENAME $<TARGET_SONAME_FILE_NAME:SDL3::SDL3> COMPONENT Runtime)
                 add_custom_command(TARGET sevel-ma17-lab POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         $<TARGET_FILE:SDL3::SDL3>

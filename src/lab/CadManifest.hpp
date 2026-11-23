@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#include <string_view>
 
 namespace lab::cad {
 
@@ -14,9 +15,11 @@ inline void require(bool valid, const std::string &message) {
         throw std::runtime_error("CAD: " + message);
 }
 
-inline const Json &field(const Json &value, const std::string &key) {
-    const auto *member = value.get(key);
-    require(member != nullptr, "missing " + key);
+// The returned reference belongs to value, independently of a temporary key.
+inline const Json &field(const Json &value EMU_LIFETIMEBOUND, std::string_view key) {
+    const std::string name(key);
+    const auto *member = value.get(name);
+    require(member != nullptr, "missing " + name);
     return *member;
 }
 

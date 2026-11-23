@@ -425,9 +425,10 @@ TEST(DynoLayout, StackedPanelsShareOneRpmAxisAndNeverOverlap) {
             // Shared x: every panel has the same horizontal extent.
             EXPECT_FLOAT_EQ(p.plot.x, layout.panels[0].plot.x);
             EXPECT_FLOAT_EQ(p.plot.w, layout.panels[0].plot.w);
-            if (i > 0)
+            if (i > 0) {
                 EXPECT_GE(p.plot.y, layout.panels[i - 1].plot.y +
                                         layout.panels[i - 1].plot.h);
+            }
         }
         // The same rpm maps to the same x in every panel.
         const float x0 = layout.x_for_rpm(3000.0, layout.panels[0].plot);
@@ -541,8 +542,9 @@ TEST(ButtonShortcuts, EveryButtonHasAShortcutAndUnderlinesMatchTheLabel) {
         const auto &shortcut = lab::lab_button_shortcuts[i];
         EXPECT_FALSE(shortcut.key.empty()) << i;
         keys.insert(std::string(shortcut.key));
-        if (shortcut.underline_first)
+        if (shortcut.underline_first) {
             EXPECT_EQ(lab::lab_button_labels[i].substr(0, 1), shortcut.key) << i;
+        }
     }
     EXPECT_EQ(keys.size(), lab::lab_button_labels.size()); // no two share a key
 }

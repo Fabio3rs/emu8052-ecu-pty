@@ -1,0 +1,218 @@
+name: Build and package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      cad_release:
+        description: 'Existing CAD Release tag (empty uses SEVEL_CAD_RELEASE repository variable)'
+        type: string
+        required: false
+      cad_asset:
+        description: 'CAD .tar.gz asset name (empty uses SEVEL_CAD_ASSET)'
+        type: string
+        required: false
+      cad_sha256:
+        description: 'Expected SHA-256 of the CAD archive (empty uses SEVEL_CAD_SHA256)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  linux:
+    name: Linux x86_64 / Ubuntu 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      commit: ${{ steps.metadata.outputs.commit }}
+      cad_enabled: ${{ steps.metadata.outputs.cad_enabled }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Select version and optional CAD input
+        id: metadata
+        env:
+          INPUT_CAD_RELEASE: ${{ inputs.cad_release }}
+          INPUT_CAD_ASSET: ${{ inputs.cad_asset }}
+          INPUT_CAD_SHA256: ${{ inputs.cad_sha256 }}
+          DEFAULT_CAD_RELEASE: ${{ vars.SEVEL_CAD_RELEASE }}
+          DEFAULT_CAD_ASSET: ${{ vars.SEVEL_CAD_ASSET }}
+          DEFAULT_CAD_SHA256: ${{ vars.SEVEL_CAD_SHA256 }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          version = os.environ['GITHUB_REF_NAME'] if os.environ['GITHUB_REF_TYPE'] == 'tag' else 'snapshot-' + commit[:12]
+          if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}', version):
+              raise SystemExit('Release tags must be safe filename components (letters, digits, dots, underscores, hyphens)')
+          cad = {key: (os.environ.get('INPUT_' + key) or os.environ.get('DEFAULT_' + key, '')).strip()
+                 for key in ('CAD_RELEASE', 'CAD_ASSET', 'CAD_SHA256')}
+          enabled = any(cad.values())
+          if enabled:
+              if not all(cad.values()):
+                  raise SystemExit('CAD requires all three values: Release tag, archive name, and SHA-256')
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{0,150}', cad['CAD_RELEASE']):
+                  raise SystemExit('Invalid CAD Release tag')
+              if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz', cad['CAD_ASSET']):
+                  raise SystemExit('CAD asset must be a .tar.gz filename without directories or glob characters')
+              if not re.fullmatch(r'[0-9a-fA-F]{64}', cad['CAD_SHA256']):
+                  raise SystemExit('CAD SHA-256 must contain 64 hexadecimal characters')
+              cad['CAD_SHA256'] = cad['CAD_SHA256'].lower()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in {'version': version, 'commit': commit,
+                                 'cad_enabled': str(enabled).lower(), **{k.lower(): v for k, v in cad.items()}}.items():
+                  print(f'{key}={value}', file=output)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              print(f'Build `{commit}`; version `{version}`. CAD: {"configured and required" if enabled else "absent; classic view"}. ROM: excluded.', file=summary)
+          PY
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config git python3 libgtest-dev \
+            zlib1g-dev libfreetype-dev libpng-dev libssl-dev \
+            libasound2-dev libpulse-dev libx11-dev libxext-dev libxrandr-dev \
+            libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev libdrm-dev libgbm-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev libudev-dev libvulkan-dev
+
+      - name: Download and verify the selected CAD archive
+        if: steps.metadata.outputs.cad_enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAD_RELEASE: ${{ steps.metadata.outputs.cad_release }}
+          CAD_ASSET: ${{ steps.metadata.outputs.cad_asset }}
+          CAD_SHA256: ${{ steps.metadata.outputs.cad_sha256 }}
+        run: |
+          mkdir -p .work/cad-download
+          gh release download "$CAD_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$CAD_ASSET" --dir .work/cad-download
+          python3 tools/package_release.py extract-cad \
+            --archive ".work/cad-download/$CAD_ASSET" --sha256 "$CAD_SHA256" \
+            --destination .work/cad-input
+
+      - name: Configure the graphical Lab and runtime tools
+        env:
+          REQUIRE_CAD: ${{ steps.metadata.outputs.cad_enabled }}
+        run: |
+          cmake -S . -B .work/release-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=ON \
+            -DENABLE_SEVEL_MA17_LAB=ON -DENABLE_SEVEL_MA17_LAB_GUI=ON \
+            -DSEVEL_CAD_ASSET_DIR="$GITHUB_WORKSPACE/.work/cad-input/sevel-cad" \
+            -DSEVEL_REQUIRE_CAD_ASSETS="$REQUIRE_CAD" \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF \
+            -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF
+
+      - name: Build programs and tests that do not need an ECU dump
+        run: |
+          cmake --build .work/release-build --parallel 2 --target \
+            emu8051-tty sevel-dyno sevel-ma17-lab sevel-cad-check \
+            sevel-cad-picking-test lab_audio_smoke lab_mesh_asset_test \
+            lab_font_test lab_donor_scene_test lab_layout_test
+
+      - name: Validate geometry, fonts, audio, and packaging
+        env:
+          SEVEL_CAD_CHECK: ${{ github.workspace }}/.work/release-build/sevel-cad-check
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          SDL_RENDER_DRIVER: software
+        run: |
+          ctest --test-dir .work/release-build --output-on-failure --no-tests=error \
+            -R '^(SevelCad\.(Package|Picking)|LabAudio\.EventDrivenWav)$'
+          .work/release-build/tests/lab_mesh_asset_test
+          .work/release-build/tests/lab_font_test
+          .work/release-build/tests/lab_donor_scene_test
+          .work/release-build/tests/lab_layout_test
+          python3 -m unittest discover -s tests -p test_release_packaging.py -v
+
+      - name: Install and create release archives
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.metadata.outputs.commit }}
+          REQUIRE_CAD: ${{ steps.metadata.outputs.cad_enabled }}
+        run: |
+          cmake --install .work/release-build \
+            --prefix "$GITHUB_WORKSPACE/.work/install" --component Runtime
+          options=()
+          if [[ "$REQUIRE_CAD" == true ]]; then options+=(--require-cad); fi
+          python3 tools/package_release.py bundle --prefix .work/install \
+            --output-dir .work/dist --version "$VERSION" --commit "$SOURCE_COMMIT" "${options[@]}"
+
+      - name: Smoke test the extracted distribution away from the checkout
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          REQUIRE_CAD: ${{ steps.metadata.outputs.cad_enabled }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/sevel-release-smoke"
+          tar -xzf ".work/dist/emu8052-ecu-pty-$VERSION-linux-x86_64.tar.gz" \
+            -C "$RUNNER_TEMP/sevel-release-smoke"
+          options=()
+          if [[ "$REQUIRE_CAD" == true ]]; then options+=(--require-cad); fi
+          python3 tools/smoke_release.py \
+            --prefix "$RUNNER_TEMP/sevel-release-smoke/emu8052-ecu-pty-$VERSION-linux-x86_64" \
+            "${options[@]}"
+          (cd .work/dist && sha256sum --check SHA256SUMS)
+
+      - name: Upload verified packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-packages
+          path: .work/dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish the Release
+    needs: linux
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-packages
+          path: dist
+          digest-mismatch: error
+
+      - name: Publish packages for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ needs.linux.outputs.commit }}
+          CAD_ENABLED: ${{ needs.linux.outputs.cad_enabled }}
+        run: |
+          (cd dist && sha256sum --check SHA256SUMS)
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          Path('notes.md').write_text(
+              'Linux x86_64 build on Ubuntu 24.04.\n\n'
+              f"Source commit: {os.environ['SOURCE_COMMIT']}\n\n"
+              f"SEVEL CAD included: {os.environ['CAD_ENABLED']}. "
+              'The application archive includes the runtime assets; the assets archive is also available separately.\n\n'
+              'No ECU ROM is included. Supply your own file as the first program argument.\n\n'
+              'Check SHA256SUMS and release-manifest.json. See the included RELEASING.md for runtime dependencies and usage.\n',
+              encoding='utf-8')
+          PY
+          gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "$RELEASE_TAG" --notes-file notes.md
