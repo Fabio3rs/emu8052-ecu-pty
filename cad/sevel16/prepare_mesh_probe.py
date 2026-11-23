@@ -34,11 +34,12 @@ def export_shape(shape, folder, prefix):
     return path, batches
 
 
-def run(doc, folder, angles=(0,90,359,720)):
+def run(doc, folder, angles=(0,90,359,720), params=None):
     folder = Path(folder)
     manifest = json.loads((folder/'parts_manifest.json').read_text())
     _,frame = load()
-    params = json.loads((OUTPUT/f'reports/{doc.Name}.parameters.json').read_text())
+    if params is None:
+        params = json.loads((OUTPUT/f'reports/{doc.Name}.parameters.json').read_text())
     initial = doc.Phase.ThetaDeg
     paths = []
     fixed_bounds = {}

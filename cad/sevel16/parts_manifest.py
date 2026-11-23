@@ -7,7 +7,7 @@ import FreeCAD as App
 from config import ROOT, OUTPUT, load
 
 
-def run(doc, generator_entrypoint=None):
+def run(doc, generator_entrypoint=None, folder=None):
     assert abs(doc.Phase.ThetaDeg)<1e-9
     params,frame = load()
     basis = App.Rotation(App.Vector(1,0,0),-90)
@@ -144,7 +144,7 @@ def run(doc, generator_entrypoint=None):
         materials[key] = material
         bindings[row['id']] = key
     manifest.update(materials=materials,material_bindings=bindings)
-    target = OUTPUT/'exports'/doc.Name/'parts_manifest.json'
+    target = (Path(folder) if folder is not None else OUTPUT/'exports'/doc.Name)/'parts_manifest.json'
     target.write_text(json.dumps(manifest,indent=2)+'\n')
     print(target)
     return manifest

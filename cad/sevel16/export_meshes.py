@@ -9,13 +9,14 @@ from mesh_obj import encode, decode, runtime_point
 import material_regions
 
 
-def run(doc):
+def run(doc, parent=None, params=None):
     assert abs(doc.Phase.ThetaDeg)<1e-9
-    parent = OUTPUT/'exports'/doc.Name
+    parent = Path(parent) if parent is not None else OUTPUT/'exports'/doc.Name
     manifest = json.loads((parent/'parts_manifest.json').read_text())
     assert manifest['source_sha256']==hashlib.sha256(Path(doc.FileName).read_bytes()).hexdigest()
     _,frame = load()
-    params = json.loads((OUTPUT/f'reports/{doc.Name}.parameters.json').read_text())
+    if params is None:
+        params = json.loads((OUTPUT/f'reports/{doc.Name}.parameters.json').read_text())
     version = 1
     while (parent/f'meshes_v{version:03d}').exists():
         version += 1
@@ -32,6 +33,15 @@ def run(doc):
         shape.Placement = App.Placement()
         mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=0.08,
                                      AngularDeflection=0.2, Relative=False)
+        deflection, angle = 0.08, 0.2
+        # Fine tangential junctions in the PCV casting can leave a seam at
+        # the display tolerance. Retessellate the B-rep before accepting it.
+        for deflection_new, angle_new in ((0.04, 0.15), (0.01, 0.10)):
+            if mesh.isSolid():
+                break
+            deflection, angle = deflection_new, angle_new
+            mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=deflection,
+                                          AngularDeflection=angle, Relative=False)
         assert mesh.isSolid(), obj.Name
         vertices, triangles = mesh.Topology
         regions = material_regions.classify(obj.Name,vertices,triangles,params,frame)
@@ -63,6 +73,7 @@ def run(doc):
                    mesh_batches=batches, mesh_file=path.name)
         material_regions.bind(row,batches,manifest)
         checks.append({'id':row['id'], 'world_vertex_roundtrip_error_m':error,
+                       'linear_deflection_mm':deflection, 'angular_deflection_rad':angle,
                        'relative_volume_error':volume_error, 'bbox_error_mm':bounds_error,
                        'max_gpu_batch_vertices':max(gpu_sizes.values()),
                        'closed_mesh':True, 'outward_winding_and_normals':True,

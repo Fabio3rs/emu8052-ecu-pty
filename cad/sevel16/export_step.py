@@ -8,14 +8,14 @@ import Import
 from config import OUTPUT
 
 
-def run(doc):
+def run(doc, folder=None):
     assert doc.Name.startswith(('SEVEL_Moving_A2_','SEVEL_ValveTrain_A3_',
                                'SEVEL_Flywheel_A4_','SEVEL_Timing_A4_','SEVEL_Trigger_A4_',
                                'SEVEL_Auxiliary_A4_','SEVEL_Carrier_A3_','SEVEL_Head_A3_',
                                'SEVEL_Casting_A4_','SEVEL_Closures_A5_','SEVEL_Accessories_A5_'))
     assert hasattr(doc,'Phase')
-    folder = OUTPUT/'exports'/doc.Name
-    folder.mkdir(exist_ok=False)
+    folder = Path(folder) if folder is not None else OUTPUT/'exports'/doc.Name
+    folder.mkdir(parents=True, exist_ok=False)
     objects = [o for o in doc.Objects if hasattr(o,'Shape')]
     path = folder/'assembly.step'
     Import.export(objects,str(path))
