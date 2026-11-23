@@ -42,6 +42,7 @@ class FontRenderer {
 
     bool ready() const;
     void set_size_factor(float factor);
+    void release_textures();
     // Device pixels per logical unit (SDL display scale x UI preference).
     void set_device_scale(float scale);
 

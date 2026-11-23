@@ -365,6 +365,10 @@ FontRenderer::FontRenderer(const std::string &path, const FontSpec &spec,
 
 FontRenderer::~FontRenderer() = default;
 
+void FontRenderer::release_textures() {
+    if (data_) data_->buckets.clear();
+}
+
 bool FontRenderer::ready() const { return data_->loaded; }
 bool FontRenderer::is_pixel_face() const { return data_->pixel; }
 const std::string &FontRenderer::face_identity() const {

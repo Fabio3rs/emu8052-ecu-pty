@@ -20,6 +20,7 @@ bool show_sdl_display(
     bool enable_audio = true, int frame_delay_ms = 16,
     bool bench_preset = false,
     const ControlTraceMetadata *metadata = nullptr,
-    int ui_scale_percent = 0);
+    int ui_scale_percent = 0, const std::string &cad_assets = {},
+    const std::string &cad_preset = {}, bool cad_panel = false);
 
 } // namespace lab

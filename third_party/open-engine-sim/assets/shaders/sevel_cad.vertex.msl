@@ -1,0 +1,40 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct VertexUniforms
+{
+    float4x4 model;
+    float4x4 view;
+    float4x4 projection;
+    float4 deformation;
+};
+
+struct VSMain_out
+{
+    float3 _entryPointOutput_world [[user(locn0)]];
+    float3 _entryPointOutput_normal [[user(locn1)]];
+    float2 _entryPointOutput_belt [[user(locn2)]];
+    float4 gl_Position [[position]];
+};
+
+struct VSMain_in
+{
+    float4 input_position [[attribute(0)]];
+    float4 input_normal [[attribute(1)]];
+    float2 input_uv [[attribute(2)]];
+};
+
+vertex VSMain_out VSMain(VSMain_in in [[stage_in]], constant VertexUniforms& _28 [[buffer(0)]])
+{
+    VSMain_out out = {};
+    float4 _86 = in.input_position;
+    _86.y = _86.y + (in.input_uv.x * _28.deformation.x);
+    float4 _134 = _86 * _28.model;
+    out.gl_Position = (_134 * _28.view) * _28.projection;
+    out._entryPointOutput_world = _134.xyz;
+    out._entryPointOutput_normal = (in.input_normal * _28.model).xyz;
+    out._entryPointOutput_belt = float2(in.input_uv.y - _28.deformation.y, _28.deformation.z);
+    return out;
+}

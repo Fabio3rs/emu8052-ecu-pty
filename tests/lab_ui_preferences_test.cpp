@@ -52,7 +52,7 @@ TEST(LabUiPreferences, EveryOutOfRangeFieldIsRejected) {
         {"digital span too long",
          with([](auto &v) { v.digital_span_ticks = 99999999; })},
         {"digital mask 16", with([](auto &v) { v.digital_channel_mask = 16; })},
-        {"view mode 4", with([](auto &v) { v.view_mode = 4; })},
+        {"view mode 5", with([](auto &v) { v.view_mode = 5; })},
         {"shaft zoom 0.1", with([](auto &v) { v.shaft_zoom = 0.1f; })},
         {"axial zoom inf", with([&](auto &v) { v.axial_zoom = inf; })},
         {"pan x 2", with([](auto &v) { v.shaft_pan_x = 2.0f; })},

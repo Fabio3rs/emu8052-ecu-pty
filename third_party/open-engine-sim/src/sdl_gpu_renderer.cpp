@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -54,8 +55,9 @@ SdlGpuRenderer::SdlGpuRenderer()
       m_sceneViewportWidth(0.0f), m_sceneViewportHeight(0.0f) { }
 SdlGpuRenderer::~SdlGpuRenderer() { shutdown(); }
 
-bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &shaderDirectory) {
+bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &shaderDirectory, bool cadScene) {
     m_error.clear();
+    m_cadScene = cadScene;
     m_window = nativeWindowHandle;
     if (m_window == nullptr) { m_error = "SDL window handle is null"; return false; }
 
@@ -91,24 +93,26 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
         static_cast<Uint32>(sizeof(std::uint16_t) * MaxIndices),
         0
     };
-    m_vertexBuffer = SDL_CreateGPUBuffer(m_gpuDevice, &vertexBufferInfo);
-    m_indexBuffer = SDL_CreateGPUBuffer(m_gpuDevice, &indexBufferInfo);
-    m_vertexTransferBuffer = SDL_CreateGPUTransferBuffer(m_gpuDevice, &vertexTransferInfo);
-    m_indexTransferBuffer = SDL_CreateGPUTransferBuffer(m_gpuDevice, &indexTransferInfo);
-    if (m_vertexBuffer == nullptr || m_indexBuffer == nullptr
-        || m_vertexTransferBuffer == nullptr || m_indexTransferBuffer == nullptr) {
-        m_error = SDL_GetError();
-        shutdown();
-        return false;
+    if (!cadScene) {
+        m_vertexBuffer = SDL_CreateGPUBuffer(m_gpuDevice, &vertexBufferInfo);
+        m_indexBuffer = SDL_CreateGPUBuffer(m_gpuDevice, &indexBufferInfo);
+        m_vertexTransferBuffer = SDL_CreateGPUTransferBuffer(m_gpuDevice, &vertexTransferInfo);
+        m_indexTransferBuffer = SDL_CreateGPUTransferBuffer(m_gpuDevice, &indexTransferInfo);
+        if (!m_vertexBuffer || !m_indexBuffer || !m_vertexTransferBuffer || !m_indexTransferBuffer) {
+            m_error = SDL_GetError();
+            shutdown();
+            return false;
+        }
     }
 
     const char *extension = nullptr;
     const SDL_GPUShaderFormat shaderFormat = selectedShaderFormat(m_gpuDevice, &extension);
     if (shaderFormat != SDL_GPU_SHADERFORMAT_INVALID) {
+        const auto prefix = shaderDirectory + (cadScene ? "/sevel_cad." : "/engine_sim.");
         const std::vector<std::uint8_t> vertexCode = loadBinaryFile(
-            shaderDirectory + "/engine_sim.vertex." + extension);
+            prefix + "vertex." + extension);
         const std::vector<std::uint8_t> fragmentCode = loadBinaryFile(
-            shaderDirectory + "/engine_sim.fragment." + extension);
+            prefix + "fragment." + extension);
         if (!vertexCode.empty() && !fragmentCode.empty()) {
             // The offline shadercross CLI preserves the authored HLSL entry
             // point names for every emitted backend, including MSL.
@@ -147,13 +151,51 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
                 pipelineInfo.fragment_shader = fragmentShader;
                 pipelineInfo.vertex_input_state = { &vertexBufferDescription, 1, vertexAttributes, 3 };
                 pipelineInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-                pipelineInfo.target_info = { &colorTarget, 1, SDL_GPU_TEXTUREFORMAT_D16_UNORM, false, 0, 0, 0 };
+                SDL_GPUTextureFormat depthFormat = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+                if (cadScene) {
+                    for (auto format : {SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT,SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT}) {
+                        if (SDL_GPUTextureSupportsFormat(m_gpuDevice,format,SDL_GPU_TEXTURETYPE_2D,
+                                                        SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) {
+                            depthFormat = format;
+                            break;
+                        }
+                    }
+                }
+                m_depthFormat = static_cast<std::uint32_t>(depthFormat);
+                pipelineInfo.target_info = { &colorTarget, 1, depthFormat, cadScene, 0, 0, 0 };
                 pipelineInfo.depth_stencil_state.enable_depth_test = true;
                 pipelineInfo.depth_stencil_state.enable_depth_write = true;
                 pipelineInfo.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+                if (cadScene) {
+                    pipelineInfo.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+                    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
+                }
                 m_scenePipeline = SDL_CreateGPUGraphicsPipeline(m_gpuDevice, &pipelineInfo);
+                if (cadScene) {
+                    pipelineInfo.depth_stencil_state.enable_depth_write = false;
+                    m_transparentPipeline = SDL_CreateGPUGraphicsPipeline(m_gpuDevice,&pipelineInfo);
+                    pipelineInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+                }
+                if (depthFormat != SDL_GPU_TEXTUREFORMAT_D16_UNORM) {
+                    auto &depth = pipelineInfo.depth_stencil_state;
+                    depth.enable_stencil_test = true;
+                    depth.compare_mask = depth.write_mask = 1;
+                    depth.front_stencil_state = depth.back_stencil_state = {SDL_GPU_STENCILOP_KEEP,
+                        SDL_GPU_STENCILOP_INVERT, SDL_GPU_STENCILOP_KEEP, SDL_GPU_COMPAREOP_ALWAYS};
+                    depth.enable_depth_write = depth.enable_depth_test = false;
+                    colorTarget.blend_state.enable_color_write_mask = true;
+                    colorTarget.blend_state.color_write_mask = 0;
+                    m_parityPipeline = SDL_CreateGPUGraphicsPipeline(m_gpuDevice, &pipelineInfo);
+                    colorTarget.blend_state.enable_color_write_mask = false;
+                    depth.front_stencil_state = depth.back_stencil_state = {SDL_GPU_STENCILOP_KEEP,
+                        SDL_GPU_STENCILOP_KEEP, SDL_GPU_STENCILOP_KEEP, SDL_GPU_COMPAREOP_NOT_EQUAL};
+                    depth.enable_depth_test = depth.enable_depth_write = true;
+                    depth.write_mask = 0;
+                    m_capPipeline = SDL_CreateGPUGraphicsPipeline(m_gpuDevice, &pipelineInfo);
+                }
 
                 pipelineInfo.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+                pipelineInfo.target_info.has_depth_stencil_target = false;
                 pipelineInfo.depth_stencil_state = {};
                 m_uiPipeline = SDL_CreateGPUGraphicsPipeline(m_gpuDevice, &pipelineInfo);
                 if (m_scenePipeline == nullptr || m_uiPipeline == nullptr) m_error = SDL_GetError();
@@ -166,7 +208,7 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
             + "; install SDL_shadercross and rebuild engine-sim-desktop";
     }
     else m_error = SDL_GetError();
-    if (m_scenePipeline == nullptr || m_uiPipeline == nullptr) {
+    if (m_scenePipeline == nullptr || m_uiPipeline == nullptr || (cadScene && !m_transparentPipeline)) {
         if (m_error.empty()) m_error = "SDL GPU graphics pipeline creation failed";
         shutdown();
         return false;
@@ -176,6 +218,20 @@ bool SdlGpuRenderer::initialize(void *nativeWindowHandle, const std::string &sha
 
 void SdlGpuRenderer::shutdown() {
     if (m_gpuDevice != nullptr) {
+        if (m_background) SDL_ReleaseGPUTexture(m_gpuDevice,m_background);
+        if (m_backgroundTransfer) SDL_ReleaseGPUTransferBuffer(m_gpuDevice,m_backgroundTransfer);
+        m_background = nullptr;
+        m_backgroundTransfer = nullptr;
+        m_backgroundWidth = m_backgroundHeight = 0;
+        if (m_parityPipeline) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice,m_parityPipeline);
+        if (m_transparentPipeline) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice,m_transparentPipeline);
+        m_transparentPipeline = nullptr;
+        if (m_capPipeline) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice,m_capPipeline);
+        m_parityPipeline = m_capPipeline = nullptr;
+        if (m_staticVertices) SDL_ReleaseGPUBuffer(m_gpuDevice, m_staticVertices);
+        if (m_staticIndices) SDL_ReleaseGPUBuffer(m_gpuDevice, m_staticIndices);
+        m_staticVertices = nullptr;
+        m_staticIndices = nullptr;
         if (m_scenePipeline != nullptr) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice, m_scenePipeline);
         if (m_uiPipeline != nullptr) SDL_ReleaseGPUGraphicsPipeline(m_gpuDevice, m_uiPipeline);
         if (m_sceneTexture != nullptr) SDL_ReleaseGPUTexture(m_gpuDevice, m_sceneTexture);
@@ -213,6 +269,48 @@ void SdlGpuRenderer::beginFrame(const ysVector &clearColor) {
     m_vertexCount = 0;
     m_indexCount = 0;
     m_submissions.clear();
+    m_sections.clear();
+}
+
+void SdlGpuRenderer::endSectionPart(std::size_t firstDraw, int quadVertex, int quadIndex,
+                                    const ysMatrix &planeModel, bool second) {
+    if (!supportsSectionCaps() || firstDraw >= m_submissions.size()) return;
+    auto plane = m_submissions[firstDraw];
+    plane.baseVertex = quadVertex;
+    plane.baseIndex = quadIndex;
+    plane.faceCount = 2;
+    plane.transform = planeModel;
+    const auto parity = second ? plane.secondPlane : plane.clipPlane;
+    plane.clipPlane = second ? plane.clipPlane : plane.secondPlane;
+    plane.secondPlane = plane.deformation = {};
+    plane.color = {.94f,.48f,.21f,1};
+    m_sections.push_back({firstDraw,m_submissions.size(),plane,parity});
+}
+
+void SdlGpuRenderer::profileScene(std::uint64_t frameStart) {
+    if (!SDL_GetEnvironmentVariable(SDL_GetEnvironment(),"SEVEL_CAD_PROFILE")) return;
+    SDL_WaitForGPUIdle(m_gpuDevice);
+    const double ms = static_cast<double>(SDL_GetPerformanceCounter()-frameStart)*1000 /
+                      static_cast<double>(SDL_GetPerformanceFrequency());
+    if (++m_profileFrames <= 2) {
+        m_profileStart = SDL_GetPerformanceCounter();
+        return;
+    }
+    m_profileMs += ms;
+    if (m_profileFrames == 12 || m_profileFrames%60 == 0) {
+        std::size_t draws = m_submissions.size(), tris = 0;
+        for (auto &s : m_submissions) tris += static_cast<std::size_t>(s.faceCount);
+        for (auto &s : m_sections) {
+            draws += s.end-s.first+1;
+            tris += 2;
+            for (auto i=s.first; i<s.end; ++i) tris += static_cast<std::size_t>(m_submissions[i].faceCount);
+        }
+        const double elapsed = static_cast<double>(SDL_GetPerformanceCounter()-m_profileStart) /
+                               static_cast<double>(SDL_GetPerformanceFrequency());
+        std::printf("[LAB-CAD-PERF] backend=%s resolution=%ux%u frames=%u draws=%zu triangles=%zu caps=%zu render_gpu_ms=%.3f lab_fps=%.2f\n",
+            SDL_GetGPUDeviceDriver(m_gpuDevice),m_sceneTextureWidth,m_sceneTextureHeight,m_profileFrames-2,
+            draws,tris,m_sections.size(),m_profileMs/(m_profileFrames-2),(m_profileFrames-2)/elapsed);
+    }
 }
 
 void SdlGpuRenderer::setSceneViewport(float x, float y, float width, float height) {
@@ -222,13 +320,56 @@ void SdlGpuRenderer::setSceneViewport(float x, float y, float width, float heigh
     m_sceneViewportHeight = std::max(0.0f, height);
 }
 
+bool SdlGpuRenderer::installStaticGeometry(const std::vector<EngineSimVertex> &vertices,
+                                           const std::vector<std::uint16_t> &indices,
+                                           std::string &error) {
+    const size_t vb = vertices.size() * sizeof(EngineSimVertex);
+    const size_t ib = indices.size() * sizeof(std::uint16_t);
+    if (!m_gpuDevice || !vb || !ib || vb + ib > 512u*1024*1024) {
+        error = "Invalid static geometry size";
+        return false;
+    }
+    const SDL_GPUBufferCreateInfo vi{SDL_GPU_BUFFERUSAGE_VERTEX, static_cast<Uint32>(vb), 0};
+    const SDL_GPUBufferCreateInfo ii{SDL_GPU_BUFFERUSAGE_INDEX, static_cast<Uint32>(ib), 0};
+    const SDL_GPUTransferBufferCreateInfo ti{SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, static_cast<Uint32>(vb+ib), 0};
+    auto *v = SDL_CreateGPUBuffer(m_gpuDevice, &vi);
+    auto *i = SDL_CreateGPUBuffer(m_gpuDevice, &ii);
+    auto *transfer = SDL_CreateGPUTransferBuffer(m_gpuDevice, &ti);
+    bool ready = false;
+    if (v && i && transfer) {
+        if (auto *memory = static_cast<unsigned char *>(SDL_MapGPUTransferBuffer(m_gpuDevice, transfer, false))) {
+            std::memcpy(memory, vertices.data(), vb);
+            std::memcpy(memory+vb, indices.data(), ib);
+            SDL_UnmapGPUTransferBuffer(m_gpuDevice, transfer);
+            if (auto *commands = SDL_AcquireGPUCommandBuffer(m_gpuDevice)) {
+                if (auto *pass = SDL_BeginGPUCopyPass(commands)) {
+                    const SDL_GPUTransferBufferLocation vs{transfer,0}, is{transfer,static_cast<Uint32>(vb)};
+                    const SDL_GPUBufferRegion vd{v,0,vi.size}, id{i,0,ii.size};
+                    SDL_UploadToGPUBuffer(pass,&vs,&vd,false);
+                    SDL_UploadToGPUBuffer(pass,&is,&id,false);
+                    SDL_EndGPUCopyPass(pass);
+                    ready = SDL_SubmitGPUCommandBuffer(commands) && SDL_WaitForGPUIdle(m_gpuDevice);
+                } else SDL_CancelGPUCommandBuffer(commands);
+            }
+        }
+    }
+    if (ready) {
+        std::swap(v, m_staticVertices);
+        std::swap(i, m_staticIndices);
+    } else error = SDL_GetError();
+    if (transfer) SDL_ReleaseGPUTransferBuffer(m_gpuDevice, transfer);
+    if (v) SDL_ReleaseGPUBuffer(m_gpuDevice, v);
+    if (i) SDL_ReleaseGPUBuffer(m_gpuDevice, i);
+    return ready;
+}
+
 void SdlGpuRenderer::uploadGeometry(
     const EngineSimVertex *vertices,
     int vertexCount,
     const std::uint16_t *indices,
     int indexCount)
 {
-    if (vertexCount < 0 || vertexCount > MaxVertices || indexCount < 0 || indexCount > MaxIndices) return;
+    if (m_cadScene || vertexCount < 0 || vertexCount > MaxVertices || indexCount < 0 || indexCount > MaxIndices) return;
     m_vertices = vertices;
     m_indices = indices;
     m_vertexCount = vertexCount;
@@ -249,7 +390,7 @@ void SdlGpuRenderer::submitGeometry(
     int layer)
 {
     m_submissions.push_back({ baseVertex, baseIndex, faceCount,
-        transform, cameraView, projection, color, stage, layer });
+        transform, cameraView, projection, color, m_clipPlane, m_secondPlane, m_deformation, stage, layer });
 }
 
 void SdlGpuRenderer::endFrame() {
@@ -329,7 +470,7 @@ void SdlGpuRenderer::endFrame() {
         if (m_depthTexture == nullptr || m_depthTextureWidth != sceneWidth || m_depthTextureHeight != sceneHeight) {
             if (m_depthTexture != nullptr) SDL_ReleaseGPUTexture(m_gpuDevice, m_depthTexture);
             const SDL_GPUTextureCreateInfo depthInfo = {
-                SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_D16_UNORM,
+                SDL_GPU_TEXTURETYPE_2D, static_cast<SDL_GPUTextureFormat>(m_depthFormat),
                 SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET, sceneWidth, sceneHeight,
                 1, 1, SDL_GPU_SAMPLECOUNT_1, 0
             };
@@ -343,29 +484,34 @@ void SdlGpuRenderer::endFrame() {
             return;
         }
 
-        const auto drawStage = [&](SDL_GPURenderPass *pass, std::uint32_t stage) {
-            std::vector<const Submission *> submissions;
-            for (const Submission &submission : m_submissions) {
-                if ((submission.stage & stage) != 0) submissions.push_back(&submission);
-            }
-            std::stable_sort(submissions.begin(), submissions.end(),
-                [](const Submission *left, const Submission *right) { return left->layer < right->layer; });
-            for (const Submission *submission : submissions) {
-                const ysMatrix transforms[] = {
+        const auto drawOne = [&](SDL_GPURenderPass *pass, const Submission *submission) {
+                struct VertexUniforms { ysMatrix matrices[3]; ysVector deformation; };
+                const VertexUniforms transforms = {{
                     submission->transform,
                     submission->cameraView,
                     submission->projection
-                };
-                SDL_PushGPUVertexUniformData(commands, 0, transforms, sizeof(transforms));
-                SDL_PushGPUFragmentUniformData(commands, 0, &submission->color, sizeof(submission->color));
+                },submission->deformation};
+                SDL_PushGPUVertexUniformData(commands, 0, &transforms, m_cadScene ? sizeof(transforms) : sizeof(transforms.matrices));
+                const ysVector surface[] = {submission->color, submission->clipPlane, submission->secondPlane};
+                SDL_PushGPUFragmentUniformData(commands, 0, surface, m_cadScene ? sizeof(surface) : sizeof(ysVector));
                 SDL_DrawGPUIndexedPrimitives(pass, static_cast<Uint32>(submission->faceCount * 3), 1,
                     static_cast<Uint32>(submission->baseIndex), submission->baseVertex, 0);
+        };
+        const auto drawStage = [&](SDL_GPURenderPass *pass, std::uint32_t stage, bool transparent=false) {
+            std::vector<const Submission *> submissions;
+            for (const Submission &submission : m_submissions) {
+                if ((submission.stage & stage) != 0 &&
+                    (!m_staticVertices || (submission.color.w < 1.f) == transparent))
+                    submissions.push_back(&submission);
             }
+            std::stable_sort(submissions.begin(), submissions.end(),
+                [](const Submission *left, const Submission *right) { return left->layer < right->layer; });
+            for (const Submission *submission : submissions) drawOne(pass,submission);
         };
         const auto bindGeometry = [&](SDL_GPURenderPass *pass, SDL_GPUGraphicsPipeline *pipeline) {
             SDL_BindGPUGraphicsPipeline(pass, pipeline);
-            const SDL_GPUBufferBinding vertexBinding = { m_vertexBuffer, 0 };
-            const SDL_GPUBufferBinding indexBinding = { m_indexBuffer, 0 };
+            const SDL_GPUBufferBinding vertexBinding = { m_staticVertices ? m_staticVertices : m_vertexBuffer, 0 };
+            const SDL_GPUBufferBinding indexBinding = { m_staticIndices ? m_staticIndices : m_indexBuffer, 0 };
             SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
             SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
         };
@@ -379,7 +525,9 @@ void SdlGpuRenderer::endFrame() {
         depthTarget.texture = m_depthTexture;
         depthTarget.clear_depth = 1.0f;
         depthTarget.load_op = SDL_GPU_LOADOP_CLEAR;
-        depthTarget.store_op = SDL_GPU_STOREOP_DONT_CARE;
+        const bool hasTransparent = m_staticVertices && std::any_of(m_submissions.begin(),m_submissions.end(),
+            [](const auto &s) { return s.color.w < 1.f; });
+        depthTarget.store_op = m_sections.empty() && !hasTransparent ? SDL_GPU_STOREOP_DONT_CARE : SDL_GPU_STOREOP_STORE;
         depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
         depthTarget.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
         SDL_GPUColorTargetInfo clearTarget = sceneColorTarget;
@@ -391,6 +539,17 @@ void SdlGpuRenderer::endFrame() {
             return;
         }
         SDL_EndGPURenderPass(clearPass);
+        if (m_background) {
+            const SDL_GPUBlitInfo backgroundBlit = {
+                {m_background,0,0,0,0,m_backgroundWidth,m_backgroundHeight},
+                {swapchainTexture,0,0,0,0,swapchainWidth,swapchainHeight},
+                SDL_GPU_LOADOP_LOAD,{},SDL_FLIP_NONE,SDL_GPU_FILTER_NEAREST,false,0,0,0};
+            SDL_BlitGPUTexture(commands,&backgroundBlit);
+            if (m_submissions.empty()) {
+                if (!SDL_SubmitGPUCommandBuffer(commands)) m_error = SDL_GetError();
+                return;
+            }
+        }
         SDL_GPURenderPass *scenePass = SDL_BeginGPURenderPass(commands, &sceneColorTarget, 1,
             m_depthTexture != nullptr ? &depthTarget : nullptr);
         if (scenePass == nullptr) {
@@ -398,7 +557,7 @@ void SdlGpuRenderer::endFrame() {
             SDL_SubmitGPUCommandBuffer(commands);
             return;
         }
-        if (m_scenePipeline != nullptr && m_vertexCount > 0 && m_indexCount > 0) {
+        if (m_scenePipeline != nullptr && (m_staticVertices || (m_vertexCount > 0 && m_indexCount > 0))) {
             bindGeometry(scenePass, m_scenePipeline);
             if (m_sceneViewportWidth > 0.0f && m_sceneViewportHeight > 0.0f) {
                 const SDL_GPUViewport sceneViewport = { 0.0f, 0.0f,
@@ -409,6 +568,38 @@ void SdlGpuRenderer::endFrame() {
         }
         SDL_EndGPURenderPass(scenePass);
 
+        // Odd coverage of the clipped closed surface projects exactly the
+        // section interior. Clear parity per solid so nested holes and
+        // disjoint solids retain their own topology.
+        for (const auto &section : m_sections) {
+            sceneColorTarget.load_op = SDL_GPU_LOADOP_LOAD;
+            depthTarget.load_op = SDL_GPU_LOADOP_LOAD;
+            depthTarget.stencil_load_op = SDL_GPU_LOADOP_CLEAR;
+            auto *pass = SDL_BeginGPURenderPass(commands,&sceneColorTarget,1,&depthTarget);
+            if (!pass) { m_error = SDL_GetError(); break; }
+            SDL_SetGPUStencilReference(pass,0);
+            bindGeometry(pass,m_parityPipeline);
+            for (auto i=section.first; i<section.end; ++i) {
+                auto clipped = m_submissions[i];
+                clipped.clipPlane = section.parityPlane;
+                clipped.secondPlane = {};
+                drawOne(pass,&clipped);
+            }
+            SDL_BindGPUGraphicsPipeline(pass,m_capPipeline);
+            drawOne(pass,&section.plane);
+            SDL_EndGPURenderPass(pass);
+        }
+
+        if (hasTransparent) {
+            sceneColorTarget.load_op = depthTarget.load_op = SDL_GPU_LOADOP_LOAD;
+            depthTarget.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+            auto *pass = SDL_BeginGPURenderPass(commands,&sceneColorTarget,1,&depthTarget);
+            if (pass) {
+                bindGeometry(pass,m_transparentPipeline);
+                drawStage(pass,Shaders::SceneStage,true);
+                SDL_EndGPURenderPass(pass);
+            } else m_error = SDL_GetError();
+        }
         if (m_sceneTexture != nullptr) {
             const SDL_GPUBlitInfo blitInfo = {
                 { m_sceneTexture, 0, 0, 0, 0, sceneWidth, sceneHeight },

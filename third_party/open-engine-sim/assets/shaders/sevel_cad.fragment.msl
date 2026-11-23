@@ -1,0 +1,49 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct SurfaceUniforms
+{
+    float4 material;
+    float4 cut;
+    float4 secondCut;
+};
+
+struct PSMain_out
+{
+    float4 _entryPointOutput [[color(0)]];
+};
+
+struct PSMain_in
+{
+    float3 input_world [[user(locn0)]];
+    float3 input_normal [[user(locn1)]];
+    float2 input_belt [[user(locn2)]];
+};
+
+fragment PSMain_out PSMain(PSMain_in in [[stage_in]], constant SurfaceUniforms& _18 [[buffer(0)]])
+{
+    PSMain_out out = {};
+    if (dot(_18.cut, float4(in.input_world, 1.0)) < 0.0)
+    {
+        discard_fragment();
+    }
+    if (dot(_18.secondCut, float4(in.input_world, 1.0)) < 0.0)
+    {
+        discard_fragment();
+    }
+    float3 _188 = fast::normalize(in.input_normal);
+    float _200 = (0.319999992847442626953125 + (0.62999999523162841796875 * fast::clamp(dot(_188, float3(-0.42333376407623291015625, 0.719667375087738037109375, 0.55033385753631591796875)), 0.0, 1.0))) + (0.2800000011920928955078125 * fast::clamp(dot(_188, float3(0.666666686534881591796875, 0.3333333432674407958984375, -0.666666686534881591796875)), 0.0, 1.0));
+    float _254;
+    if (in.input_belt.y > 0.0)
+    {
+        _254 = _200 * (0.75 + (0.37999999523162841796875 * smoothstep(0.119999997317790985107421875, 0.319999992847442626953125, abs(fract(in.input_belt.x) - 0.5))));
+    }
+    else
+    {
+        _254 = _200;
+    }
+    out._entryPointOutput = float4(powr(fast::clamp(_18.material.xyz * _254, float3(0.0), float3(1.0)), float3(0.790000021457672119140625)), _18.material.w);
+    return out;
+}

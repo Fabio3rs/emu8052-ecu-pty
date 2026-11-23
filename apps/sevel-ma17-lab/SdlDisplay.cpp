@@ -6,6 +6,10 @@
 #include "lab/AnalogTrigger.hpp"
 #include "lab/DigitalScopeExport.hpp"
 #include "lab/DonorScene.hpp"
+#include "lab/SevelCadView.hpp"
+#include "lab/CadPanel.hpp"
+#include "lab/CadToolbar.hpp"
+#include <numbers>
 #include "lab/DrivetrainExport.hpp"
 #include "lab/FontRenderer.hpp"
 #include "lab/LabButtons.hpp"
@@ -226,7 +230,8 @@ bool save_sdl_scene_equivalent(const lab::RecordingRenderer &recorded,
 }
 
 void save_gpu_scene(SdlGpuRenderer &renderer,
-                    const std::filesystem::path &main_path, long long tick) {
+                    const std::filesystem::path &main_path, long long tick,
+                    const lab::SevelCadView *cad = nullptr) {
     const auto path = gpu_scene_path(main_path);
     std::vector<std::uint8_t> pixels;
     std::uint32_t width = 0;
@@ -250,6 +255,19 @@ void save_gpu_scene(SdlGpuRenderer &renderer,
     else
         std::fprintf(stderr, "SDL GPU scene capture failed: %s\n",
                      error.empty() ? SDL_GetError() : error.c_str());
+    if (saved && cad && !cad->scene.parts.empty()) {
+        try {
+            auto preset = path;
+            preset.replace_extension(".json");
+            cad->savePreset(preset);
+            std::ifstream stream(preset,std::ios::binary);
+            const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(stream),{}};
+            std::printf("[LAB-CAD] capture tick=%lld phase_deg=%.9f revision=%s pose=%s draws=%d preset_sha256=%s view=%s\n",
+                        tick,cad->presented_phase,cad->scene.revision.c_str(),
+                        cad_pose_hash(cad->scene,cad->presented_phase).c_str(),cad->view_draws,
+                        lab::sha256_hex(bytes).c_str(),preset.string().c_str());
+        } catch (const std::exception &e) { std::fprintf(stderr,"[LAB-CAD] capture: %s\n",e.what()); }
+    }
 }
 
 } // namespace
@@ -890,7 +908,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                       bool replay_controls, bool gpu_preview, bool enable_audio,
                       int frame_delay_ms, bool bench_preset,
                       const ControlTraceMetadata *metadata,
-                      int ui_scale_percent) {
+                      int ui_scale_percent, const std::string &requested_assets, const std::string &cad_preset,
+                      bool cad_panel) {
     if (!SDL_Init(SDL_INIT_VIDEO |
                   (session && enable_audio ? SDL_INIT_AUDIO : 0U))) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -940,10 +959,26 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
     }
     SDL_Window *window =
-        SDL_CreateWindow("FIAT TIPO 1.6 i.e. | SEVEL MA1.7 Lab", initial_width,
+        SDL_CreateWindow("Starting Lab", initial_width,
                          initial_height, SDL_WINDOW_RESIZABLE);
-    SDL_Renderer *screen =
-        window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+    CadPanel cad_compositor;
+    CadToolbar cad_toolbar;
+    const bool start_in_cad = cad_panel;
+    const auto *base_path = SDL_GetBasePath();
+    const auto installed_data = std::filesystem::path(base_path ? base_path : ".")/"assets/lab-data";
+    const auto *data_override = std::getenv("SEVEL_DOCS_DIR");
+    const std::string docs_dir = data_override ? data_override :
+        std::filesystem::is_directory(installed_data) ? installed_data.string() : SEVEL_DOCS_DIR;
+    const bool offer_cad = frame_limit <= 0 && session && !gpu_preview && base_path &&
+        std::filesystem::is_regular_file(std::filesystem::path(base_path)/"assets/sevel-cad/current.json") &&
+        SDL_GPUSupportsShaderFormats(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
+                                     SDL_GPU_SHADERFORMAT_MSL,nullptr);
+    std::string cad_assets = offer_cad ? "bundled" : requested_assets;
+    cad_panel |= offer_cad;
+    gpu_preview |= offer_cad;
+    SDL_Renderer *screen = nullptr;
+    if (cad_panel && window) cad_panel = cad_compositor.resize(window,screen,nullptr);
+    if (!screen && window) screen = SDL_CreateRenderer(window,nullptr);
     if (!screen && window) {
         std::fprintf(stderr, "SDL preferred renderer: %s; trying software\n",
                      SDL_GetError());
@@ -987,7 +1022,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                  renderer_name ? renderer_name : "unknown",
                  video_driver ? video_driver : "unknown", video_device.c_str());
     AuthoredMeshLibrary meshes;
-    const char *base_path = SDL_GetBasePath();
     const auto mesh_path = base_path ? std::filesystem::path(base_path) /
                                            "assets/authored_meshes.obj.zlib.b64"
                                      : std::filesystem::path{};
@@ -1018,20 +1052,33 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     }
     SDL_Window *gpu_window = nullptr;
     std::unique_ptr<SdlGpuRenderer> gpu_renderer;
+    SevelCadView cad_view;
+    const auto cad_path = cad_assets == "bundled" ? std::filesystem::path(base_path)/"assets/sevel-cad" :
+                                                   std::filesystem::path(cad_assets);
     if (gpu_preview) {
-        gpu_window = SDL_CreateWindow("SEVEL donor GPU scene", 960, 640,
+        if (!cad_panel) gpu_window = SDL_CreateWindow(cad_assets.empty() ? "SEVEL donor GPU scene" : "SEVEL 3D CAD",
+                                      960, 640,
                                       SDL_WINDOW_RESIZABLE);
-        if (gpu_window) {
+        if (gpu_window || cad_panel) {
             gpu_renderer = std::make_unique<SdlGpuRenderer>();
             const auto shader_path =
                 std::filesystem::path(base_path) / "assets/shaders";
-            if (!gpu_renderer->initialize(gpu_window, shader_path.string())) {
+            if (!gpu_renderer->initialize(cad_panel ? window : gpu_window, shader_path.string(), !cad_assets.empty())) {
                 std::fprintf(stderr, "SDL GPU preview unavailable: %s\n",
                              gpu_renderer->lastError());
                 gpu_renderer.reset();
             } else {
                 std::fprintf(stdout, "[LAB-GPU] preview_ready=1 shaders=%s\n",
                              shader_path.string().c_str());
+                if (!cad_assets.empty()) {
+                    try {
+                        cad_view.load(*gpu_renderer,cad_path);
+                        if (!cad_preset.empty()) cad_view.applyPreset(cad_preset);
+                    } catch (const std::exception &error) {
+                        std::fprintf(stderr,"[LAB-CAD] %s\n",error.what());
+                        gpu_renderer.reset();
+                    }
+                }
             }
         } else {
             std::fprintf(stderr, "SDL GPU preview window: %s\n",
@@ -1041,7 +1088,14 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             SDL_DestroyWindow(gpu_window);
             gpu_window = nullptr;
         }
+        if (!gpu_renderer && cad_panel) {
+            SDL_DestroyRenderer(screen);
+            cad_panel = false;
+            screen = SDL_CreateRenderer(window,nullptr);
+            if (!screen) { SDL_DestroyWindow(window); SDL_Quit(); return false; }
+        }
     }
+    SDL_SetWindowTitle(window,"FIAT TIPO 1.6 i.e. | SEVEL MA1.7 Lab");
     bool running = true;
     bool captured = screenshot_path.empty();
     bool gpu_capture_attempted = false;
@@ -1190,7 +1244,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         camera.zoom = axial_camera.zoom = 0.78f;
         fitted_scene_height = -1.0f;
     };
-    int view_mode = ui_preferences.view_mode;
+    int view_mode = ui_preferences.view_mode == 4 && !cad_panel ? 0 : ui_preferences.view_mode;
+    if (cad_panel && start_in_cad) {
+        layout_state.mode = LabPresentationMode::Mechanics;
+        view_mode = 4;
+    }
     bool show_help = false;
     bool show_debug = false;
     std::array<Gauge, 3> gauges{};
@@ -1390,6 +1448,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     };
     for (int frame = 0; running && (frame_limit <= 0 || frame < frame_limit);
          ++frame) {
+        if (cad_panel && !cad_compositor.resize(window,screen,&font)) break;
+        if (gpu_renderer && !cad_view.scene.parts.empty()) cad_view.pollReload(*gpu_renderer);
         if (!update_presentation()) {
             std::fprintf(stderr, "SDL logical presentation: %s\n",
                          SDL_GetError());
@@ -1398,6 +1458,28 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            const bool cad_pointer = event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_WHEEL ||
+                                     event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP;
+            if (cad_panel && cad_pointer && cad_compositor.pointer(cad_view,event)) continue;
+            const bool panel_keys = cad_panel && cad_compositor.visible && cad_compositor.focused &&
+                                    (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP);
+            if (panel_keys && event.key.key == SDLK_ESCAPE) { cad_compositor.focused = false; continue; }
+            if (((gpu_window && SDL_GetWindowFromEvent(&event) == gpu_window) ||
+                 (panel_keys && event.key.key != SDLK_V)) && !cad_view.scene.parts.empty() &&
+                (event.type == SDL_EVENT_MOUSE_MOTION || event.type == SDL_EVENT_MOUSE_WHEEL ||
+                 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                 event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP)) {
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F5 && !event.key.repeat) {
+                    cad_view.requestReload(cad_path);
+                } else if (event.type == SDL_EVENT_KEY_DOWN && (event.key.key == SDLK_F6 || event.key.key == SDLK_F7)) {
+                    try {
+                        auto path = ui_preferences_path().replace_filename("sevel-cad-view.json");
+                        if (event.key.key == SDLK_F6) cad_view.savePreset(path);
+                        else cad_view.applyPreset(path);
+                    } catch (const std::exception &error) { std::fprintf(stderr,"[LAB-CAD] %s\n",error.what()); }
+                } else cad_view.event(event);
+                continue;
+            }
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
                 (event.key.mod & SDL_KMOD_CTRL) != 0 &&
@@ -1521,6 +1603,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     if (event.type != SDL_EVENT_MOUSE_BUTTON_UP ||
                         event.button.button != SDL_BUTTON_LEFT)
                         continue;
+                } else if (cad_panel) {
+                    cad_compositor.coordinates(window,screen,event);
                 } else if (!SDL_ConvertEventToRenderCoordinates(screen,
                                                                 &event)) {
                     continue;
@@ -1534,6 +1618,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     gpu_renderer.reset();
                     SDL_DestroyWindow(gpu_window);
                     gpu_window = nullptr;
+                }
+                continue;
+            }
+            if (cad_toolbar.bounds.w > 0 && cad_toolbar.input(event,cad_view)) {
+                if (cad_toolbar.reload) {
+                    cad_toolbar.reload = false;
+                    cad_view.requestReload(cad_path);
                 }
                 continue;
             }
@@ -2014,7 +2105,12 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             stderr,
                             "[LAB-VIEW-FIT] zoom_before=%.3f tick=%lld\n",
                             static_cast<double>(camera.zoom), displayed.tick);
-                        reset_cameras();
+                        if (view_mode == 4) {
+                            SDL_Event home{};
+                            home.type = SDL_EVENT_KEY_DOWN;
+                            home.key.key = SDLK_HOME;
+                            cad_view.event(home);
+                        } else reset_cameras();
                         continue;
                     }
                     if (lab_buttons_visible(view_width, view_height) &&
@@ -2022,7 +2118,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                         event.button.x < view_selector.x + view_selector.w &&
                         event.button.y >= view_selector.y &&
                         event.button.y < view_selector.y + view_selector.h) {
-                        view_mode = (view_mode + 1) % 4;
+                        view_mode = (view_mode + 1) % (cad_panel ? 5 : 4);
                         continue;
                     }
                     if (session && !replay_controls) {
@@ -2185,7 +2281,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 reset_cameras();
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.key == SDLK_V)
-                view_mode = (view_mode + 1) % 4;
+                view_mode = (view_mode + 1) % (cad_panel ? 5 : 4);
             if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                 event.key.windowID == SDL_GetWindowID(window) &&
                 event.key.key == SDLK_H)
@@ -2678,10 +2774,10 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         if (displayed.drivetrain_available)
             std::snprintf(clutch_label, sizeof(clutch_label), "CLUTCH %.0f%%",
                           displayed.clutch_pressure * 100.0);
-        constexpr std::array<const char *, 4> view_names{
-            "SHAFT", "RADIAL", "AXIAL 1/4", "AXIAL 2/3"};
-        const bool radial_view = view_mode != 0;
-        const int focus_cylinder = view_mode >= 2 ? view_mode - 1 : 0;
+        constexpr std::array<const char *, 5> view_names{
+            "SHAFT", "RADIAL", "AXIAL 1/4", "AXIAL 2/3", "3D CAD"};
+        const bool radial_view = view_mode > 0 && view_mode < 4;
+        const int focus_cylinder = view_mode == 2 || view_mode == 3 ? view_mode - 1 : 0;
         char rpm_label[24];
         if (displayed.crank_available && std::isfinite(displayed.rpm))
             std::snprintf(rpm_label, sizeof(rpm_label), "%.0f rpm",
@@ -2908,7 +3004,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                                       scene_height, meshes, {}, {},
                                       radial_camera, pulses, 1);
         }
-        if (gpu_renderer) {
+        if (gpu_renderer && !cad_panel) {
             int gpu_width = 0;
             int gpu_height = 0;
             if (SDL_GetWindowSizeInPixels(gpu_window, &gpu_width,
@@ -2916,7 +3012,11 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 gpu_width > 0 && gpu_height > 0) {
                 SceneCamera gpu_camera =
                     radial_view ? radial_camera : render_camera;
-                if (radial_view)
+                if (!cad_view.scene.parts.empty()) {
+                    cad_view.draw(*gpu_renderer,gpu_width,gpu_height,
+                                  (displayed.crank_angle_rad-displayed.tdc_phase_rad)*180.0/std::numbers::pi);
+                    SDL_SetWindowTitle(gpu_window,cad_view.status().c_str());
+                } else if (radial_view)
                     render_sevel_radial_donor(
                         *gpu_renderer, displayed, static_cast<float>(gpu_width),
                         static_cast<float>(gpu_height), meshes, {}, {},
@@ -2931,7 +3031,8 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                     gpu_capture_attempted = true;
                     save_gpu_scene(*gpu_renderer,
                                    std::filesystem::path(screenshot_path),
-                                   displayed.tick);
+                                   displayed.tick,&cad_view);
+                    if (cad_view.scene.parts.empty()) {
                     RecordingRenderer same_scene;
                     if (radial_view)
                         render_sevel_radial_donor(
@@ -2957,6 +3058,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                             stdout,
                             "[LAB-GPU] sdl_scene_capture=%s tick=%lld\n",
                             sdl_path.string().c_str(), displayed.tick);
+                    }
                 }
                 if (gpu_renderer->failed()) {
                     std::fprintf(stderr, "SDL GPU preview stopped: %s\n",
@@ -3202,6 +3304,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 : view_mode == 0 ? "V: SHAFT"
                 : view_mode == 1 ? "V: RADIAL"
                 : view_mode == 2 ? "V: 1/4"
+                : view_mode == 4 ? "V: 3D CAD"
                                  : "V: 2/3",
                 {145, 177, 190, 255}, ui_scale);
             const SDL_FRect fit_button =
@@ -3420,8 +3523,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         if (sweep_toggle_request || sweep_state.running) {
             // Y1: RUN WOT, serviced every frame (never blocks the UI).
             if (!dyno_scene) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
-                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+                dyno_scene = load_default_dyno_scene(docs_dir);
             }
             const char *rom_env = std::getenv("SEVEL_ROM_PATH");
             if (sweep_toggle_request) {
@@ -3533,8 +3635,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             const bool slot_a = snapshot_request == 3;
             snapshot_request = 0;
             if (!dyno_scene) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
-                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+                dyno_scene = load_default_dyno_scene(docs_dir);
             }
             const char *dir_env = std::getenv("SEVEL_SNAPSHOT_DIR");
             const std::filesystem::path dir = dir_env ? dir_env : ".work/snapshots";
@@ -3563,15 +3664,13 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
             const int which = snapshot_request;
             snapshot_request = 0;
             if (!dyno_scene) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
-                dyno_scene = load_default_dyno_scene(docs ? docs : SEVEL_DOCS_DIR);
+                dyno_scene = load_default_dyno_scene(docs_dir);
             }
             if (!calibration_tables) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
                 const char *rom_env = std::getenv("SEVEL_ROM_PATH");
                 calibration_tables =
                     rom_env ? load_calibration_catalog(
-                                  std::string(docs ? docs : SEVEL_DOCS_DIR) +
+                                  docs_dir +
                                       "/MA17_CALIBRATION_CATALOG.json",
                                   rom_env)
                             : calibration_error("no ROM path");
@@ -3635,9 +3734,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
         if (dyno_view) {
             if (!dyno_scene) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
-                dyno_scene = load_default_dyno_scene(docs ? docs
-                                                          : SEVEL_DOCS_DIR);
+                dyno_scene = load_default_dyno_scene(docs_dir);
             }
             // D6 / Y1: the live window drives the readout and the crosshair,
             // only while it is valid (an N/D window shows no point).
@@ -3661,8 +3758,6 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
         }
         if (calibration_view) {
             if (!calibration_tables) {
-                const char *docs = std::getenv("SEVEL_DOCS_DIR");
-                const std::string docs_dir = docs ? docs : SEVEL_DOCS_DIR;
                 const char *rom_env = std::getenv("SEVEL_ROM_PATH");
                 calibration_tables =
                     rom_env ? load_calibration_catalog(
@@ -3684,9 +3779,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 // Find the ROM images of the catalog's variants next to the
                 // docs: hash every .bin and keep the ones the catalog names.
                 const std::filesystem::path docs_root =
-                    std::filesystem::path(std::getenv("SEVEL_DOCS_DIR")
-                                              ? std::getenv("SEVEL_DOCS_DIR")
-                                              : SEVEL_DOCS_DIR)
+                    std::filesystem::path(docs_dir)
                         .parent_path();
                 std::error_code ignored;
                 for (const auto &dir : {docs_root, docs_root / "firmwares_modificados_ma17_tipo"})
@@ -4180,8 +4273,29 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                 draw_clutch(screen, font, clutch, displayed, ui_scale,
                             stale_snapshot);
         }
+        const bool show_cad_tools = gpu_renderer && !cad_view.scene.parts.empty() && !show_help &&
+                                    (!cad_panel || view_mode == 4);
+        if (show_cad_tools) {
+            if (cad_panel) cad_view.updatePhase((displayed.crank_angle_rad-displayed.tdc_phase_rad)*180/std::numbers::pi);
+            cad_toolbar.draw(screen,font,cad_view,layout.scene);
+        }
+        else cad_toolbar.bounds = {};
+        if (cad_panel) {
+            SDL_FRect region = layout.scene;
+            region.y += cad_toolbar.bounds.h;
+            region.h -= cad_toolbar.bounds.h+ruler_height;
+            const double phase = (displayed.crank_angle_rad-displayed.tdc_phase_rad)*180/std::numbers::pi;
+            if (!cad_compositor.present(*gpu_renderer,cad_view,screen,region,phase,show_cad_tools)) {
+                std::fprintf(stderr,"[LAB-CAD] panel presentation failed: %s\n",SDL_GetError());
+                break;
+            }
+            if (cad_compositor.visible && !captured && displayed.tick >= capture_after_tick) {
+                save_gpu_scene(*gpu_renderer,screenshot_path,displayed.tick,&cad_view);
+            }
+        }
         if (!captured && displayed.tick >= capture_after_tick) {
             SDL_Surface *surface = SDL_RenderReadPixels(screen, nullptr);
+            if (cad_panel) cad_compositor.compose_capture(*gpu_renderer,surface);
             captured = surface && save_frame(surface, screenshot_path);
             if (surface)
                 SDL_DestroySurface(surface);
@@ -4327,20 +4441,21 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
                      (gpu_renderer &&
                       std::filesystem::exists(gpu_scene_path(path))));
             SDL_Surface *surface = SDL_RenderReadPixels(screen, nullptr);
+            if (cad_panel) cad_compositor.compose_capture(*gpu_renderer,surface);
             const bool saved = surface && save_frame(surface, path.string());
             if (surface)
                 SDL_DestroySurface(surface);
             if (saved) {
                 std::fprintf(stdout, "[LAB-CAPTURE] saved=%s tick=%lld\n",
                              path.string().c_str(), displayed.tick);
-                if (gpu_renderer)
-                    save_gpu_scene(*gpu_renderer, path, displayed.tick);
+                if (gpu_renderer && (!cad_panel || cad_compositor.visible))
+                    save_gpu_scene(*gpu_renderer, path, displayed.tick,&cad_view);
             } else
                 std::fprintf(stderr, "[LAB-CAPTURE] failed=%s error=%s\n",
                              path.string().c_str(), SDL_GetError());
             manual_capture_requested = false;
         }
-        SDL_RenderPresent(screen);
+        if (!cad_panel) SDL_RenderPresent(screen);
         SDL_Delay(static_cast<Uint32>(frame_delay_ms));
         if (session && session->finished() && frame_limit > 0) {
             ma17::EmulatorSnapshot final_snapshot;
@@ -4408,6 +4523,7 @@ bool show_sdl_display(const ma17::EmulatorSnapshot &snapshot, int frame_limit,
     audio_source.reset();
     if (audio_stream)
         SDL_DestroyAudioStream(audio_stream);
+    font.release_textures();
     gpu_renderer.reset();
     if (gpu_window)
         SDL_DestroyWindow(gpu_window);

@@ -152,7 +152,7 @@ void usage(const char *program) {
                  "Usage: %s ROM --headless --capture-tick N --capture-svg PATH "
                  "[--capture-wav PATH] [--screenshot PATH.png] "
                  "[--window-frames N] [--live] [--auto-start] [--gpu-preview] "
-                 "[--bench-preset] "
+                 "[--cad-assets DIRECTORY|MANIFEST|bundled] [--cad-panel] [--cad-preset JSON] [--bench-preset] "
                  "[--no-audio] [--frame-delay-ms N] "
                  "[--ui-scale 100|150|200] "
                  "[--save-controls PATH] [--replay-controls PATH] "
@@ -178,6 +178,9 @@ int main(int argc, char **argv) {
     bool auto_start = false;
     bool bench_preset = false;
     bool gpu_preview = false;
+    std::string cad_assets;
+    std::string cad_preset;
+    bool cad_panel = false;
     bool enable_audio = true;
     int window_frames = 0;
     int frame_delay_ms = 16;
@@ -197,6 +200,15 @@ int main(int argc, char **argv) {
             bench_preset = true;
         } else if (option == "--gpu-preview") {
             gpu_preview = true;
+        } else if (option == "--cad-assets" && index+1 < argc) {
+            cad_assets = argv[++index];
+            gpu_preview = true;
+        } else if (option == "--cad-preset" && index+1 < argc) {
+            cad_preset = argv[++index];
+        } else if (option == "--cad-panel") {
+            cad_panel = true;
+            gpu_preview = true;
+            if (cad_assets.empty()) cad_assets = "bundled";
         } else if (option == "--no-audio") {
             enable_audio = false;
         } else if (option == "--frame-delay-ms" && index + 1 < argc) {
@@ -242,6 +254,7 @@ int main(int argc, char **argv) {
     }
     if ((headless && svg_path.empty() && wav_path.empty()) ||
         (auto_start && !live) || (gpu_preview && !live) || (headless && live) ||
+        (!cad_preset.empty() && cad_assets.empty()) ||
         (!live && !headless &&
          (!save_controls_path.empty() || !replay_controls_path.empty())) ||
         (!live && (!enable_audio || frame_delay_ms != 16)) ||
@@ -365,7 +378,7 @@ int main(int argc, char **argv) {
             initial, window_frames, screenshot_path, &session,
             capture.target_tick, nullptr, !replay_controls_path.empty(),
             gpu_preview, enable_audio, frame_delay_ms, bench_preset,
-            &current_metadata, ui_scale_percent);
+            &current_metadata, ui_scale_percent, cad_assets, cad_preset, cad_panel);
         session.stop();
         ma17::EmulatorSnapshot final_snapshot;
         if (!session.latest(final_snapshot))

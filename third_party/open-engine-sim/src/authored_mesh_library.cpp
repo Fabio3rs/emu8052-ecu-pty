@@ -1,10 +1,15 @@
 #include "../include/authored_mesh_library.h"
 
 #include <cstdint>
+#include <charconv>
+#include <cmath>
+#include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace {
@@ -45,7 +50,100 @@ bool AuthoredMeshLibrary::loadAll(const std::string &path) {
 }
 
 bool AuthoredMeshLibrary::loadAll(std::istream &input) {
-    return loadImpl(input, true);
+    return loadBatches(input,false);
+}
+
+bool AuthoredMeshLibrary::loadBatches(std::istream &input,bool validateSolid) {
+    // The versioned CAD OBJ dialect contains triangular position//normal
+    // faces. Avoid allocating streams and strings for millions of corners.
+    m_meshes.clear();
+    std::vector<Vec3> positions, normals;
+    std::unordered_map<std::uint64_t,unsigned short> corners;
+    Mesh *batch = nullptr;
+    std::vector<std::uint64_t> edges;
+    double signedVolume = 0;
+    std::string line;
+    auto token = [](std::string_view &remaining) {
+        auto first = remaining.find_first_not_of(" \t\r");
+        if (first == remaining.npos) { remaining = {}; return std::string_view{}; }
+        remaining.remove_prefix(first);
+        auto end = remaining.find_first_of(" \t\r");
+        auto word = remaining.substr(0,end);
+        remaining.remove_prefix(word.size());
+        return word;
+    };
+    auto value = [](std::string_view text, auto &out) {
+        if (text.empty()) return false;
+        auto result = std::from_chars(text.data(),text.data()+text.size(),out);
+        return result.ec == std::errc{} && result.ptr == text.data()+text.size();
+    };
+    while (std::getline(input,line)) {
+        std::string_view rest(line);
+        const auto kind = token(rest);
+        if (kind.empty() || kind.front() == '#') continue;
+        if (kind == "v" || kind == "vn") {
+            Vec3 p{};
+            if (!value(token(rest),p.x) || !value(token(rest),p.y) || !value(token(rest),p.z) ||
+                !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return false;
+            (kind == "v" ? positions : normals).push_back(p);
+        } else if (kind == "o") {
+            const auto name = token(rest);
+            if (name.empty()) return false;
+            auto [it,inserted] = m_meshes.try_emplace(std::string(name));
+            if (!inserted) return false;
+            batch = &it->second;
+            corners.clear();
+        } else if (kind == "f" && batch) {
+            std::array<unsigned,3> pos{}, norm{};
+            for (int i=0; i<3; ++i) {
+                auto pair = token(rest);
+                const auto sep = pair.find("//");
+                unsigned vi{}, ni{};
+                if (sep == pair.npos || !value(pair.substr(0,sep),vi) || !value(pair.substr(sep+2),ni) ||
+                    vi == 0 || vi > positions.size() || ni == 0 || ni > normals.size()) return false;
+                const auto key = (static_cast<std::uint64_t>(vi)<<32) | ni;
+                auto [it,inserted] = corners.try_emplace(key,static_cast<unsigned short>(batch->vertices.size()));
+                if (inserted) {
+                    if (batch->vertices.size() >= 65536) return false;
+                    const auto &p = positions[vi-1], &n = normals[ni-1];
+                    batch->vertices.push_back({{p.x,p.y,p.z,1},{n.x,n.y,n.z,0},{}});
+                }
+                batch->indices.push_back(it->second);
+                pos[static_cast<std::size_t>(i)] = vi-1;
+                norm[static_cast<std::size_t>(i)] = ni-1;
+            }
+            if (validateSolid) {
+                const auto &a = positions[pos[0]], &b = positions[pos[1]], &c = positions[pos[2]];
+                const auto ux = b.x-a.x, uy = b.y-a.y, uz = b.z-a.z;
+                const auto vx = c.x-a.x, vy = c.y-a.y, vz = c.z-a.z;
+                const auto nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
+                const auto mag = std::hypot(nx,ny,nz);
+                if (mag == 0) return false;
+                for (auto n : norm) {
+                    const auto &v = normals[n];
+                    if (nx*v.x+ny*v.y+nz*v.z < .80f*mag) return false;
+                }
+                signedVolume += static_cast<double>(nx*a.x+ny*a.y+nz*a.z);
+                for (std::size_t k=0; k<3; ++k) {
+                    auto x = pos[k], y = pos[(k+1)%3];
+                    const auto edge = (static_cast<std::uint64_t>(std::min(x,y))<<32)|std::max(x,y);
+                    edges.push_back((edge<<1) | static_cast<unsigned>(x>y));
+                }
+            }
+        } else return false;
+        if (!token(rest).empty()) return false;
+    }
+    if (m_meshes.empty()) return false;
+    if (validateSolid) {
+        if (signedVolume <= 0 || edges.size()%2) return false;
+        std::sort(edges.begin(),edges.end());
+        for (std::size_t i=0; i<edges.size(); i+=2) {
+            if ((edges[i]^1) != edges[i+1] || (i && edges[i-1]/2 == edges[i]/2)) return false;
+        }
+    }
+    m_positions = positions.size();
+    for (const auto &entry : m_meshes) if (entry.second.indices.empty()) return false;
+    return true;
 }
 
 bool AuthoredMeshLibrary::loadImpl(std::istream &input, bool allObjects) {

@@ -73,7 +73,7 @@ inline bool valid_ui_preferences(const LabUiPreferences &value) {
            value.digital_span_ticks <= 4950000LL &&
            value.digital_channel_mask <= 15 && value.camera_saved >= 0 &&
            value.camera_saved <= 1 && value.view_mode >= 0 &&
-           value.view_mode <= 3 && std::isfinite(value.shaft_zoom) &&
+           value.view_mode <= 4 && std::isfinite(value.shaft_zoom) &&
            std::isfinite(value.axial_zoom) && value.shaft_zoom >= 0.5f &&
            value.shaft_zoom <= 3.0f && value.axial_zoom >= 0.5f &&
            value.axial_zoom <= 3.0f && std::isfinite(value.shaft_pan_x) &&

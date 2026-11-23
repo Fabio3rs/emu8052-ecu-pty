@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "inspect": true,
+  "phase_deg": 90,
+  "cut": true,
+  "normal": [0, 0, 1],
+  "offset_mm": 0,
+  "invert": true,
+  "cut_moving": false,
+  "fill": true,
+  "yaw_rad": -0.32,
+  "pitch_rad": 0.15,
+  "distance_mm": 1000,
+  "target_mm": [140, -60, 0]
+}

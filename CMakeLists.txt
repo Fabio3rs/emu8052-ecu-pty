@@ -216,6 +216,18 @@ if(ENABLE_SEVEL_MA17_LAB)
     target_include_directories(open-engine-sim-geometry SYSTEM PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-engine-sim/include)
     target_compile_definitions(open-engine-sim-geometry PUBLIC __forceinline=inline)
+    add_library(sevel-cad-scene STATIC
+        src/lab/SevelCadScene.cpp src/lab/CadMeshLoader.cpp src/lab/CadRig.cpp
+        src/lab/CadBelt.cpp src/lab/SevelCadPose.cpp)
+    target_include_directories(sevel-cad-scene PUBLIC include)
+    target_link_libraries(sevel-cad-scene PUBLIC open-engine-sim-geometry)
+    find_package(OpenSSL QUIET COMPONENTS Crypto)
+    if(OpenSSL_FOUND)
+        target_link_libraries(sevel-cad-scene PRIVATE OpenSSL::Crypto)
+        target_compile_definitions(sevel-cad-scene PRIVATE SEVEL_CAD_OPENSSL)
+    endif()
+    add_executable(sevel-cad-check tools/sevel_cad_check.cpp)
+    target_link_libraries(sevel-cad-check PRIVATE sevel-cad-scene)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(open-engine-sim-geometry PRIVATE -Wno-error)
     endif()
@@ -289,7 +301,7 @@ if(ENABLE_SEVEL_MA17_LAB)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
         file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders)
         foreach(shader IN ITEMS engine_sim.hlsl engine_sim.vertex.msl
-                engine_sim.fragment.msl)
+                engine_sim.fragment.msl sevel_cad.vertex.msl sevel_cad.fragment.msl)
             configure_file(
                 third_party/open-engine-sim/assets/shaders/${shader}
                 ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders/${shader}
@@ -307,12 +319,17 @@ if(ENABLE_SEVEL_MA17_LAB)
             set(SEVEL_SHADER_OUTPUTS ${SEVEL_SHADER_OUTPUTS} ${output} PARENT_SCOPE)
         endfunction()
         sevel_restore_shader(engine_sim.vertex.spv 9d61d719d3366b118158fb14c2325ca0ef4b1c38e57f7306b0f1c590e7d09c8b)
+        sevel_restore_shader(sevel_cad.vertex.spv 948d455507bad82faa02d902d6063da3493d72447149c935456e30b32d0fe0bb)
+        sevel_restore_shader(sevel_cad.fragment.spv fe537424bab9179bee734309bdbb133d6610b6278daa3604c7e4ff9a6fc3bf6b)
+        sevel_restore_shader(sevel_cad.vertex.dxil 5241286b5f71f3d59d35263abcdcd1457b7edc5a13c9189935600a7ac6a42de5)
+        sevel_restore_shader(sevel_cad.fragment.dxil aadeb2b40809de0fc4c753da68d89c8dd69bce41b4c729103f56f9b157c16a1c)
         sevel_restore_shader(engine_sim.fragment.spv 4215c56147a961db40eaf6919bbe0179832710760f4f296c4ba509ebcfc05416)
         sevel_restore_shader(engine_sim.vertex.dxil ce436be92359fbd138f83e6bcac54cabdcbf3cb7c160137966faa585f46bb856)
         sevel_restore_shader(engine_sim.fragment.dxil 98d403c25debde264e1d813eaed13c52b077a445cced82ba29cb0f770b5fe0bc)
         add_custom_target(sevel-lab-shaders DEPENDS ${SEVEL_SHADER_OUTPUTS})
         add_dependencies(sevel-ma17-lab sevel-lab-shaders)
         add_library(open-engine-sim-gpu STATIC
+            third_party/open-engine-sim/src/sdl_gpu_panel.cpp
             third_party/open-engine-sim/src/sdl_gpu_renderer.cpp)
         target_include_directories(open-engine-sim-gpu SYSTEM PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-engine-sim/include)
@@ -332,6 +349,12 @@ if(ENABLE_SEVEL_MA17_LAB)
         endif()
         target_sources(sevel-ma17-lab PRIVATE
             apps/sevel-ma17-lab/SdlDisplay.cpp
+            src/lab/SevelCadView.cpp
+            src/lab/CadInspection.cpp
+            src/lab/CadPicking.cpp
+            src/lab/CadPanel.cpp
+            src/lab/CadToolbar.cpp
+            src/lab/CadPreset.cpp
             src/lab/CalibrationView.cpp
             src/lab/DonorScene.cpp
             src/lab/DynoView.cpp
@@ -343,6 +366,11 @@ if(ENABLE_SEVEL_MA17_LAB)
             src/lab/ShaftDetails.cpp
             src/lab/WidgetRects.cpp
             src/lab/TraceGeometry.cpp)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            set_source_files_properties(src/lab/CadMeshLoader.cpp src/lab/SevelCadScene.cpp
+                third_party/open-engine-sim/src/authored_mesh_library.cpp
+                PROPERTIES COMPILE_OPTIONS "-O2")
+        endif()
         # --dirty marks a tree with local edits; the git index and HEAD are
         # configure dependencies, so a commit or an edit re-runs this and the
         # provenance cannot silently keep an older commit.
@@ -363,13 +391,51 @@ if(ENABLE_SEVEL_MA17_LAB)
             SEVEL_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/docs"
             SEVEL_CODE_SHA="${SEVEL_CODE_SHA}")
         target_link_libraries(sevel-ma17-lab PRIVATE open-engine-sim-gpu
+            sevel-cad-scene
             SDL3::SDL3 ZLIB::ZLIB
             Freetype::Freetype)
+        set(SEVEL_CAD_ASSET_DIR "${CMAKE_SOURCE_DIR}/build/sevel-cad/runtime-assets"
+            CACHE PATH "Registry containing the active verified SEVEL CAD revision")
+        add_custom_target(sevel-cad-assets
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/sevel_cad_assets.py
+                "${SEVEL_CAD_ASSET_DIR}" --destination "$<TARGET_FILE_DIR:sevel-ma17-lab>/assets/sevel-cad"
+                --checker $<TARGET_FILE:sevel-cad-check>
+            DEPENDS sevel-cad-check VERBATIM)
+        install(TARGETS sevel-ma17-lab sevel-cad-check emu8051-tty RUNTIME DESTINATION bin)
+        install(FILES docs/MA17_CALIBRATION_CATALOG.json docs/dyno_wot_e0.csv DESTINATION bin/assets/lab-data)
+        install(FILES docs/dyno/rom/sweep_tdc117.csv docs/dyno/rom/sweep_tdc120.csv
+            docs/dyno/rom/sweep_tdc123.csv DESTINATION bin/assets/lab-data/dyno/rom)
+        set(SEVEL_LAB_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/assets")
+        install(FILES "${SEVEL_LAB_ASSETS}/slkscr.ttf.zlib.b64"
+            "${SEVEL_LAB_ASSETS}/DejaVuSansMono-Bold.ttf.zlib.b64"
+            "${SEVEL_LAB_ASSETS}/authored_meshes.obj.zlib.b64"
+            "${SEVEL_LAB_ASSETS}/Kottke Silkscreen License.txt"
+            "${SEVEL_LAB_ASSETS}/DejaVu_LICENSE.txt" "${SEVEL_LAB_ASSETS}/SDL3_LICENSE.txt"
+            DESTINATION bin/assets)
+        foreach(shader_name IN ITEMS engine_sim sevel_cad)
+            foreach(stage IN ITEMS vertex fragment)
+                foreach(format IN ITEMS spv dxil msl)
+                    install(FILES "${SEVEL_LAB_ASSETS}/shaders/${shader_name}.${stage}.${format}"
+                        DESTINATION bin/assets/shaders)
+                endforeach()
+            endforeach()
+        endforeach()
+        install(FILES third_party/open-engine-sim/LICENSE DESTINATION bin/assets
+            RENAME OpenEngineSim_LICENSE.txt)
+        install(CODE "
+            if(EXISTS \"${SEVEL_CAD_ASSET_DIR}/current.json\")
+                execute_process(COMMAND \"${Python3_EXECUTABLE}\" \"${CMAKE_SOURCE_DIR}/tools/sevel_cad_assets.py\"
+                    \"${SEVEL_CAD_ASSET_DIR}\" --destination \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/assets/sevel-cad\"
+                    --checker \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/sevel-cad-check${CMAKE_EXECUTABLE_SUFFIX}\" COMMAND_ERROR_IS_FATAL ANY)
+            endif()")
         if(UNIX AND NOT APPLE)
             get_target_property(SEVEL_SDL3_TYPE SDL3::SDL3 TYPE)
             if(SEVEL_SDL3_TYPE STREQUAL "SHARED_LIBRARY")
                 set_property(TARGET sevel-ma17-lab APPEND PROPERTY
                     BUILD_RPATH "$ORIGIN")
+                set_property(TARGET sevel-ma17-lab PROPERTY INSTALL_RPATH "$ORIGIN")
+                install(FILES $<TARGET_FILE:SDL3::SDL3> DESTINATION bin
+                    RENAME $<TARGET_SONAME_FILE_NAME:SDL3::SDL3>)
                 add_custom_command(TARGET sevel-ma17-lab POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         $<TARGET_FILE:SDL3::SDL3>
@@ -383,6 +449,30 @@ if(ENABLE_SEVEL_MA17_LAB)
             target_link_libraries(sevel-ma17-lab PRIVATE PNG::PNG)
             target_compile_definitions(sevel-ma17-lab PRIVATE SEVEL_LAB_PNG=1)
             if(ENABLE_TESTS)
+                add_test(NAME SevelCad.Package COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/test_cad_package.py $<TARGET_FILE:sevel-cad-check>)
+                add_executable(sevel-cad-picking-test tests/cad_picking.cpp
+                    src/lab/CadPicking.cpp src/lab/CadInspection.cpp)
+                target_link_libraries(sevel-cad-picking-test PRIVATE sevel-cad-scene)
+                add_test(NAME SevelCad.Picking COMMAND sevel-cad-picking-test)
+                add_test(NAME SevelCad.Sections COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_SOURCE_DIR}/tests/test_cad_sections.py $<TARGET_FILE:sevel-ma17-lab>
+                    ${CMAKE_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin)
+                set_tests_properties(SevelCad.Sections PROPERTIES RESOURCE_LOCK sevel_gpu TIMEOUT 240)
+                set(SEVEL_CAD_TEST_EXPORT "" CACHE PATH "FreeCAD meshes_vNNN with independent pose fixtures")
+                set(SEVEL_CAD_TEST_PARAMETERS "" CACHE FILEPATH "Parameters used for the pose fixtures")
+                set(SEVEL_CAD_TEST_DATUM "" CACHE FILEPATH "Datum used for the pose fixtures")
+                if(SEVEL_CAD_TEST_EXPORT AND SEVEL_CAD_TEST_PARAMETERS AND SEVEL_CAD_TEST_DATUM)
+                    add_test(NAME SevelCad.Poses COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_SOURCE_DIR}/tests/test_cad_poses.py $<TARGET_FILE:sevel-cad-check>
+                        "${SEVEL_CAD_ASSET_DIR}" "${SEVEL_CAD_TEST_EXPORT}"
+                        "${SEVEL_CAD_TEST_PARAMETERS}" "${SEVEL_CAD_TEST_DATUM}")
+                    add_test(NAME SevelCad.Calibration COMMAND ${Python3_EXECUTABLE}
+                        ${CMAKE_SOURCE_DIR}/tests/test_cad_calibration.py $<TARGET_FILE:sevel-ma17-lab>
+                        ${CMAKE_SOURCE_DIR}/FiatTipo_MA17_dump_27c256.bin "${SEVEL_CAD_TEST_EXPORT}"
+                        ${CMAKE_CURRENT_BINARY_DIR}/cad-calibration)
+                    set_tests_properties(SevelCad.Calibration PROPERTIES RESOURCE_LOCK sevel_gpu TIMEOUT 120)
+                endif()
                 # Hardware rendering through SDL's offscreen driver and a DRI
                 # render node; exit 77 (skip) when no GPU node is reachable.
                 add_test(NAME LabCapture.HardwareGpu
