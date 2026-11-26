@@ -64,6 +64,11 @@ def run(doc, parent=None, params=None):
                               b[0]*c[1]-b[1]*c[0])[i]) for i in range(3))/6
                      for a,b,c in loaded_triangles)
         volume_error = abs(volume*1e9-shape.Volume)/shape.Volume
+        default_error = volume_error
+        if volume_error >= 0.015:
+            from precise_volume import volumes
+            reference, = volumes(shape)
+            volume_error = abs(volume*1e9-reference)/reference
         assert volume>0 and volume_error<0.015, (obj.Name,volume_error)
         cad_bounds = shape.optimalBoundingBox(False)
         bounds_error = max(abs(getattr(mesh.BoundBox,k)-getattr(cad_bounds,k))
@@ -75,6 +80,8 @@ def run(doc, parent=None, params=None):
         checks.append({'id':row['id'], 'world_vertex_roundtrip_error_m':error,
                        'linear_deflection_mm':deflection, 'angular_deflection_rad':angle,
                        'relative_volume_error':volume_error, 'bbox_error_mm':bounds_error,
+                       'default_integration_relative_error':default_error,
+                       'volume_method':'OCCT Gauss-Kronrod' if default_error>=0.015 else 'FreeCAD',
                        'max_gpu_batch_vertices':max(gpu_sizes.values()),
                        'closed_mesh':True, 'outward_winding_and_normals':True,
                        'material_triangles':{r:regions.count(r) for r in sorted(set(regions))},

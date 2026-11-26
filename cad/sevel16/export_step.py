@@ -23,6 +23,11 @@ def run(doc, folder=None):
     source = Part.makeCompound([o.Shape for o in objects])
     error = abs(shape.Volume-source.Volume)/source.Volume
     assert shape.isValid() and len(shape.Solids)==len(objects)
+    native_error = error
+    if error >= 1e-6:
+        from precise_volume import volumes
+        before,after = volumes(source,shape)
+        error = abs(after-before)/before
     assert error < 1e-6
     # Two asymmetric instances, pivot offset, and two noncommuting rotations.
     pivot, offset = App.Vector(7,11,13),App.Vector(17,-23,41)
@@ -42,6 +47,8 @@ def run(doc, folder=None):
     assert abs(reloaded.Volume-2*86.4*33.7*67.4)<1e-5
     report = {'status':'PASS','document':doc.Name,'unit':'mm','solids':len(shape.Solids),
               'theta_deg':doc.Phase.ThetaDeg,'relative_volume_error':error,
+              'default_integration_relative_error':native_error,
+              'volume_method':'OCCT Gauss-Kronrod' if native_error>=1e-6 else 'FreeCAD',
               'calibration_vertex_error_mm':vertex_error,
               'calibration_pivot_mm':list(pivot),'calibration_pivot_transformed_mm':list(pivot+offset),
               'step_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),

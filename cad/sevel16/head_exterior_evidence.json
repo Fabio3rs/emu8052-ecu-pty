@@ -1,0 +1,16 @@
+{
+  "revision": "A5 v008 HeadExterior",
+  "datum_status": "PASS_PROVISIONAL_FOR_VISUAL_ONLY",
+  "dimensions": [
+    {"feature":"thermostat_bolt_pitch_model","value":62,"unit":"mm","class":"INHERITED_ESTIMATE","confidence":"low","source":"A5 v007, head_lower_casting_estimated.water_end_bolt_half_pitch_mm × 2"},
+    {"feature":"thermostat_bolt_pitch_loose_housing","value":78,"unit":"mm","class":"PHOTO_ESTIMATE","confidence":"low","source":"IMG_20261126_111020197_HDR and 111038533_HDR, approximate average of span readings; jaw contact uncertain"},
+    {"feature":"thermostat_line_of_centers_projected","value":6.31,"unit":"deg","class":"PHOTO_ESTIMATE","confidence":"image plane only","source":"649747, guides in Lateral_cabeçote_com_guias_gimp, pixel offsets (434,48)"},
+    {"feature":"thermostat_flange_width","value":96,"unit":"mm","class":"PHOTO_ESTIMATE","confidence":"approximate","source":"IMG_20261126_110812454_HDR, caliper across both ears"},
+    {"feature":"thermostat_outlet_diameters","value":[37,16.5],"unit":"mm","class":"PHOTO_ESTIMATE","confidence":"approximate","source":"IMG_20261126_110931620_HDR and IMG_20261126_110954058_HDR"},
+    {"feature":"coil_fixing_pitch_and_tower_pitch","value":[[90,52],[50,45]],"unit":"mm","class":"DRAWING","confidence":"applies to specified Bosch part","source":"Double_Fire_Coil_2x2_Datasheet_0221503407.pdf p.3"},
+    {"feature":"coil_mount_width_and_seat_standoff","value":[110,43],"unit":"mm","class":"PHOTO_ESTIMATE","confidence":"approximate","source":"IMG_20261126_114251093_HDR and IMG_20261126_114059059"},
+    {"feature":"filler_cap_diameter_and_neck_local_width","value":[68,53],"unit":"mm","class":"PHOTO_ESTIMATE","confidence":"approximate","source":"IMG_20261126_114226165_HDR and IMG_20261126_114133128_HDR"},
+    {"feature":"filler_mouth_longitudinal_advance","value":24,"unit":"mm","class":"VISUAL_MODEL","confidence":"low","source":"TAMPA_VALVULAS/201617543000572.png and IMG_20261126_114608513_HDR"},
+    {"feature":"filter_max_diameter_and_projection","value":[70,129.5],"unit":"mm","class":"VISUAL_MODEL","confidence":"low; two unscaled views","source":"F9Lhc*.jpeg and KpWw4*.jpeg; existing spigot/seat sets model axis"}
+  ]
+}

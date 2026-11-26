@@ -19,7 +19,7 @@ def bowl(cx, sections):
     return Part.Face(Part.Wire(boundary)).revolve(axis, UP, 360)
 
 
-def intake(params, frame):
+def intake(params, frame, *, polish=False):
     """Photo estimates in mm from 713001, 807385, 909298 and 927431."""
     h = params['head_lower_casting_estimated']['value']
     p = params['manifold_visual_estimated']['value']
@@ -51,11 +51,14 @@ def intake(params, frame):
     shell.append(Part.makeLoft(profiles, True, False))
     air.append(Part.makeCylinder(13, 68, V(cx-34,208,78), V(1,0,0)))
     # Broad shoulders sweep around each pair of runners in the top view 713001.
+    shoulders = [(117,164,15,9), (98,177,32,15), (69,185,31,17),
+                 (40,189,25,16), (19,190,17,12)]
+    if polish:
+        shoulders = params['intake_shoulder_sections_estimated']['value']
     for side in (-1, 1):
         profiles = []
-        for dx, yy, ry, rz in [(117,164,15,9), (98,177,32,15),
-                               (69,185,31,17), (40,189,25,16), (19,190,17,12)]:
-            center = V(cx+side*dx, yy, 76)
+        for dx, yy, ry, rz in shoulders:
+            center = V(cx+side*dx, yy, 79 if polish else 76)
             ellipse = Part.Ellipse(center+SIDE*ry, center+UP*rz, center)
             profiles.append(Part.Wire([ellipse.toShape()]))
         shell.append(Part.makeLoft(profiles, True, False))

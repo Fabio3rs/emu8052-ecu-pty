@@ -9,7 +9,55 @@ from config import layout
 V = App.Vector
 
 
-def build(params,frame):
+def _press_radius(body, deep, shallow, radius):
+    # Trace the outside of the stepped floor. Transverse seams between its
+    # tangent sections are internal to the floor and do not meet a side wall.
+    perimeter = []
+    for edge in body.Edges:
+        box = edge.BoundBox
+        if box.ZMin < deep-0.001 or box.ZMax > shallow+0.001:
+            continue
+        faces = body.ancestorsOfType(edge, Part.Face)
+        if len(faces) != 2:
+            continue
+        floor = [face.BoundBox.ZMax <= shallow+0.001 for face in faces]
+        if sum(floor) == 1:
+            perimeter.append(edge)
+    if len(perimeter) < 6:
+        raise ValueError("Missing stamped floor perimeter")
+    return body.makeFillet(radius, perimeter)
+
+
+def _round_ends(body, deep, shallow, radius):
+    """Roll each transverse end into its floor with an analytic cylindrical cut."""
+    bounds = body.BoundBox
+    reach = bounds.XLength + 20
+    for direction, floor in ((1, deep), (-1, shallow)):
+        def end_at(z):
+            line = Part.makeLine(V(bounds.XMin-2, 0, z), V(bounds.XMax+2, 0, z))
+            xs = [v.Point.x for v in body.section(line).Vertexes]
+            return min(xs) if direction == 1 else max(xs)
+        x1, x2 = end_at(floor+1), end_at(floor+2)
+        x0 = 2*x1-x2
+        slope = direction*(x2-x1)
+        length = math.hypot(slope, 1)
+        a, b = slope/length, 1/length
+        center = radius*(slope+length)
+        def point(x,z):
+            return V(x0+direction*x, bounds.YMin-2, floor+z)
+        start = point(center, 0)
+        finish = point(center-radius*b, radius*(1+a))
+        norm = math.hypot(b, 1-a)
+        mid = point(center-radius*b/norm, radius-radius*(1-a)/norm)
+        corners = [finish, point(-reach, radius*(1+a)), point(-reach,-2),
+                   point(center,-2), start]
+        wire = Part.Wire([Part.Arc(start,mid,finish).toShape()] +
+                         [Part.makeLine(i,j) for i,j in zip(corners,corners[1:])])
+        body = body.cut(Part.Face(wire).extrude(V(0,bounds.YLength+4,0)))
+    return body
+
+
+def build(params,frame, *, polish=False, offset_drain=False):
     p = params['external_closures_estimated']['value']
     block = params['block_visual_estimated']['value']
     contour = params['sump_outline_estimated']['value']
@@ -51,6 +99,13 @@ def build(params,frame):
         outline(top+1,contour['wall_inset'],p['pan_inner_end_flange_mm']),
         outline(zs[1],insets[1]+wall),outline(deep+wall,insets[2]+wall)],True,True)
     inner = inner.cut(bottom_cut(wall))
+    if polish:
+        radius = params['pan_press_radius_estimated']['value']
+        if radius <= wall:
+            raise ValueError("Exterior press radius must exceed sheet thickness")
+        round_floor = _round_ends if polish == 'ends' else _press_radius
+        outer = round_floor(outer, deep, shallow, radius)
+        inner = round_floor(inner, deep+wall, shallow+wall, radius-wall)
     pan = outer.cut(inner)
     gasket = Part.Face(outline(top)).extrude(V(0,0,p['pan_gasket_mm']))
     gasket = gasket.cut(Part.Face(outline(top-1,contour['wall_inset'],p['pan_inner_end_flange_mm']))
@@ -72,15 +127,16 @@ def build(params,frame):
         pan = pan.cut(Part.makeCompound(cutters))
         gasket = gasket.cut(Part.makeCompound(cutters))
     x = lo+(hi-lo)*p['drain_x_fraction']
+    y = params['drain_y_estimated']['value'] if offset_drain else 0
     assert p['drain_x_fraction']<p['pan_step_fractions'][0]
     boss = p['drain_boss_height_mm']
-    pan = pan.fuse(Part.makeCylinder(p['drain_boss_radius_mm'],boss+wall,V(x,0,deep-boss)))
-    pan = pan.cut(Part.makeCylinder(p['drain_bore_radius_mm'],boss+wall+2,V(x,0,deep-boss-1)))
+    pan = pan.fuse(Part.makeCylinder(p['drain_boss_radius_mm'],boss+wall,V(x,y,deep-boss)))
+    pan = pan.cut(Part.makeCylinder(p['drain_bore_radius_mm'],boss+wall+2,V(x,y,deep-boss-1)))
     z = deep-boss-p['drain_head_height_mm']
     vertices = [V(x+p['drain_head_radius_mm']*math.cos(i*math.pi/3),
-                  p['drain_head_radius_mm']*math.sin(i*math.pi/3),z) for i in range(6)]
+                  y+p['drain_head_radius_mm']*math.sin(i*math.pi/3),z) for i in range(6)]
     plug = Part.Face(Part.makePolygon(vertices+[vertices[0]])).extrude(V(0,0,p['drain_head_height_mm']))
-    plug = plug.fuse(Part.makeCylinder(p['drain_bore_radius_mm'],boss+wall-1,V(x,0,deep-boss)))
+    plug = plug.fuse(Part.makeCylinder(p['drain_bore_radius_mm'],boss+wall-1,V(x,y,deep-boss)))
     result = {'OilPan':pan.removeSplitter(),'OilPanGasket':gasket.removeSplitter(),
               'OilDrainPlug':plug.removeSplitter()}
     for name,shape in result.items():

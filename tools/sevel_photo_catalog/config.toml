@@ -1,0 +1,13 @@
+[vision]
+base_url = "http://127.0.0.1:11434/v1"
+model = "deepseek-v4.1-flash:1017-cloud"
+prompt_language = "en"
+api_key_env = "OLLAMA_API_KEY"
+connect_timeout_s = 10
+read_timeout_s = 180
+max_retries = 2
+max_images = 4
+max_image_edge_px = 1280
+max_payload_bytes = 4000000
+max_calls = 12
+concurrency = 2

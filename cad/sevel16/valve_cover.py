@@ -8,7 +8,7 @@ from cam_carrier import rounded_prism
 V = App.Vector
 
 
-def build(params,frame):
+def build(params,frame,photo_review=False):
     p = params['external_closures_estimated']['value']
     c = params['cam_carrier_outline_estimated']['value']
     v = params['valvetrain_layout_estimated']['value']
@@ -44,14 +44,19 @@ def build(params,frame):
                                           V(lo+fraction*(hi-lo),y,-1)))
     seal = seal.cut(Part.makeCompound(holes)).removeSplitter()
     body = body.cut(Part.makeCompound(holes))
-    x = lo+p['filler_x_fraction']*(hi-lo)
-    neck = p['filler_neck_height_mm']
-    body = body.fuse(Part.makeCylinder(p['filler_outer_radius_mm'],neck+wall,V(x,0,roof-wall)))
-    body = body.cut(Part.makeCylinder(p['filler_inner_radius_mm'],neck+wall+2,V(x,0,roof-wall-1)))
-    cap = Part.makeCylinder(p['filler_cap_radius_mm'],p['filler_cap_height_mm'],V(x,0,roof+neck))
+    if photo_review:
+        from oil_filler_exterior import casting
+        body,cap = casting(body,lo,hi,half,roof,gasket,wall)
+        body = body.cut(holes)
+    else:
+        x = lo+p['filler_x_fraction']*(hi-lo)
+        neck = p['filler_neck_height_mm']
+        body = body.fuse(Part.makeCylinder(p['filler_outer_radius_mm'],neck+wall,V(x,0,roof-wall)))
+        body = body.cut(Part.makeCylinder(p['filler_inner_radius_mm'],neck+wall+2,V(x,0,roof-wall-1)))
+        cap = Part.makeCylinder(p['filler_cap_radius_mm'],p['filler_cap_height_mm'],V(x,0,roof+neck))
     transform = App.Placement(V(0,0,v['carrier_cap_top_z_mm']),App.Rotation(V(1,0,0),angle))
     result = {'ValveCover':body.removeSplitter(),'ValveCoverGasket':seal,'OilFillerCap':cap}
-    for shape in result.values():
-        shape.Placement = transform
+    for key,shape in result.items():
+        shape.Placement = transform.multiply(shape.Placement) if photo_review and key=='OilFillerCap' else transform
         assert shape.isValid() and len(shape.Solids)==1 and shape.Volume>0
     return result

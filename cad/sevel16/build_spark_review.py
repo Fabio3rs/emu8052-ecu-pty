@@ -10,7 +10,7 @@ from head_passages import chambers
 V = App.Vector
 
 
-def pocket_tools(x, place):
+def pocket_tools(x, place, bay_profile=None):
     # Photos 723789 and 885508: the wall between bosses recedes continuously
     # above the seat, then sweeps out into the lower ledge. Sections are estimated.
     wires = []
@@ -18,6 +18,10 @@ def pocket_tools(x, place):
                  (38,-35), (52,-38), (68,-43), (88,-53)]:
         row = [(-47,-88), (-36,-88), (-29,y-1), (-15,y+1),
                (15,y+1), (29,y-1), (36,-88), (47,-88)]
+        if bay_profile:
+            width, setback, lean = bay_profile
+            weight = max(0, 1-abs(z-34)/34)
+            row = [(dx*width + lean*weight, depth + setback*weight) for dx, depth in row]
         points = [V(x+dx, depth, z) for dx, depth in row]
         curve = Part.BezierCurve()
         curve.setPoles(points)

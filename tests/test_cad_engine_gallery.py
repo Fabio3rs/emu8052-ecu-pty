@@ -10,7 +10,7 @@ import subprocess
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 
-def run(binary, rom, baseline, trial, out, overview=None):
+def run(binary, rom, baseline, trial, out, overview=None, changed_part='sevel.block'):
     out.mkdir(exist_ok=True,parents=True)
     inputs = Path(__file__).resolve().parent
     long_cut = json.loads((inputs/'cad_longitudinal.json').read_text())
@@ -58,7 +58,10 @@ def run(binary, rom, baseline, trial, out, overview=None):
     manifests = [json.loads((p/'parts_manifest.json').read_bytes()) for p in (baseline,trial)]
     parts = [{row['id']:row['mesh_id'] for row in m['parts']} for m in manifests]
     assert parts[0].keys() == parts[1].keys()
-    assert [pid for pid in parts[0] if parts[0][pid] != parts[1][pid]] == ['sevel.block']
+    expected = {changed_part}
+    if changed_part == 'sevel.oildrainplug':
+        expected.add('sevel.oilpan')
+    assert {pid for pid in parts[0] if parts[0][pid] != parts[1][pid]} == expected
     checker = binary.with_name('sevel-cad-check')
     for angle in (0,90,180,270,359,360,540,719,720,-90):
         def poses(package):
@@ -70,24 +73,37 @@ def run(binary, rom, baseline, trial, out, overview=None):
     groups = {p['scene_group'] for p in manifests[0]['parts']}
     camera = dict(yaw_rad=2.82,pitch_rad=.14,distance_mm=560,target_mm=[140,-125,-65],
                   hidden=sorted(groups-{'block'}))
-    before = capture('rib-original',baseline,camera)
-    after = capture('rib-reexport',trial,camera)
+    region = 'rib'
+    if changed_part == 'sevel.oilpan':
+        region = 'sump'
+        camera = dict(yaw_rad=2.82,pitch_rad=-.55,distance_mm=650,target_mm=[140,-270,0],
+                      hidden=sorted(groups-{'oil_pan'}))
+    elif changed_part == 'sevel.intakemanifold':
+        region = 'intake'
+        camera = dict(yaw_rad=2.9,pitch_rad=1.14,distance_mm=480,target_mm=[140,80,-170],
+                      hidden=sorted(groups-{'intake'}))
+    elif changed_part == 'sevel.oildrainplug':
+        region = 'drain'
+        camera = dict(yaw_rad=1.42,pitch_rad=-1.12,distance_mm=575,target_mm=[140,-275,0],
+                      hidden=sorted(groups-{'oil_pan'}))
+    before = capture(region+'-original',baseline,camera)
+    after = capture(region+'-reexport',trial,camera)
     assert before[:2] == after[:2]
-    assert (out/'rib-original-gpu.json').read_bytes() == (out/'rib-reexport-gpu.json').read_bytes()
+    assert (out/(region+'-original-gpu.json')).read_bytes() == (out/(region+'-reexport-gpu.json')).read_bytes()
     a,b = before[2],after[2]
     difference = ImageChops.difference(a,b)
     changed = sum(max(p)>3 for p in difference.getdata())
     assert 100 < changed < a.width*a.height//5, changed
     comparison = Image.new('RGB',(2*a.width,a.height))
     comparison.paste(a); comparison.paste(b,(a.width,0))
-    comparison.save(out/'rib-comparison.png')
+    comparison.save(out/(region+'-comparison.png'))
     box = difference.getbbox()
     crop = (max(0,box[0]-35),max(0,box[1]-35),min(a.width,box[2]+35),min(a.height,box[3]+35))
     close = [im.crop(crop) for im in (a,b)]
     w,h = close[0].size
     detail = Image.new('RGB',(2*w,h))
     for i,im in enumerate(close): detail.paste(im,(w*i,0))
-    detail.resize((4*w,2*h)).save(out/'rib-detail.png')
+    detail.resize((4*w,2*h)).save(out/(region+'-detail.png'))
     if overview:
         sheet = Image.new('RGB',(1100,796),'#161b21')
         draw = ImageDraw.Draw(sheet)
@@ -95,7 +111,7 @@ def run(binary, rom, baseline, trial, out, overview=None):
         views = [('perspective-gpu.png','Montagem v005',0,0),
                  ('cut-90-gpu.png','Corte longitudinal em 90°',550,0),
                  ('panel.png','Mechanics e osciloscópio',0,392),
-                 ('rib-detail.png','Nervura original e revisão de ensaio',550,392)]
+                 (region+'-detail.png',changed_part+' · comparação',550,392)]
         for file,label,x,y in views:
             frame = Image.open(out/file).convert('RGB')
             frame.thumbnail((530,350))
@@ -103,7 +119,7 @@ def run(binary, rom, baseline, trial, out, overview=None):
             draw.text((x+14,y+6),label,font=font,fill='#e8edf0')
         overview.parent.mkdir(parents=True,exist_ok=True)
         sheet.save(overview)
-    print(f'PASS {changed} changed rib pixels, stable replay and poses. {state}',flush=True)
+    print(f'PASS {changed} changed {region} pixels, stable replay and poses. {state}',flush=True)
 
 
 if __name__ == '__main__':
@@ -111,4 +127,6 @@ if __name__ == '__main__':
     for name in ('binary','rom','baseline','trial','out'):
         parser.add_argument(name,type=lambda arg: Path(arg).resolve())
     parser.add_argument('--overview',type=Path,help='Write a contact sheet of the actual captures')
+    parser.add_argument('--changed-part', choices=['sevel.block','sevel.oilpan','sevel.intakemanifold','sevel.oildrainplug'],
+                        default='sevel.block')
     run(**vars(parser.parse_args()))
