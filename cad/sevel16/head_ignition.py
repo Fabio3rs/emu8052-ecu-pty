@@ -18,7 +18,7 @@ def cone_at(y,z,depth,bottom,top,length):
     return Part.makeCone(bottom,top,length,V(y,z,depth))
 
 
-def build(params,frame):
+def build(params,frame, *, mount_profile=None):
     p = params['valvetrain_layout_estimated']['value']
     hi = layout(params,frame)['supports'][-1]+p['cam_journal_width_mm']/2
     place = App.Placement(V(hi+4,0,p['cam_axis_z_mm']),App.Rotation(V(1,1,1),120))
@@ -40,7 +40,18 @@ def build(params,frame):
     ear = Part.makeCylinder(8,15,V(4,23,seat-8.3),V(0,1,0))
     strut = Part.Face(Part.makePolygon([V(1,28,3),V(1,31,seat-4),
                  V(1,21,seat-4),V(1,22,4),V(1,28,3)])).extrude(V(5,0,0))
-    mount = base.fuse(ribs+[plate,ear,strut])
+    castings = ribs+[plate,ear,strut]
+    if mount_profile is not None:
+        # The wide shoulder crosses the top of the cast support and tapers
+        # into the eye. All coordinates are in the existing end-face frame.
+        contours = []
+        for depth, half, center, height in mount_profile:
+            section = rounded_prism(-half, center-height/2, depth, 2*half, height, 1, 2)
+            face = next(f for f in section.Faces if abs(f.BoundBox.ZMax - depth) < 1e-6)
+            contours.append(face.OuterWire)
+        apron = Part.makeLoft(contours, True, False)
+        castings.append(apron.cut(Part.makeCylinder(27.6, 7.5, V(0,0,-.5))))
+    mount = base.fuse(castings)
     holes = [Part.makeCylinder(3.5,9,V(y,z,-1)) for y,z in MOUNT_HOLES]
     holes += [Part.makeCylinder(2.5,11,V(y,z,seat-10)) for y,z in COIL_FEET]
     holes.append(Part.makeCylinder(3,10,V(4,39,seat-8.3),V(0,-1,0)))

@@ -57,7 +57,7 @@ def _round_ends(body, deep, shallow, radius):
     return body
 
 
-def build(params,frame, *, polish=False, offset_drain=False):
+def build(params,frame, *, polish=False, offset_drain=False, floor_press=False):
     p = params['external_closures_estimated']['value']
     block = params['block_visual_estimated']['value']
     contour = params['sump_outline_estimated']['value']
@@ -106,6 +106,12 @@ def build(params,frame, *, polish=False, offset_drain=False):
         round_floor = _round_ends if polish == 'ends' else _press_radius
         outer = round_floor(outer, deep, shallow, radius)
         inner = round_floor(inner, deep+wall, shallow+wall, radius-wall)
+    if floor_press:
+        from spi_pan_floor import dies
+        outside_die = dies(params, deep, shallow)
+        inside_die = dies(params, deep, shallow, wall)
+        outer = outer.cut(outside_die)
+        inner = inner.cut(inside_die)
     pan = outer.cut(inner)
     gasket = Part.Face(outline(top)).extrude(V(0,0,p['pan_gasket_mm']))
     gasket = gasket.cut(Part.Face(outline(top-1,contour['wall_inset'],p['pan_inner_end_flange_mm']))

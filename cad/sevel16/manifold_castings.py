@@ -38,7 +38,7 @@ def duct(points, radius, final_bend=22):
     return union(solids)
 
 
-def exhaust(params, frame):
+def exhaust(params, frame, *, cast_flanks=False):
     """Photos 881888, 626156, 812541. Outer pair and inner pair exit separately."""
     h = params['head_lower_casting_estimated']['value']
     p = params['manifold_visual_estimated']['value']
@@ -80,6 +80,9 @@ def exhaust(params, frame):
         section.translate(V(0,yy,0))
         profiles.append(section)
     shell.append(Part.makeLoft(profiles, True, True))
+    if cast_flanks:
+        from exhaust_cast_flanks import flanks
+        shell.extend(flanks(params, xs, y, z))
     # End-pad ears and center pad aperture are visible in photo 859499.
     seats = [(xs[0]-17, z-14), (cx, z-11), (xs[-1]+17, z-14)]
     for x, zz in seats:

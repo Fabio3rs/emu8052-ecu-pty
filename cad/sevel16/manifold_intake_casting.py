@@ -19,7 +19,16 @@ def bowl(cx, sections):
     return Part.Face(Part.Wire(boundary)).revolve(axis, UP, 360)
 
 
-def intake(params, frame, *, polish=False):
+def transverse_casting(cx, sections):
+    profiles = []
+    for dx, y, z, ry, rz in sections:
+        center = V(cx + dx, y, z)
+        ellipse = Part.Ellipse(center + SIDE * ry, center + UP * rz, center)
+        profiles.append(Part.Wire([ellipse.toShape()]))
+    return Part.makeLoft(profiles, True, False)
+
+
+def intake(params, frame, *, polish=False, front_sections=None):
     """Photo estimates in mm from 713001, 807385, 909298 and 927431."""
     h = params['head_lower_casting_estimated']['value']
     p = params['manifold_visual_estimated']['value']
@@ -42,26 +51,20 @@ def intake(params, frame, *, polish=False):
         shell.append(duct([(x, y+2, z), *path], r+4.5, bend))
         air.append(duct([(x, y-1, z), *path], r, bend))
     # The front of the plenum joins the broad U below the throttle pad.
-    profiles = []
-    for dx, yy, ry, rz in [(-55,214,17,16), (-24,208,24,21),
-                           (0,206,26,22), (24,208,24,21), (55,214,17,16)]:
-        center = V(cx+dx, yy, 78)
-        ellipse = Part.Ellipse(center+SIDE*ry, center+UP*rz, center)
-        profiles.append(Part.Wire([ellipse.toShape()]))
-    shell.append(Part.makeLoft(profiles, True, False))
     air.append(Part.makeCylinder(13, 68, V(cx-34,208,78), V(1,0,0)))
-    # Broad shoulders sweep around each pair of runners in the top view 713001.
-    shoulders = [(117,164,15,9), (98,177,32,15), (69,185,31,17),
-                 (40,189,25,16), (19,190,17,12)]
-    if polish:
-        shoulders = params['intake_shoulder_sections_estimated']['value']
-    for side in (-1, 1):
-        profiles = []
-        for dx, yy, ry, rz in shoulders:
-            center = V(cx+side*dx, yy, 79 if polish else 76)
-            ellipse = Part.Ellipse(center+SIDE*ry, center+UP*rz, center)
-            profiles.append(Part.Wire([ellipse.toShape()]))
-        shell.append(Part.makeLoft(profiles, True, False))
+    if front_sections is None:
+        shell.append(transverse_casting(cx, [(-55,214,78,17,16), (-24,208,78,24,21),
+            (0,206,78,26,22), (24,208,78,24,21), (55,214,78,17,16)]))
+        shoulders = [(117,164,15,9), (98,177,32,15), (69,185,31,17),
+                     (40,189,25,16), (19,190,17,12)]
+        if polish:
+            shoulders = params['intake_shoulder_sections_estimated']['value']
+        for side in (-1, 1):
+            shell.append(transverse_casting(cx, [(side*dx, yy, 79 if polish else 76, ry, rz)
+                         for dx, yy, ry, rz in shoulders]))
+    else:
+        # The v015 U spans both pairs of runners in one continuous casting.
+        shell.append(transverse_casting(cx, front_sections))
     for group in (rows[:2], rows[2:]):
         shell.append(flange(group, params, y, p['flange_mm'], 6))
 

@@ -8,7 +8,7 @@ from cam_carrier import rounded_prism
 V = App.Vector
 
 
-def build(params,frame,photo_review=False):
+def build(params,frame,photo_review=False,neck_sections=None,cover_profile=None):
     p = params['external_closures_estimated']['value']
     c = params['cam_carrier_outline_estimated']['value']
     v = params['valvetrain_layout_estimated']['value']
@@ -46,8 +46,12 @@ def build(params,frame,photo_review=False):
     body = body.cut(Part.makeCompound(holes))
     if photo_review:
         from oil_filler_exterior import casting
-        body,cap = casting(body,lo,hi,half,roof,gasket,wall)
+        lengths = cover_profile["shoulder_lengths"] if cover_profile else None
+        body,cap = casting(body,lo,hi,half,roof,gasket,wall,neck_sections,lengths)
         body = body.cut(holes)
+        if cover_profile:
+            from spi_cover_ribs import add_ribs
+            body = add_ribs(body,lo,hi,half,roof-wall,cover_profile)
     else:
         x = lo+p['filler_x_fraction']*(hi-lo)
         neck = p['filler_neck_height_mm']

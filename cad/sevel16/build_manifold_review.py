@@ -12,12 +12,12 @@ SOURCE = 'SEVEL_Accessories_A5_v004_BlockReview'
 NAME = 'SEVEL_Accessories_A5_v005_ManifoldReview'
 
 
-def verify(doc, params, frame):
+def verify(doc, params, frame, expected_parts=224):
     inlet, outlet = doc.IntakeManifold.Shape, doc.ExhaustManifold.Shape
     inlet.check(True)
     outlet.check(True)
     parts = [o for o in doc.Objects if hasattr(o, 'Shape')]
-    assert len(parts) == len({o.PartId for o in parts}) == 224
+    assert len(parts) == len({o.PartId for o in parts}) == expected_parts
     assert all(o.Shape.isValid() and len(o.Shape.Solids) == 1 for o in parts)
     changed = [doc.IntakeManifold, doc.ExhaustManifold] + stud_objects(doc)
     for obj in changed:

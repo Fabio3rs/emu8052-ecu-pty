@@ -29,6 +29,13 @@ def hose(tip, direction, radius, bend):
     return Part.makeLoft(exterior,True,False).cut(Part.makeLoft(interior,True,False)).removeSplitter()
 
 
+def spigots(base):
+    for tag,offset,slope,length,radius,bend in (
+            ('Main',V(23,-10,0),V(.31,-.945,-.1),49,18.5,V(2,0,-16)),
+            ('Branch',V(22,10,3),V(.11,.91,.4),40,8.25,V(-3,5,8))):
+        yield tag, base+offset, slope.normalize(), length, radius, bend
+
+
 def build(params,frame):
     h,project = datum(params,frame)
     depth = h['water_end_flange_depth_mm']
@@ -48,11 +55,7 @@ def build(params,frame):
     # A cylindrical inlet feeds a rounded chamber shared by both outlets.
     inside = Part.makeCylinder(18,17,base+AXIS*3,AXIS).fuse(Part.makeSphere(18,base+AXIS*18))
     additions,cutters,hoses = [crown],[along_x(mouth,depth-1,14),inside],{}
-    for tag,offset,slope,length,radius,bend in (
-            ('Main',V(23,-10,0),V(.31,-.945,-.1),49,18.5,V(2,0,-16)),
-            ('Branch',V(22,10,3),V(.11,.91,.4),40,8.25,V(-3,5,8))):
-        normal = slope.normalize()
-        root = base+offset
+    for tag,root,normal,length,radius,bend in spigots(base):
         tip = root+normal*length
         additions.extend([Part.makeCylinder(radius,length,root,normal),
                           Part.makeCone(radius,radius+1,2,tip-normal*5,normal),

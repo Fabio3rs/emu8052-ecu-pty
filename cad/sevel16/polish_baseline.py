@@ -12,10 +12,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def snapshot(destination):
+def snapshot(destination, registry=None):
     root = Path(__file__).resolve().parents[2]
     cad = root / "build/sevel-cad"
-    registry = cad / "runtime-assets"
+    registry = (registry or cad / "runtime-assets").resolve()
     revision = json.loads((registry / "current.json").read_text())["asset_revision"]
     manifest = registry / revision / "parts_manifest.json"
     data = json.loads(manifest.read_text())
@@ -45,4 +45,4 @@ def snapshot(destination):
 
 
 if __name__ == "__main__":
-    snapshot(Path(sys.argv[1]))
+    snapshot(*(Path(arg) for arg in sys.argv[1:]))

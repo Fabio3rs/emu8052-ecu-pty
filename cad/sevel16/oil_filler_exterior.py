@@ -30,10 +30,13 @@ def grip_cap(mouth, axis):
     return shape
 
 
-def casting(body,lo,hi,half,roof,gasket,wall):
+def casting(body,lo,hi,half,roof,gasket,wall,neck_sections=None,shoulder_lengths=None):
     # A full-width raised end with a sloping return to the lower central roof.
     def raised_end(start, sign, length):
         rows = [(1, .6), (6,3.4), (.42*length,5), (.8*length,4), (length,.5)]
+        if shoulder_lengths is not None:
+            rows = [(1,.6),(6,3.4),(.32*length,5),(.70*length,4.6),
+                    (length-7,3.8),(length-3,2.4),(length,.5)]
         wires = []
         for distance, rise in rows:
             x = start + sign*distance
@@ -45,7 +48,8 @@ def casting(body,lo,hi,half,roof,gasket,wall):
                              V(x,-width+2,roof+.4*rise),left])
             wires.append(Part.Wire([Part.makeLine(left,right),arc.toShape()]))
         return Part.makeLoft(wires,True,False)
-    stock = [raised_end(lo,1,46),raised_end(hi,-1,74)]
+    short,long = shoulder_lengths if shoulder_lengths is not None else (46,74)
+    stock = [raised_end(lo,1,short),raised_end(hi,-1,long)]
     # Rectangular cast loops along the side rails on 215616663404314.
     for fraction,side in ((.09,1),(.25,1),(.55,-1),(.69,1),(.83,-1)):
         x = lo+fraction*(hi-lo)
@@ -65,6 +69,14 @@ def casting(body,lo,hi,half,roof,gasket,wall):
     mouth = base+V(24,0,39)
     outer = [ellipse(base-UP*2,UP,30,24),ellipse(mid,V(.26,0,.966).normalize(),26.5,24.6),
              ellipse(mouth-axis*4,axis,27.5,26.5),ellipse(mouth,axis,29,27.5)]
+    if neck_sections is not None:
+        outer = []
+        for dx, dy, dz, tilt, major, minor in neck_sections:
+            radians = math.radians(tilt)
+            normal = V(math.sin(radians),0,math.cos(radians))
+            outer.append(ellipse(base+V(dx,dy,dz),normal,major,minor))
+        # Keep the measured cap and its mating lip in their established pose.
+        outer.extend([ellipse(mouth-axis*3,axis,27.8,26.6),ellipse(mouth,axis,29,27.5)])
     stock.append(Part.makeLoft(outer,True,False))
     for y in (-18,18):
         # Triangular side webs descend from the lip to the flared base.
